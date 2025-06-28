@@ -20,11 +20,9 @@ const variantSchema = new mongoose.Schema({
     type: String, 
     required: true,
     validate: {
-      validator: async function(sku) {
-        // Get the parent product document
-        const product = this.ownerDocument();
+      validator: async function(sku) {        
         // Check for unique SKU across all products for this tenant
-        const existing = await mongoose.model('Product').findOne({
+        const existing = await this.ownerDocument().constructor.findOne({
           'variants.sku': sku,
           tenantId: product.tenantId,
           _id: { $ne: product._id }
