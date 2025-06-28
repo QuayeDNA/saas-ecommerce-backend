@@ -6,12 +6,19 @@ import logger from '../utils/logger.js';
 class ProductService {
   // Create product with validation
   async createProduct(productData, userId) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-    
+    let session = null;
+    let useTransaction = false;
     try {
-      // Do NOT overwrite tenantId or createdBy here; use values from productData
-      
+      // Try to start a session and transaction, but fallback if not supported
+      try {
+        session = await mongoose.startSession();
+        session.startTransaction();
+        useTransaction = true;
+      } catch (err) {
+        session = null;
+        useTransaction = false;
+        logger.warn('Transactions not supported in this MongoDB environment. Proceeding without transaction.');
+      }
       // Auto-generate SKUs if not provided
       if (productData.variants) {
         productData.variants = productData.variants.map((variant, index) => ({
@@ -19,19 +26,23 @@ class ProductService {
           sku: variant.sku || `${productData.provider || 'GEN'}-${Date.now()}-${index + 1}`
         }));
       }
-      
       const product = new Product(productData);
-      await product.save({ session });
-      
-      await session.commitTransaction();
+      if (useTransaction) {
+        await product.save({ session });
+        await session.commitTransaction();
+      } else {
+        await product.save();
+      }
       logger.info(`Product created: ${product._id} by user ${userId}`);
       return product;
     } catch (error) {
-      await session.abortTransaction();
+      if (useTransaction && session) {
+        await session.abortTransaction();
+      }
       logger.error(`Product creation failed: ${error.message}`);
       throw error;
     } finally {
-      session.endSession();
+      if (session) session.endSession();
     }
   }
 

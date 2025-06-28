@@ -26,7 +26,12 @@ export const authenticate = async (req, res, next) => {
       });
     }
 
-    req.user = user;
+    // Attach userId and tenantId for multi-tenancy
+    req.user = {
+      ...user.toJSON(),
+      userId: user._id,
+      tenantId: user.userType === 'agent' ? user._id : user.tenantId
+    };
     logger.debug(`Authenticated user: ${user.email}`);
     next();
   } catch (err) {

@@ -38,7 +38,6 @@ class EmailService {
 
    async sendAgentVerificationEmail(email, token, agentCode) {
     const verificationUrl = `${process.env.FRONTEND_URL}/verify-account?token=${token}`;
-    
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: email,
@@ -56,6 +55,11 @@ class EmailService {
       `
     };
 
+    if (process.env.NODE_ENV === 'development') {
+      logger.info(`[DEV] Simulated agent verification email to ${email}:`, mailOptions);
+      return;
+    }
+
     try {
       await this.transporter.sendMail(mailOptions);
       logger.info(`Agent verification email sent to ${email}`);
@@ -67,7 +71,6 @@ class EmailService {
 
   async sendVerificationEmail(email, token) {
     const verificationUrl = `${process.env.FRONTEND_URL}/verify-account?token=${token}`;
-    
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: email,
@@ -79,6 +82,11 @@ class EmailService {
         <p>This link will expire in 24 hours.</p>
       `
     };
+
+    if (process.env.NODE_ENV === 'development') {
+      logger.info(`[DEV] Simulated customer verification email to ${email}:`, mailOptions);
+      return;
+    }
 
     try {
       await this.transporter.sendMail(mailOptions);
@@ -116,6 +124,11 @@ class EmailService {
       `
     };
 
+    if (process.env.NODE_ENV === 'development') {
+      logger.info(`[DEV] Simulated password reset email to ${email}:`, mailOptions);
+      return;
+    }
+
     try {
       const info = await this.transporter.sendMail(mailOptions);
       logger.info(`Password reset email sent to ${email}`, { messageId: info.messageId });
@@ -149,6 +162,11 @@ class EmailService {
         </div>
       `
     };
+
+    if (process.env.NODE_ENV === 'development') {
+      logger.info(`[DEV] Simulated welcome email to ${email}:`, mailOptions);
+      return;
+    }
 
     try {
       const info = await this.transporter.sendMail(mailOptions);
