@@ -5,20 +5,9 @@ import logger from '../utils/logger.js';
 
 class ProductService {
   // Create product with validation
-  async createProduct(productData, userId) {
-    let session = null;
-    let useTransaction = false;
+ async createProduct(productData, userId) {
     try {
-      // Try to start a session and transaction, but fallback if not supported
-      try {
-        session = await mongoose.startSession();
-        session.startTransaction();
-        useTransaction = true;
-      } catch (err) {
-        session = null;
-        useTransaction = false;
-        logger.warn('Transactions not supported in this MongoDB environment. Proceeding without transaction.');
-      }
+
       // Auto-generate SKUs if not provided
       if (productData.variants) {
         productData.variants = productData.variants.map((variant, index) => ({
@@ -28,18 +17,9 @@ class ProductService {
       }
       const product = new Product(productData);
       if (useTransaction) {
-        await product.save({ session });
-        await session.commitTransaction();
-      } else {
-        await product.save();
-      }
-      logger.info(`Product created: ${product._id} by user ${userId}`);
-      return product;
-    } catch (error) {
-      if (useTransaction && session) {
-        await session.abortTransaction();
-      }
-      logger.error(`Product creation failed: ${error.message}`);
+        await product.save({ session });await session.commitTransaction();
+      } else {await product.save();}logger.info(`Product created: ${product._id} by user ${userId}`);return product;} catch (error) {if (useTransaction && session) {await session.abortTransaction();}logger.error(`Product creation failed: ${error.message}`);
+      await product.save();
       throw error;
     } finally {
       if (session) session.endSession();
