@@ -8,6 +8,8 @@ import connectDB from './src/config/db.js';
 import logger from './src/utils/logger.js';
 import authRoutes from './src/routes/authRoutes.js';
 import productRouter from './src/routes/productRoutes.js';
+import orderRouter from './src/routes/orderRoutes.js';
+import storefrontRoutes from './src/routes/storefrontRoutes.js';
 import deleteUnverifiedUsersJob from './src/jobs/deleteUnverifiedUsers.js';
 
 const app = express();
@@ -48,6 +50,8 @@ app.use((req, res, next) => {
 // Routes[1]
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRouter);
+app.use('/api/orders', orderRouter);
+app.use('/api/storefront', storefrontRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

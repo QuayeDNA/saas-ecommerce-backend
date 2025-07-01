@@ -13,6 +13,24 @@ class AuthController {
     });
   }
 
+   // Generate access token (short-lived)
+  generateAccessToken(userId, userType, tenantId = null) {
+    return jwt.sign(
+      { userId, userType, tenantId },
+      process.env.JWTSECRET,
+      { expiresIn: "15m" } // Short-lived access token
+    );
+  }
+
+  // Generate refresh token (long-lived)
+  generateRefreshToken(userId) {
+    return jwt.sign(
+      { userId, type: 'refresh' },
+      process.env.REFRESH_TOKEN_SECRET || process.env.JWTSECRET,
+      { expiresIn: "7d" } // Long-lived refresh token
+    );
+  }
+
   // Generate unique agent code
   generateAgentCode(businessName) {
     const prefix = businessName.substring(0, 3).toUpperCase();
@@ -171,7 +189,7 @@ class AuthController {
   }
 
   // Enhanced login with tenant context
-  async login(req, res) {
+ async login(req, res) {
     try {
       const { email, password, rememberMe } = req.body;
 
@@ -213,27 +231,33 @@ class AuthController {
         });
       }
 
-      // Generate token with tenant context
-      const tokenExpiry = rememberMe ? "30d" : "7d";
+      // Generate tokens
       const tenantId = user.userType === "agent" ? user._id : user.tenantId;
+      const accessToken = this.generateAccessToken(user._id, user.userType, tenantId);
+      const refreshToken = this.generateRefreshToken(user._id);
 
-      const token = jwt.sign(
-        { userId: user._id, userType: user.userType, tenantId },
-        process.env.JWTSECRET,
-        { expiresIn: tokenExpiry }
-      );
+      // Store refresh token in user document (optional - for token invalidation)
+      user.refreshToken = refreshToken;
+      await user.save();
 
-      logger.info(
-        `User logged in successfully: ${email} - Type: ${user.userType}`
-      );
+      // Set refresh token as httpOnly cookie
+      const cookieOptions = {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: rememberMe ? 30 * 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000 // 30 days or 7 days
+      };
+
+      res.cookie('refreshToken', refreshToken, cookieOptions);
+
+      logger.info(`User logged in successfully: ${email} - Type: ${user.userType}`);
+      
       res.json({
         success: true,
         user: user.toJSON(),
-        token,
-        dashboardUrl:
-          user.userType === "agent"
-            ? `/agent/dashboard`
-            : `/customer/dashboard`,
+        token: accessToken,
+        refreshToken: refreshToken, // Also send in response for frontend storage
+        dashboardUrl: user.userType === "agent" ? `/agent/dashboard` : `/customer/dashboard`,
       });
     } catch (error) {
       logger.error(`Login error: ${error.message}`);
@@ -400,14 +424,95 @@ class AuthController {
     }
   }
 
-  // Verify token[1]
+ // Refresh token endpoint
+  async refreshToken(req, res) {
+    try {
+      const { refreshToken } = req.body;
+      const cookieRefreshToken = req.cookies?.refreshToken;
+      
+      // Use refresh token from body or cookie
+      const token = refreshToken || cookieRefreshToken;
+      
+      if (!token) {
+        return res.status(401).json({
+          success: false,
+          message: "Refresh token not provided"
+        });
+      }
+
+      // Verify refresh token
+      const decoded = jwt.verify(token, process.env.REFRESH_TOKEN_SECRET || process.env.JWTSECRET);
+      
+      if (decoded.type !== 'refresh') {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid token type"
+        });
+      }
+
+      // Find user and verify refresh token
+      const user = await User.findById(decoded.userId);
+      if (!user || user.refreshToken !== token) {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid refresh token"
+        });
+      }
+
+      // Generate new tokens
+      const tenantId = user.userType === "agent" ? user._id : user.tenantId;
+      const newAccessToken = this.generateAccessToken(user._id, user.userType, tenantId);
+      const newRefreshToken = this.generateRefreshToken(user._id);
+
+      // Update stored refresh token
+      user.refreshToken = newRefreshToken;
+      await user.save();
+
+      // Set new refresh token cookie
+      const cookieOptions = {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      };
+
+      res.cookie('refreshToken', newRefreshToken, cookieOptions);
+
+      logger.info(`Token refreshed for user: ${user.email}`);
+      
+      res.json({
+        success: true,
+        accessToken: newAccessToken,
+        refreshToken: newRefreshToken,
+        user: user.toJSON()
+      });
+    } catch (error) {
+      logger.error(`Token refresh error: ${error.message}`);
+      res.status(401).json({
+        success: false,
+        message: "Invalid refresh token"
+      });
+    }
+  }
+
+  // Enhanced verify token
   async verifyToken(req, res) {
     try {
-      // If we reach here, the token is valid (middleware already verified it)
+      // Token is already verified by middleware, just return user data
+      const user = await User.findById(req.user.userId).select('-password -refreshToken');
+      
+      if (!user) {
+        return res.status(401).json({
+          success: false,
+          valid: false,
+          message: "User not found"
+        });
+      }
+
       res.json({
         success: true,
         valid: true,
-        user: req.user.toJSON(),
+        user: user.toJSON(),
       });
     } catch (error) {
       logger.error(`Token verification error: ${error.message}`);
@@ -419,12 +524,24 @@ class AuthController {
     }
   }
 
-  // Logout[1]
+  // Enhanced logout
   async logout(req, res) {
     try {
-      // In a stateless JWT system, logout is handled client-side
-      // You could implement token blacklisting here if needed
-      logger.info(`User logged out: ${req.user.email}`);
+      // Clear refresh token from database
+      if (req.user?.userId) {
+        await User.findByIdAndUpdate(req.user.userId, { 
+          $unset: { refreshToken: 1 } 
+        });
+      }
+
+      // Clear refresh token cookie
+      res.clearCookie('refreshToken', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict'
+      });
+
+      logger.info(`User logged out: ${req.user?.email || 'Unknown'}`);
       res.json({
         success: true,
         message: "Logged out successfully",
@@ -450,4 +567,5 @@ export default {
   resetPassword: authController.resetPassword.bind(authController),
   verifyToken: authController.verifyToken.bind(authController),
   logout: authController.logout.bind(authController),
+  refreshToken: authController.refreshToken.bind(authController),   
 };

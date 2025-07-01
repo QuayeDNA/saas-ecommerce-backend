@@ -1,3 +1,4 @@
+// src/validators/productValidator.js
 import { body, param } from 'express-validator';
 
 export const productValidation = {
@@ -21,11 +22,36 @@ export const productValidation = {
     param('id').isMongoId().withMessage('Invalid product ID'),
     body('name').optional().trim().notEmpty(),
     body('category').optional().isIn(['data-bundle', 'voice-bundle', 'sms-bundle', 'combo-bundle', 'physical', 'digital', 'service']),
-    body('provider').optional().isIn(['MTN', 'Vodafone', 'AirtelTigo', 'Glo', 'Other']),
-    body('variants').optional().isArray({ min: 1 }),
-    body('variants.*.name').optional().notEmpty(),
-    body('variants.*.price').optional().isFloat({ min: 0 }),
-    body('variants.*.inventory').optional().isInt({ min: 0 })
+    body('provider').optional().isIn(['MTN', 'Vodafone', 'AirtelTigo', 'Glo', 'Other'])
+  ],
+  
+  bulkCreate: [
+    body().custom((value) => {
+      if (!value.products && !value.csvData) {
+        throw new Error('Either products array or csvData is required');
+      }
+      if (value.products && !Array.isArray(value.products)) {
+        throw new Error('Products must be an array');
+      }
+      if (value.products && value.products.length === 0) {
+        throw new Error('Products array cannot be empty');
+      }
+      if (value.products && value.products.length > 100) {
+        throw new Error('Cannot create more than 100 products at once');
+      }
+      return true;
+    })
+  ],
+  
+  bulkUpdate: [
+    body('updates').isArray({ min: 1, max: 100 }).withMessage('Updates array is required (max 100 items)'),
+    body('updates.*.productId').isMongoId().withMessage('Invalid product ID'),
+    body('updates.*.updateData').isObject().withMessage('Update data is required')
+  ],
+  
+  bulkDelete: [
+    body('productIds').isArray({ min: 1, max: 100 }).withMessage('Product IDs array is required (max 100 items)'),
+    body('productIds.*').isMongoId().withMessage('Invalid product ID')
   ],
   
   bulkInventory: [

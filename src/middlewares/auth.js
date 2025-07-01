@@ -15,8 +15,9 @@ export const authenticate = async (req, res, next) => {
       });
     }
 
+    // Verify access token
     const decoded = jwt.verify(token, process.env.JWTSECRET);
-    const user = await User.findById(decoded.userId);
+    const user = await User.findById(decoded.userId).select('-password -refreshToken');
     
     if (!user) {
       logger.warn(`Token valid but user not found: ${decoded.userId}`);
@@ -26,15 +27,26 @@ export const authenticate = async (req, res, next) => {
       });
     }
 
-    // Attach userId and tenantId for multi-tenancy
     req.user = {
-      ...user.toJSON(),
       userId: user._id,
-      tenantId: user.userType === 'agent' ? user._id : user.tenantId
+      email: user.email,
+      userType: user.userType,
+      tenantId: decoded.tenantId,
+      ...user.toJSON()
     };
+    
     logger.debug(`Authenticated user: ${user.email}`);
     next();
   } catch (err) {
+    if (err.name === 'TokenExpiredError') {
+      logger.warn('Access token expired');
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Token expired',
+        code: 'TOKEN_EXPIRED'
+      });
+    }
+    
     logger.error(`Token verification failed: ${err.message}`);
     res.status(401).json({ 
       success: false, 

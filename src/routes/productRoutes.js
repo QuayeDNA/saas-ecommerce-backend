@@ -1,3 +1,4 @@
+// src/routes/productRoutes.js
 import express from 'express';
 import productController from '../controllers/productController.js';
 import { authenticate, authorize } from '../middlewares/auth.js';
@@ -12,6 +13,9 @@ const validateUpdate = validate(productValidation.update);
 const validateBulkInventory = validate(productValidation.bulkInventory);
 const validateCreateVariant = validate(productValidation.createVariant);
 const validateUpdateVariant = validate(productValidation.updateVariant);
+const validateBulkCreate = validate(productValidation.bulkCreate);
+const validateBulkUpdate = validate(productValidation.bulkUpdate);
+const validateBulkDelete = validate(productValidation.bulkDelete);
 
 // Product CRUD operations
 router.post(
@@ -33,7 +37,7 @@ router.put(
   '/:id',
   authenticate,
   authorize('agent'),
-  validateUpdate, // Use initialized validation middleware
+  validateUpdate,
   productController.updateProduct
 );
 
@@ -49,6 +53,45 @@ router.post(
   authenticate,
   authorize('agent'),
   productController.restoreProduct
+);
+
+// Bulk operations
+router.post(
+  '/bulk/create',
+  authenticate,
+  authorize('agent'),
+  validateBulkCreate,
+  productController.bulkCreateProducts
+);
+
+router.patch(
+  '/bulk/update',
+  authenticate,
+  authorize('agent'),
+  validateBulkUpdate,
+  productController.bulkUpdateProducts
+);
+
+router.delete(
+  '/bulk/delete',
+  authenticate,
+  authorize('agent'),
+  validateBulkDelete,
+  productController.bulkDeleteProducts
+);
+
+router.get(
+  '/bulk/template',
+  authenticate,
+  authorize('agent'),
+  productController.getBulkImportTemplate
+);
+
+router.post(
+  '/bulk/validate',
+  authenticate,
+  authorize('agent'),
+  productController.validateBulkImport
 );
 
 // Inventory management

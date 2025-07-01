@@ -338,6 +338,163 @@ class ProductController {
       });
     }
   }
+
+  // Bulk create products
+  async bulkCreateProducts(req, res) {
+    try {
+      const { tenantId, userId } = req.user;
+      const { products, csvData } = req.body;
+      
+      let productsData = products;
+      
+      // If CSV data is provided, parse it
+      if (csvData) {
+        productsData = productService.parseBulkProductData(csvData);
+      }
+      
+      if (!productsData || productsData.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'No products data provided'
+        });
+      }
+
+      // Validate bulk data
+      const validationErrors = productService.validateBulkProductData(productsData);
+      if (validationErrors.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation failed',
+          errors: validationErrors
+        });
+      }
+
+      const results = await productService.bulkCreateProducts(productsData, tenantId, userId);
+      
+      res.status(201).json({
+        success: true,
+        message: `Bulk creation completed: ${results.successful.length} successful, ${results.failed.length} failed`,
+        results
+      });
+    } catch (error) {
+      logger.error(`Bulk product creation failed: ${error.message}`);
+      res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  // Bulk update products
+  async bulkUpdateProducts(req, res) {
+    try {
+      const { tenantId, userId } = req.user;
+      const { updates } = req.body;
+      
+      if (!updates || updates.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'No updates provided'
+        });
+      }
+
+      const results = await productService.bulkUpdateProducts(updates, tenantId, userId);
+      
+      res.json({
+        success: true,
+        message: `Bulk update completed: ${results.successful.length} successful, ${results.failed.length} failed`,
+        results
+      });
+    } catch (error) {
+      logger.error(`Bulk product update failed: ${error.message}`);
+      res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  // Bulk delete products
+  async bulkDeleteProducts(req, res) {
+    try {
+      const { tenantId, userId } = req.user;
+      const { productIds } = req.body;
+      
+      if (!productIds || productIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'No product IDs provided'
+        });
+      }
+
+      const results = await productService.bulkDeleteProducts(productIds, tenantId, userId);
+      
+      res.json({
+        success: true,
+        message: `Bulk deletion completed: ${results.successful.length} successful, ${results.failed.length} failed`,
+        results
+      });
+    } catch (error) {
+      logger.error(`Bulk product deletion failed: ${error.message}`);
+      res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  // Get bulk import template
+  async getBulkImportTemplate(req, res) {
+    try {
+      const template = productService.generateBulkImportTemplate();
+      
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename="product-import-template.csv"');
+      res.send(template);
+    } catch (error) {
+      logger.error(`Generate template failed: ${error.message}`);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to generate template'
+      });
+    }
+  }
+
+  // Validate bulk import data
+  async validateBulkImport(req, res) {
+    try {
+      const { csvData, products } = req.body;
+      
+      let productsData = products;
+      
+      if (csvData) {
+        productsData = productService.parseBulkProductData(csvData);
+      }
+      
+      if (!productsData || productsData.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'No products data provided'
+        });
+      }
+
+      const validationErrors = productService.validateBulkProductData(productsData);
+      
+      res.json({
+        success: true,
+        valid: validationErrors.length === 0,
+        totalProducts: productsData.length,
+        errors: validationErrors,
+        products: productsData
+      });
+    } catch (error) {
+      logger.error(`Bulk validation failed: ${error.message}`);
+      res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
 }
 
 export default new ProductController();

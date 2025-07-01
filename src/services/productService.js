@@ -423,6 +423,363 @@ class ProductService {
       throw error;
     }
   }
+
+  // Bulk create products
+  async bulkCreateProducts(productsData, tenantId, userId) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    
+    try {
+      const results = {
+        successful: [],
+        failed: [],
+        totalProcessed: productsData.length
+      };
+
+      for (let i = 0; i < productsData.length; i++) {
+        try {
+          const productData = {
+            ...productsData[i],
+            tenantId,
+            createdBy: userId
+          };
+
+          // Auto-generate SKUs if not provided
+          if (productData.variants) {
+            productData.variants = productData.variants.map((variant, index) => ({
+              ...variant,
+              sku: variant.sku || `${productData.provider || 'GEN'}-${Date.now()}-${i}-${index + 1}`
+            }));
+          }
+
+          // Generate unique slug
+          if (!productData.slug) {
+            productData.slug = this.generateUniqueSlug(productData.name, tenantId);
+          }
+
+          const product = new Product(productData);
+          await product.save({ session });
+          
+          results.successful.push({
+            index: i,
+            product: product.toJSON(),
+            originalData: productsData[i]
+          });
+
+        } catch (error) {
+          results.failed.push({
+            index: i,
+            error: error.message,
+            originalData: productsData[i]
+          });
+        }
+      }
+
+      await session.commitTransaction();
+      
+      logger.info(`Bulk product creation completed: ${results.successful.length} successful, ${results.failed.length} failed`);
+      return results;
+
+    } catch (error) {
+      await session.abortTransaction();
+      logger.error(`Bulk product creation failed: ${error.message}`);
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
+
+  // Generate unique slug helper
+  async generateUniqueSlug(name, tenantId) {
+    let baseSlug = name
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/(^-)|(-$)/g, '');
+    
+    let slug = baseSlug;
+    let counter = 1;
+    
+    while (await Product.findOne({ slug, tenantId })) {
+      slug = `${baseSlug}-${counter}`;
+      counter++;
+    }
+    
+    return slug;
+  }
+
+  // Bulk update products
+  async bulkUpdateProducts(updates, tenantId, userId) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    
+    try {
+      const results = {
+        successful: [],
+        failed: [],
+        totalProcessed: updates.length
+      };
+
+      for (let i = 0; i < updates.length; i++) {
+        try {
+          const { productId, updateData } = updates[i];
+          
+          const product = await Product.findOneAndUpdate(
+            { _id: productId, tenantId, isDeleted: false },
+            { ...updateData, updatedBy: userId },
+            { new: true, session }
+          );
+
+          if (!product) {
+            throw new Error(`Product not found: ${productId}`);
+          }
+
+          results.successful.push({
+            index: i,
+            product: product.toJSON(),
+            originalData: updates[i]
+          });
+
+        } catch (error) {
+          results.failed.push({
+            index: i,
+            error: error.message,
+            originalData: updates[i]
+          });
+        }
+      }
+
+      await session.commitTransaction();
+      
+      logger.info(`Bulk product update completed: ${results.successful.length} successful, ${results.failed.length} failed`);
+      return results;
+
+    } catch (error) {
+      await session.abortTransaction();
+      logger.error(`Bulk product update failed: ${error.message}`);
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
+
+  // Bulk delete products
+  async bulkDeleteProducts(productIds, tenantId, userId) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    
+    try {
+      const results = {
+        successful: [],
+        failed: [],
+        totalProcessed: productIds.length
+      };
+
+      for (let i = 0; i < productIds.length; i++) {
+        try {
+          const productId = productIds[i];
+          
+          const product = await Product.findOneAndUpdate(
+            { _id: productId, tenantId, isDeleted: false },
+            { 
+              isDeleted: true, 
+              deletedAt: new Date(), 
+              deletedBy: userId 
+            },
+            { new: true, session }
+          );
+
+          if (!product) {
+            throw new Error(`Product not found: ${productId}`);
+          }
+
+          results.successful.push({
+            index: i,
+            productId,
+            productName: product.name
+          });
+
+        } catch (error) {
+          results.failed.push({
+            index: i,
+            error: error.message,
+            productId: productIds[i]
+          });
+        }
+      }
+
+      await session.commitTransaction();
+      
+      logger.info(`Bulk product deletion completed: ${results.successful.length} successful, ${results.failed.length} failed`);
+      return results;
+
+    } catch (error) {
+      await session.abortTransaction();
+      logger.error(`Bulk product deletion failed: ${error.message}`);
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
+
+  // Parse CSV data for bulk import
+  parseBulkProductData(csvData) {
+    try {
+      const lines = csvData.split('\n').filter(line => line.trim());
+      if (lines.length < 2) {
+        throw new Error('CSV must contain at least a header row and one data row');
+      }
+
+      const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+      const products = [];
+
+      for (let i = 1; i < lines.length; i++) {
+        const values = lines[i].split(',').map(v => v.trim());
+        if (values.length !== headers.length) continue;
+
+        const productData = {};
+        const variants = [];
+
+        headers.forEach((header, index) => {
+          const value = values[index];
+          
+          switch (header) {
+            case 'name':
+            case 'product_name':
+              productData.name = value;
+              break;
+            case 'description':
+              productData.description = value;
+              break;
+            case 'category':
+              productData.category = value;
+              break;
+            case 'provider':
+              productData.provider = value;
+              break;
+            case 'tags':
+              productData.tags = value.split(';').map(tag => tag.trim());
+              break;
+            case 'variant_name':
+              if (!variants[0]) variants[0] = {};
+              variants[0].name = value;
+              break;
+            case 'variant_price':
+            case 'price':
+              if (!variants[0]) variants[0] = {};
+              variants[0].price = parseFloat(value) || 0;
+              break;
+            case 'variant_inventory':
+            case 'inventory':
+              if (!variants[0]) variants[0] = {};
+              variants[0].inventory = parseInt(value) || 0;
+              break;
+            case 'data_volume':
+              if (!variants[0]) variants[0] = {};
+              variants[0].dataVolume = parseFloat(value) || 0;
+              break;
+            case 'validity':
+              if (!variants[0]) variants[0] = {};
+              variants[0].validity = parseInt(value) || 0;
+              break;
+            case 'network':
+              if (!variants[0]) variants[0] = {};
+              variants[0].network = value;
+              break;
+            case 'bundle_type':
+              if (!variants[0]) variants[0] = {};
+              variants[0].bundleType = value;
+              break;
+          }
+        });
+
+        if (productData.name && variants.length > 0) {
+          productData.variants = variants;
+          products.push(productData);
+        }
+      }
+
+      return products;
+    } catch (error) {
+      logger.error(`CSV parsing failed: ${error.message}`);
+      throw new Error(`Failed to parse CSV data: ${error.message}`);
+    }
+  }
+
+  // Validate bulk product data
+  validateBulkProductData(productsData) {
+    const errors = [];
+    
+    productsData.forEach((product, index) => {
+      const productErrors = [];
+      
+      if (!product.name || product.name.trim() === '') {
+        productErrors.push('Product name is required');
+      }
+      
+      if (!product.category) {
+        productErrors.push('Category is required');
+      }
+      
+      if (!product.variants || product.variants.length === 0) {
+        productErrors.push('At least one variant is required');
+      } else {
+        product.variants.forEach((variant, variantIndex) => {
+          if (!variant.name) {
+            productErrors.push(`Variant ${variantIndex + 1}: Name is required`);
+          }
+          if (variant.price === undefined || variant.price < 0) {
+            productErrors.push(`Variant ${variantIndex + 1}: Valid price is required`);
+          }
+        });
+      }
+      
+      if (productErrors.length > 0) {
+        errors.push({
+          index,
+          productName: product.name || `Product ${index + 1}`,
+          errors: productErrors
+        });
+      }
+    });
+    
+    return errors;
+  }
+
+  // Generate template for bulk import
+  generateBulkImportTemplate() {
+    const headers = [
+      'name',
+      'description',
+      'category',
+      'provider',
+      'tags',
+      'variant_name',
+      'price',
+      'inventory',
+      'data_volume',
+      'validity',
+      'network',
+      'bundle_type'
+    ];
+
+    const sampleData = [
+      'MTN 1GB Daily Bundle',
+      'Affordable daily data bundle',
+      'data-bundle',
+      'MTN',
+      'data;daily;affordable',
+      '1GB Daily',
+      '5.00',
+      '100',
+      '1',
+      '1',
+      'MTN',
+      'data'
+    ];
+
+    return `${headers.join(',')}\n${sampleData.join(',')}`;
+  }
 }
 
 export default new ProductService();

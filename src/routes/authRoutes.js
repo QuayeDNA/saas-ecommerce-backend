@@ -21,12 +21,13 @@ const validateForgotPassword = validate(forgotPasswordValidation);
 const validateResetPassword = validate(resetPasswordValidation);
 
 // Public routes
-router.post('/register/agent', validateRegisterAgent, authController.registerAgent);
-router.post('/register/customer', validateRegisterCustomer, authController.registerCustomer);
-router.post('/login', validateLogin, authController.login);
+router.post('/login', authController.login);
+router.post('/refresh', authController.refreshToken);
+router.post('/register/agent', authController.registerAgent);
+router.post('/register/customer', authController.registerCustomer);
 router.post('/verify-account', authController.verifyAccount);
-router.post('/forgot-password', validateForgotPassword, authController.forgotPassword);
-router.post('/reset-password', validateResetPassword, authController.resetPassword);
+router.post('/forgot-password', authController.forgotPassword);
+router.post('/reset-password', authController.resetPassword);
 
 // Protected routes
 router.post('/verify-token', authenticate, authController.verifyToken);
