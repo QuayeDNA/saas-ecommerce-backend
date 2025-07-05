@@ -5,39 +5,84 @@ import mongoose from 'mongoose';
 import logger from '../utils/logger.js';
 
 class OrderService {
+  // Check if MongoDB supports transactions (replica set or sharded cluster)
+  async supportsTransactions() {
+    try {
+      const adminDb = mongoose.connection.db.admin();
+      const result = await adminDb.command({ replSetGetStatus: 1 });
+      return result.ok === 1;
+    } catch (error) {
+      // If replSetGetStatus fails, we're probably on a standalone instance
+      logger.info('MongoDB transactions not supported (standalone instance)', error.message);
+      return false;
+    }
+  }
+
+  // Execute operation with optional transaction support
+  async executeWithTransaction(operation) {
+    const useTransactions = await this.supportsTransactions();
+    
+    if (useTransactions) {
+      const session = await mongoose.startSession();
+      session.startTransaction();
+      
+      try {
+        const result = await operation(session);
+        await session.commitTransaction();
+        return result;
+      } catch (error) {
+        await session.abortTransaction();
+        throw error;
+      } finally {
+        session.endSession();
+      }
+    } else {
+      // Execute without transactions for standalone MongoDB
+      return await operation(null);
+    }
+  }
+
   // Create single order
   async createSingleOrder(orderData, tenantId, userId) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-    
-    try {
-      const { productId, variantId, customerPhone, bundleSize, quantity = 1 } = orderData;
+    return await this.executeWithTransaction(async (session) => {
+      const { packageGroupId, packageItemId, customerPhone, bundleSize, quantity = 1 } = orderData;
       
-      // Get product and variant details
-      const product = await Product.findOne({
-        _id: productId,
-        tenantId,
-        isActive: true,
-        isDeleted: false
-      }).session(session);
+      // Get package group and package item details
+      const packageGroup = session 
+        ? await Product.findOne({
+            _id: packageGroupId,
+            tenantId,
+            isActive: true,
+            isDeleted: false
+          }).session(session)
+        : await Product.findOne({
+            _id: packageGroupId,
+            tenantId,
+            isActive: true,
+            isDeleted: false
+          });
       
-      if (!product) {
-        throw new Error('Product not found');
+      if (!packageGroup) {
+        throw new Error('Package group not found');
       }
       
-      const variant = product.variants.id(variantId);
-      if (!variant || !variant.isActive) {
-        throw new Error('Product variant not found or inactive');
+      const packageItem = packageGroup.packageItems.id(packageItemId);
+      if (!packageItem || !packageItem.isActive || packageItem.isDeleted) {
+        throw new Error('Package item not found or inactive');
       }
       
       // Check inventory
-      if (variant.availableInventory < quantity) {
-        throw new Error(`Insufficient inventory. Available: ${variant.availableInventory}`);
+      if (packageItem.availableInventory < quantity) {
+        throw new Error(`Insufficient inventory. Available: ${packageItem.availableInventory}`);
       }
       
       // Reserve inventory
-      variant.reservedInventory += quantity;
-      await product.save({ session });
+      packageItem.reservedInventory += quantity;
+      if (session) {
+        await packageGroup.save({ session });
+      } else {
+        await packageGroup.save();
+      }
       
       // Create order
       const order = new Order({
@@ -45,20 +90,19 @@ class OrderService {
         tenantId,
         createdBy: userId,
         items: [{
-          product: productId,
-          variant: variantId,
-          variantDetails: {
-            name: variant.name,
-            sku: variant.sku,
-            price: variant.price,
-            dataVolume: variant.dataVolume,
-            validity: variant.validity,
-            network: variant.network,
-            bundleType: variant.bundleType
+          packageGroup: packageGroupId,
+          packageItem: packageItemId,
+          packageDetails: {
+            name: packageItem.name,
+            code: packageItem.code,
+            price: packageItem.price,
+            dataVolume: packageItem.dataVolume,
+            validity: packageItem.validity,
+            provider: packageGroup.provider,
           },
           quantity,
-          unitPrice: variant.price,
-          totalPrice: variant.price * quantity,
+          unitPrice: packageItem.price,
+          totalPrice: packageItem.price * quantity,
           customerPhone,
           bundleSize: bundleSize ? {
             value: bundleSize.value,
@@ -66,29 +110,25 @@ class OrderService {
           } : undefined
         }],
         paymentMethod: 'wallet',
-        status: 'confirmed'
+        status: 'confirmed',
+        // The pre-save hook will calculate subtotal, total, and generate orderNumber
       });
       
-      await order.save({ session });
-      await session.commitTransaction();
+      if (session) {
+        await order.save({ session });
+      } else {
+        await order.save();
+      }
       
       logger.info(`Single order created: ${order.orderNumber}`);
       return order;
-    } catch (error) {
-      await session.abortTransaction();
-      throw error;
-    } finally {
-      session.endSession();
-    }
+    });
   }
   
   // Create bulk order
   async createBulkOrder(bulkData, tenantId, userId) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-    
-    try {
-      const { productId, variantId, rawInput } = bulkData;
+    return await this.executeWithTransaction(async (session) => {
+      const { packageGroupId, packageItemId, rawInput } = bulkData;
       
       // Parse bulk input
       const parsedItems = this.parseBulkInput(rawInput);
@@ -96,49 +136,59 @@ class OrderService {
         throw new Error('No valid items found in bulk input');
       }
       
-      // Get product and variant details
-      const product = await Product.findOne({
-        _id: productId,
-        tenantId,
-        isActive: true,
-        isDeleted: false
-      }).session(session);
+      // Get package group and package item details
+      const packageGroup = session 
+        ? await Product.findOne({
+            _id: packageGroupId,
+            tenantId,
+            isActive: true,
+            isDeleted: false
+          }).session(session)
+        : await Product.findOne({
+            _id: packageGroupId,
+            tenantId,
+            isActive: true,
+            isDeleted: false
+          });
       
-      if (!product) {
-        throw new Error('Product not found');
+      if (!packageGroup) {
+        throw new Error('Package group not found');
       }
       
-      const variant = product.variants.id(variantId);
-      if (!variant || !variant.isActive) {
-        throw new Error('Product variant not found or inactive');
+      const packageItem = packageGroup.packageItems.id(packageItemId);
+      if (!packageItem || !packageItem.isActive || packageItem.isDeleted) {
+        throw new Error('Package item not found or inactive');
       }
       
       // Check total inventory needed
       const totalQuantity = parsedItems.length;
-      if (variant.availableInventory < totalQuantity) {
-        throw new Error(`Insufficient inventory. Available: ${variant.availableInventory}, Required: ${totalQuantity}`);
+      if (packageItem.availableInventory < totalQuantity) {
+        throw new Error(`Insufficient inventory. Available: ${packageItem.availableInventory}, Required: ${totalQuantity}`);
       }
       
       // Reserve inventory
-      variant.reservedInventory += totalQuantity;
-      await product.save({ session });
+      packageItem.reservedInventory += totalQuantity;
+      if (session) {
+        await packageGroup.save({ session });
+      } else {
+        await packageGroup.save();
+      }
       
       // Create order items
       const orderItems = parsedItems.map(item => ({
-        product: productId,
-        variant: variantId,
-        variantDetails: {
-          name: variant.name,
-          sku: variant.sku,
-          price: variant.price,
-          dataVolume: variant.dataVolume,
-          validity: variant.validity,
-          network: variant.network,
-          bundleType: variant.bundleType
+        packageGroup: packageGroupId,
+        packageItem: packageItemId,
+        packageDetails: {
+          name: packageItem.name,
+          code: packageItem.code,
+          price: packageItem.price,
+          dataVolume: packageItem.dataVolume,
+          validity: packageItem.validity,
+          provider: packageGroup.provider,
         },
         quantity: 1,
-        unitPrice: variant.price,
-        totalPrice: variant.price,
+        unitPrice: packageItem.price,
+        totalPrice: packageItem.price,
         customerPhone: item.phone,
         bundleSize: {
           value: item.bundleSize.value,
@@ -159,20 +209,19 @@ class OrderService {
           failedItems: 0
         },
         paymentMethod: 'wallet',
-        status: 'confirmed'
+        status: 'confirmed',
+        // The pre-save hook will calculate subtotal, total, and generate orderNumber
       });
       
-      await order.save({ session });
-      await session.commitTransaction();
+      if (session) {
+        await order.save({ session });
+      } else {
+        await order.save();
+      }
       
       logger.info(`Bulk order created: ${order.orderNumber} with ${parsedItems.length} items`);
       return order;
-    } catch (error) {
-      await session.abortTransaction();
-      throw error;
-    } finally {
-      session.endSession();
-    }
+    });
   }
   
   // Parse bulk input format: "phone:bundleSize" per line
@@ -181,29 +230,24 @@ class OrderService {
     const items = [];
     
     for (const line of lines) {
-      try {
-        const [phone, bundleSizeStr] = line.split(':').map(s => s.trim());
-        
-        if (!phone || !bundleSizeStr) continue;
-        
-        // Parse bundle size (e.g., "1GB", "500MB")
-        const bundleMatch = bundleSizeStr.match(/^(\d+(?:\.\d+)?)(MB|GB)$/i);
-        if (!bundleMatch) continue;
-        
-        const value = parseFloat(bundleMatch[1]);
-        const unit = bundleMatch[2].toUpperCase();
-        
-        // Validate phone number
-        if (!/^\+?[\d\s-()]{10,}$/.test(phone)) continue;
-        
-        items.push({
-          phone,
-          bundleSize: { value, unit }
-        });
-      } catch (error) {
-        logger.warn(`Failed to parse bulk line: ${line}`);
-        continue;
-      }
+      const [phone, bundleSizeStr] = line.split(':').map(s => s.trim());
+      
+      if (!phone || !bundleSizeStr) continue;
+      
+      // Parse bundle size (e.g., "1GB", "500MB")
+      const bundleMatch = bundleSizeStr.match(/^(\d+(?:\.\d+)?)(MB|GB)$/i);
+      if (!bundleMatch) continue;
+      
+      const value = parseFloat(bundleMatch[1]);
+      const unit = bundleMatch[2].toUpperCase();
+      
+      // Validate phone number
+      if (!/^\+?[\d\s-()]{10,}$/.test(phone)) continue;
+      
+      items.push({
+        phone,
+        bundleSize: { value, unit }
+      });
     }
     
     return items;
@@ -244,7 +288,7 @@ class OrderService {
     
     const [orders, total] = await Promise.all([
       Order.find(query)
-        .populate('items.product', 'name category provider')
+        .populate('items.packageGroup', 'name provider')
         .populate('createdBy', 'fullName email')
         .populate('processedBy', 'fullName email')
         .skip((page - 1) * limit)
@@ -266,14 +310,16 @@ class OrderService {
   
   // Process single order item
   async processOrderItem(orderId, itemId, tenantId, userId) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-    
-    try {
-      const order = await Order.findOne({
-        _id: orderId,
-        tenantId
-      }).session(session);
+    return await this.executeWithTransaction(async (session) => {
+      const order = session 
+        ? await Order.findOne({
+            _id: orderId,
+            tenantId
+          }).session(session)
+        : await Order.findOne({
+            _id: orderId,
+            tenantId
+          });
       
       if (!order) {
         throw new Error('Order not found');
@@ -300,37 +346,46 @@ class OrderService {
         item.processedAt = new Date();
         
         // Release reserved inventory and reduce actual inventory
-        const product = await Product.findById(item.product).session(session);
-        const variant = product.variants.id(item.variant);
-        variant.reservedInventory -= item.quantity;
-        variant.inventory -= item.quantity;
-        await product.save({ session });
+        const packageGroup = session 
+          ? await Product.findById(item.packageGroup).session(session)
+          : await Product.findById(item.packageGroup);
+        const packageItem = packageGroup.packageItems.id(item.packageItem);
+        packageItem.reservedInventory -= item.quantity;
+        packageItem.inventory -= item.quantity;
+        if (session) {
+          await packageGroup.save({ session });
+        } else {
+          await packageGroup.save();
+        }
         
       } catch (processingError) {
         item.processingStatus = 'failed';
         item.processingError = processingError.message;
         
         // Release reserved inventory without reducing actual inventory
-        const product = await Product.findById(item.product).session(session);
-        const variant = product.variants.id(item.variant);
-        variant.reservedInventory -= item.quantity;
-        await product.save({ session });
+        const packageGroup = session 
+          ? await Product.findById(item.packageGroup).session(session)
+          : await Product.findById(item.packageGroup);
+        const packageItem = packageGroup.packageItems.id(item.packageItem);
+        packageItem.reservedInventory -= item.quantity;
+        if (session) {
+          await packageGroup.save({ session });
+        } else {
+          await packageGroup.save();
+        }
       }
       
       // Update order status
       await order.updateStatus();
-      await order.save({ session });
-      
-      await session.commitTransaction();
+      if (session) {
+        await order.save({ session });
+      } else {
+        await order.save();
+      }
       
       logger.info(`Order item processed: ${orderId}/${itemId} - Status: ${item.processingStatus}`);
       return order;
-    } catch (error) {
-      await session.abortTransaction();
-      throw error;
-    } finally {
-      session.endSession();
-    }
+    });
   }
   
   // Process bulk order
@@ -419,14 +474,16 @@ class OrderService {
   
   // Cancel order
   async cancelOrder(orderId, tenantId, userId, reason) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-    
-    try {
-      const order = await Order.findOne({
-        _id: orderId,
-        tenantId
-      }).session(session);
+    return await this.executeWithTransaction(async (session) => {
+      const order = session 
+        ? await Order.findOne({
+            _id: orderId,
+            tenantId
+          }).session(session)
+        : await Order.findOne({
+            _id: orderId,
+            tenantId
+          });
       
       if (!order) {
         throw new Error('Order not found');
@@ -439,10 +496,16 @@ class OrderService {
       // Release reserved inventory
       for (const item of order.items) {
         if (item.processingStatus === 'pending') {
-          const product = await Product.findById(item.product).session(session);
-          const variant = product.variants.id(item.variant);
-          variant.reservedInventory -= item.quantity;
-          await product.save({ session });
+          const packageGroup = session 
+            ? await Product.findById(item.packageGroup).session(session)
+            : await Product.findById(item.packageGroup);
+          const packageItem = packageGroup.packageItems.id(item.packageItem);
+          packageItem.reservedInventory -= item.quantity;
+          if (session) {
+            await packageGroup.save({ session });
+          } else {
+            await packageGroup.save();
+          }
           
           item.processingStatus = 'cancelled';
         }
@@ -452,17 +515,15 @@ class OrderService {
       order.notes = reason || 'Order cancelled';
       order.processedBy = userId;
       
-      await order.save({ session });
-      await session.commitTransaction();
+      if (session) {
+        await order.save({ session });
+      } else {
+        await order.save();
+      }
       
       logger.info(`Order cancelled: ${order.orderNumber}`);
       return order;
-    } catch (error) {
-      await session.abortTransaction();
-      throw error;
-    } finally {
-      session.endSession();
-    }
+    });
   }
 }
 

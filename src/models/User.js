@@ -86,6 +86,23 @@ const userSchema = new mongoose.Schema({
   createdAt: { 
     type: Date, 
     default: Date.now 
+  },
+  // AFA Registration fields
+  afaRegistration: {
+    afaId: String,
+    registrationType: {
+      type: String,
+      enum: ['agent', 'subscriber']
+    },
+    fullName: String,
+    phone: String,
+    registrationFee: Number,
+    status: {
+      type: String,
+      enum: ['pending', 'completed', 'failed'],
+      default: 'pending'
+    },
+    registrationDate: Date
   }
 });
 

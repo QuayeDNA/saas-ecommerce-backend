@@ -2,23 +2,22 @@
 import mongoose from 'mongoose';
 
 const orderItemSchema = new mongoose.Schema({
-  product: {
+  packageGroup: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Product',
+    ref: 'PackageGroup',
     required: true
   },
-  variant: {
+  packageItem: {
     type: mongoose.Schema.Types.ObjectId,
     required: true
   },
-  variantDetails: {
+  packageDetails: {
     name: String,
-    sku: String,
+    code: String,
     price: Number,
     dataVolume: Number,
     validity: Number,
-    network: String,
-    bundleType: String
+    provider: String,
   },
   quantity: {
     type: Number,
@@ -38,9 +37,7 @@ const orderItemSchema = new mongoose.Schema({
   // Mobile bundle specific fields
   customerPhone: {
     type: String,
-    required: function() {
-      return this.variantDetails?.bundleType;
-    },
+    required: true,
     match: [/^\+?[\d\s-()]{10,}$/, 'Please enter a valid phone number']
   },
   bundleSize: {
@@ -69,7 +66,7 @@ const orderSchema = new mongoose.Schema({
   orderNumber: {
     type: String,
     unique: true,  // This already creates an index
-    required: true
+    // Will be generated in pre-save hook if not provided
   },
   orderType: {
     type: String,
@@ -94,8 +91,9 @@ const orderSchema = new mongoose.Schema({
   // Pricing
   subtotal: {
     type: Number,
-    required: true,
+    default: 0,
     min: 0
+    // Will be calculated in pre-save hook
   },
   tax: {
     type: Number,
@@ -109,8 +107,9 @@ const orderSchema = new mongoose.Schema({
   },
   total: {
     type: Number,
-    required: true,
+    default: 0,
     min: 0
+    // Will be calculated in pre-save hook
   },
   
   // Order status
@@ -181,6 +180,7 @@ orderSchema.index({ tenantId: 1, status: 1 });
 orderSchema.index({ tenantId: 1, orderType: 1 });
 orderSchema.index({ createdAt: -1 });
 orderSchema.index({ 'items.customerPhone': 1 });
+orderSchema.index({ 'items.packageDetails.provider': 1 });
 
 // Additional useful indexes for order management
 orderSchema.index({ tenantId: 1, createdAt: -1 });
@@ -196,6 +196,7 @@ orderSchema.virtual('completionPercentage').get(function() {
 
 // Pre-save middleware to generate order number
 orderSchema.pre('save', async function(next) {
+  // Generate order number if not provided
   if (!this.orderNumber) {
     const date = new Date();
     const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
@@ -204,7 +205,17 @@ orderSchema.pre('save', async function(next) {
   }
   
   // Calculate totals
-  this.subtotal = this.items.reduce((sum, item) => sum + item.totalPrice, 0);
+  if (this.items && this.items.length > 0) {
+    this.subtotal = this.items.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
+  } else {
+    this.subtotal = 0;
+  }
+  
+  // Ensure tax and discount have default values
+  this.tax = this.tax || 0;
+  this.discount = this.discount || 0;
+  
+  // Calculate final total
   this.total = this.subtotal + this.tax - this.discount;
   
   next();

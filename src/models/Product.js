@@ -1,39 +1,25 @@
 // src/models/Product.js
 import mongoose from "mongoose";
 
-// Update SKU validator in variantSchema to use ownerDocument and mongoose.model
-const attributeSchema = new mongoose.Schema(
-  {
-    key: { type: String, required: true },
-    value: { type: mongoose.Schema.Types.Mixed, required: true },
-    label: String,
-    dataType: {
-      type: String,
-      enum: ["string", "number", "boolean", "date", "array"],
-      default: "string",
-    },
-  },
-  { _id: false }
-);
-
-const variantSchema = new mongoose.Schema(
+// Schema for single packages (previously variants)
+const packageItemSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
     description: String,
-    sku: {
+    code: {
       type: String,
       required: true,
       validate: {
-        validator: async function (sku) {
-          const product = this.parent();
-          const existing = await product.constructor.findOne({
-            "variants.sku": sku,
-            tenantId: product.tenantId,
-            _id: { $ne: product._id },
+        validator: async function (code) {
+          const packageGroup = this.parent();
+          const existing = await packageGroup.constructor.findOne({
+            "packageItems.code": code,
+            tenantId: packageGroup.tenantId,
+            _id: { $ne: packageGroup._id },
           });
           return !existing;
         },
-        message: "SKU must be unique within tenant",
+        message: "Package code must be unique within tenant",
       },
     },
     price: { type: Number, required: true, min: 0 },
@@ -49,26 +35,11 @@ const variantSchema = new mongoose.Schema(
     },
     reservedInventory: { type: Number, default: 0, min: 0 },
     lowStockThreshold: { type: Number, default: 10 },
-    attributes: [attributeSchema],
     isActive: { type: Boolean, default: true },
-    images: [
-      {
-        url: String,
-        alt: String,
-        isPrimary: { type: Boolean, default: false },
-      },
-    ],
+    
     // Mobile bundle specific fields
-    dataVolume: { type: Number }, // in GB
-    validity: { type: Number }, // in days
-    network: {
-      type: String,
-      enum: ["MTN", "Vodafone", "AirtelTigo", "Glo"],
-    },
-    bundleType: {
-      type: String,
-      enum: ["data", "voice", "sms", "combo"],
-    },
+    dataVolume: { type: Number, required: true }, // in GB
+    validity: { type: Number, required: true }, // in days
     isDeleted: { type: Boolean, default: false },
     deletedAt: Date,
     deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
@@ -76,38 +47,22 @@ const variantSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-const productSchema = new mongoose.Schema(
+// Schema for package groups (e.g., "Daily Bundles", "Weekly Bundles")
+const packageGroupSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
     description: { type: String, trim: true },
-    category: {
-      type: String,
-      required: true,
-      enum: [
-        "data-bundle",
-        "voice-bundle",
-        "sms-bundle",
-        "combo-bundle",
-        "physical",
-        "digital",
-        "service",
-      ],
-    },
-    subCategory: String,
     provider: {
       type: String,
-      required: function () {
-        return [
-          "data-bundle",
-          "voice-bundle",
-          "sms-bundle",
-          "combo-bundle",
-        ].includes(this.category);
-      },
-      enum: ["MTN", "Vodafone", "AirtelTigo", "Glo", "Other"],
+      required: true,
+      enum: ["MTN", "Vodafone", "AirtelTigo", "Glo"],
     },
-    variants: [variantSchema],
-    attributes: [attributeSchema],
+    packageItems: [packageItemSchema],
+    banner: {
+      url: String,
+      alt: String,
+    },
+    isActive: { type: Boolean, default: true },
     tags: [String],
 
     // Multi-tenant and audit fields
@@ -124,21 +79,16 @@ const productSchema = new mongoose.Schema(
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 
     // Status and lifecycle
-    isActive: { type: Boolean, default: true },
     isDeleted: { type: Boolean, default: false },
     deletedAt: Date,
     deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 
-    // SEO and display
+    // SEO fields
     slug: { type: String, unique: true },
-    metaTitle: String,
-    metaDescription: String,
 
     // Business metrics
     salesCount: { type: Number, default: 0 },
     viewCount: { type: Number, default: 0 },
-    rating: { type: Number, min: 0, max: 5, default: 0 },
-    reviewCount: { type: Number, default: 0 },
   },
   {
     timestamps: true,
@@ -147,22 +97,13 @@ const productSchema = new mongoose.Schema(
   }
 );
 
-// Indexes for efficient querying
-productSchema.index({ tenantId: 1, category: 1 });
-productSchema.index({ tenantId: 1, provider: 1 });
-productSchema.index({ tenantId: 1, isActive: 1, isDeleted: 1 });
-productSchema.index({ "variants.sku": 1 }, { unique: true, sparse: true });
-productSchema.index({ tags: 1 });
-productSchema.index({ "variants.network": 1 });
-productSchema.index({ "variants.bundleType": 1 });
-
 // Virtual for available inventory (total - reserved)
-variantSchema.virtual("availableInventory").get(function () {
+packageItemSchema.virtual("availableInventory").get(function () {
   return this.inventory - this.reservedInventory;
 });
 
 // Pre-save middleware for slug generation
-productSchema.pre("save", function (next) {
+packageGroupSchema.pre("save", function (next) {
   if (this.isModified("name") && !this.slug) {
     this.slug =
       this.name
@@ -176,28 +117,34 @@ productSchema.pre("save", function (next) {
   next();
 });
 
+// Indexes for efficient querying
+packageGroupSchema.index({ tenantId: 1, provider: 1 });
+packageGroupSchema.index({ tenantId: 1, isActive: 1, isDeleted: 1 });
+packageGroupSchema.index({ "packageItems.code": 1 }, { sparse: true });
+packageGroupSchema.index({ tags: 1 });
+
 // Instance methods
-productSchema.methods.softDelete = function (userId) {
+packageGroupSchema.methods.softDelete = function (userId) {
   this.isDeleted = true;
   this.deletedAt = new Date();
   this.deletedBy = userId;
   return this.save();
 };
 
-productSchema.methods.restore = function () {
+packageGroupSchema.methods.restore = function () {
   this.isDeleted = false;
   this.deletedAt = undefined;
   this.deletedBy = undefined;
   return this.save();
 };
 
-productSchema.methods.getLowStockVariants = function () {
-  return this.variants.filter(
-    (variant) =>
-      variant.availableInventory <= variant.lowStockThreshold &&
-      variant.isActive &&
-      !variant.isDeleted
+packageGroupSchema.methods.getLowStockItems = function () {
+  return this.packageItems.filter(
+    (item) =>
+      item.availableInventory <= item.lowStockThreshold &&
+      item.isActive &&
+      !item.isDeleted
   );
 };
 
-export default mongoose.model("Product", productSchema);
+export default mongoose.model("PackageGroup", packageGroupSchema);

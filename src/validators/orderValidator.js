@@ -3,8 +3,8 @@ import { body, param } from 'express-validator';
 
 export const orderValidation = {
   createSingle: [
-    body('productId').isMongoId().withMessage('Invalid product ID'),
-    body('variantId').notEmpty().withMessage('Variant ID is required'),
+    body('packageGroupId').isMongoId().withMessage('Invalid package group ID'),
+    body('packageItemId').notEmpty().withMessage('Package item ID is required'),
     body('customerPhone')
       .matches(/^\+?[\d\s-()]{10,}$/)
       .withMessage('Please enter a valid phone number'),
@@ -23,8 +23,8 @@ export const orderValidation = {
   ],
   
   createBulk: [
-    body('productId').isMongoId().withMessage('Invalid product ID'),
-    body('variantId').notEmpty().withMessage('Variant ID is required'),
+    body('packageGroupId').isMongoId().withMessage('Invalid package group ID'),
+    body('packageItemId').notEmpty().withMessage('Package item ID is required'),
     body('rawInput')
       .notEmpty()
       .withMessage('Bulk input data is required')

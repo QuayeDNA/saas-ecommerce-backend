@@ -1,5 +1,6 @@
 // src/controllers/orderController.js
 import orderService from '../services/orderService.js';
+import Order from '../models/Order.js';
 import logger from '../utils/logger.js';
 
 class OrderController {
@@ -83,7 +84,7 @@ class OrderController {
       const { id } = req.params;
       
       const order = await Order.findOne({ _id: id, tenantId })
-        .populate('items.product', 'name category provider')
+        .populate('items.packageGroup', 'name provider')
         .populate('createdBy', 'fullName email')
         .populate('processedBy', 'fullName email');
       
