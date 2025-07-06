@@ -73,12 +73,12 @@ const seedData = async () => {
         createdBy: tenantUser._id
       },
       {
-        name: 'Vodafone',
-        code: 'Vodafone',
-        description: 'Vodafone Ghana Mobile Network',
+        name: 'TELECEL',
+        code: 'TELECEL',
+        description: 'TELECEL Ghana Mobile Network',
         logo: {
           url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Vodafone_icon.svg/512px-Vodafone_icon.svg.png',
-          alt: 'Vodafone Logo'
+          alt: 'TELECEL Logo'
         },
         isActive: true,
         tags: ['mobile', 'data', 'voice'],
@@ -86,12 +86,12 @@ const seedData = async () => {
         createdBy: tenantUser._id
       },
       {
-        name: 'AirtelTigo',
-        code: 'AirtelTigo',
-        description: 'AirtelTigo Ghana Mobile Network',
+        name: 'AT (AirtelTigo)',
+        code: 'AT',
+        description: 'AT (AirtelTigo) Ghana Mobile Network',
         logo: {
           url: 'https://play-lh.googleusercontent.com/NiU2-fctnNdOtOnZ5NfLA9aBUwUGXGmZKOBXXFBSWE0HB92NGb8C-j0LzkPTNAO9mbg',
-          alt: 'AirtelTigo Logo'
+          alt: 'AT Logo'
         },
         isActive: true,
         tags: ['mobile', 'data', 'voice'],
@@ -209,13 +209,13 @@ const seedData = async () => {
         ]
       },
       {
-        name: 'Vodafone Daily Bundles',
-        description: 'Affordable daily data bundles from Vodafone',
-        provider: 'Vodafone',
-        slug: 'vodafone-daily-bundles',
+        name: 'TELECEL Daily Bundles',
+        description: 'Affordable daily data bundles from TELECEL',
+        provider: 'TELECEL',
+        slug: 'telecel-daily-bundles',
         banner: {
-          url: 'https://example.com/vodafone-daily-banner.jpg',
-          alt: 'Vodafone Daily Bundles Banner'
+          url: 'https://example.com/telecel-daily-banner.jpg',
+          alt: 'TELECEL Daily Bundles Banner'
         },
         isActive: true,
         tags: ['data', 'daily', 'affordable'],
@@ -225,7 +225,7 @@ const seedData = async () => {
           {
             name: '100MB Daily',
             description: 'Small daily data for light browsing',
-            code: 'VOD-DAILY-100MB',
+            code: 'TEL-DAILY-100MB',
             price: 1.0,
             costPrice: 0.8,
             inventory: 1000,
@@ -238,7 +238,7 @@ const seedData = async () => {
           {
             name: '500MB Daily',
             description: 'Medium daily data for regular browsing',
-            code: 'VOD-DAILY-500MB',
+            code: 'TEL-DAILY-500MB',
             price: 3.0,
             costPrice: 2.5,
             inventory: 1000,
@@ -251,13 +251,13 @@ const seedData = async () => {
         ]
       },
       {
-        name: 'AirtelTigo Freedom Bundles',
-        description: 'Affordable data bundles from AirtelTigo',
-        provider: 'AirtelTigo',
-        slug: 'airteltigo-freedom-bundles',
+        name: 'AT Freedom Bundles',
+        description: 'Affordable data bundles from AT (AirtelTigo)',
+        provider: 'AT',
+        slug: 'at-freedom-bundles',
         banner: {
-          url: 'https://example.com/airteltigo-banner.jpg',
-          alt: 'AirtelTigo Freedom Bundles Banner'
+          url: 'https://example.com/at-banner.jpg',
+          alt: 'AT Freedom Bundles Banner'
         },
         isActive: true,
         tags: ['data', 'freedom', 'affordable'],

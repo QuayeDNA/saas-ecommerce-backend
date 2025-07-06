@@ -5,7 +5,7 @@ export const packageValidation = {
   createPackageGroup: [
     body('name').trim().notEmpty().withMessage('Package group name is required'),
     body('provider')
-      .isIn(['MTN', 'Vodafone', 'AirtelTigo', 'Glo'])
+      .isIn(['MTN', 'TELECEL', 'AT', 'GLO'])
       .withMessage('Invalid provider'),
     body('packageItems').optional().isArray().withMessage('Package items must be an array'),
     body('packageItems.*.name').optional().notEmpty().withMessage('Package item name is required'),
@@ -17,7 +17,7 @@ export const packageValidation = {
   updatePackageGroup: [
     param('id').isMongoId().withMessage('Invalid package group ID'),
     body('name').optional().trim().notEmpty(),
-    body('provider').optional().isIn(['MTN', 'Vodafone', 'AirtelTigo', 'Glo']),
+    body('provider').optional().isIn(['MTN', 'TELECEL', 'AT', 'GLO']),
     body('isActive').optional().isBoolean()
   ],
   

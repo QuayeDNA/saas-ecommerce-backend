@@ -49,14 +49,16 @@ class EmailService {
         <p>Share this code with customers so they can register under your business.</p>
         <p>Please click the link below to verify your account:</p>
         <a href="${verificationUrl}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Verify Agent Account</a>
-        <p>This link will expire in 24 hours.</p>
+        <p>This link will expire in 10 minutes.</p>
         <hr>
         <p><small>Keep your agent code secure and only share it with legitimate customers.</small></p>
       `
     };
 
     if (process.env.NODE_ENV === 'development') {
-      logger.info(`[DEV] Simulated agent verification email to ${email}:`, mailOptions);
+      logger.info(`[DEV] Simulated agent verification email to ${email}`);
+      logger.info(`[DEV] Verification Link: ${verificationUrl}`);
+      logger.info(`[DEV] Agent Code: ${agentCode}`);
       return;
     }
 
@@ -79,12 +81,13 @@ class EmailService {
         <h2>Welcome to SaaS E-commerce!</h2>
         <p>Please click the link below to verify your customer account:</p>
         <a href="${verificationUrl}" style="background-color: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Verify Account</a>
-        <p>This link will expire in 24 hours.</p>
+        <p>This link will expire in 10 minutes.</p>
       `
     };
 
     if (process.env.NODE_ENV === 'development') {
-      logger.info(`[DEV] Simulated customer verification email to ${email}:`, mailOptions);
+      logger.info(`[DEV] Simulated customer verification email to ${email}`);
+      logger.info(`[DEV] Verification Link: ${verificationUrl}`);
       return;
     }
 

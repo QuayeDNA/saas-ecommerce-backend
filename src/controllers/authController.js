@@ -61,9 +61,9 @@ class AuthController {
         });
       }
 
-      // Generate verification token
+      // Generate verification token (10 minute expiry)
       const verificationToken = jwt.sign({ email }, process.env.JWTSECRET, {
-        expiresIn: "24h",
+        expiresIn: "10m", // 10 minutes instead of 24 hours
       });
 
       // Create agent (they are their own tenant)
@@ -148,9 +148,9 @@ class AuthController {
         tenantId = agent._id;
       }
 
-      // Generate verification token
+      // Generate verification token (10 minute expiry)
       const verificationToken = jwt.sign({ email }, process.env.JWTSECRET, {
-        expiresIn: "24h",
+        expiresIn: "10m", // 10 minutes instead of 24 hours
       });
 
       // Create customer
@@ -252,9 +252,29 @@ class AuthController {
 
       logger.info(`User logged in successfully: ${email} - Type: ${user.userType}`);
       
+      // Check for first-time login for agents
+      if (user.userType === "agent" && user.isFirstTime) {
+        // Import wallet service dynamically to avoid circular dependency
+        const walletService = (await import('../services/walletService.js')).default;
+        
+        // Initialize wallet with 100 GH₵
+        try {
+          await walletService.initializeAgentWallet(user._id);
+          // Update first time flag
+          user.isFirstTime = false;
+          await user.save();
+          logger.info(`Initialized agent wallet for first login: ${user.email}`);
+        } catch (walletError) {
+          logger.error(`Failed to initialize agent wallet: ${walletError.message}`);
+          // Continue login process even if wallet initialization fails
+        }
+      }
+      
+      const userData = user.toJSON();
+      
       res.json({
         success: true,
-        user: user.toJSON(),
+        user: userData,
         token: accessToken,
         refreshToken: refreshToken, // Also send in response for frontend storage
         dashboardUrl: user.userType === "agent" ? `/agent/dashboard` : `/customer/dashboard`,
@@ -312,25 +332,48 @@ class AuthController {
     }
   }
 
-  // Verify account (same as before)
+  // Verify account (fixed implementation with debugging)
   async verifyAccount(req, res) {
     try {
       const { token } = req.body;
+      
+      logger.info(`Verification attempt with token: ${token ? 'provided' : 'missing'}`);
 
-      const decoded = jwt.verify(token, process.env.JWTSECRET);
-      const user = await User.findOne({
-        email: decoded.email,
-        verificationToken: token,
-      });
-
-      if (!user) {
-        logger.warn(`Invalid verification token: ${token}`);
+      if (!token) {
+        logger.warn('No token provided in request body');
         return res.status(400).json({
           success: false,
-          message: "Invalid or expired verification token",
+          message: "Verification token is required",
         });
       }
 
+      // Verify the JWT token
+      const decoded = jwt.verify(token, process.env.JWTSECRET);
+      logger.info(`Token decoded successfully for email: ${decoded.email}`);
+      
+      // Find user by email and check if the verification token matches
+      const user = await User.findOne({
+        email: decoded.email,
+        verificationToken: token,
+        isVerified: false // Only allow verification if not already verified
+      });
+
+      if (!user) {
+        // Additional debugging
+        const userByEmail = await User.findOne({ email: decoded.email });
+        if (!userByEmail) {
+          logger.warn(`No user found with email: ${decoded.email}`);
+        } else {
+          logger.warn(`User found but verification failed - isVerified: ${userByEmail.isVerified}, hasVerificationToken: ${!!userByEmail.verificationToken}`);
+        }
+        
+        return res.status(400).json({
+          success: false,
+          message: "Invalid or expired verification token, or account already verified",
+        });
+      }
+
+      // Mark user as verified and clear verification token
       user.isVerified = true;
       user.verificationToken = undefined;
       await user.save();
@@ -343,6 +386,20 @@ class AuthController {
       });
     } catch (error) {
       logger.error(`Account verification error: ${error.message}`);
+      
+      // Handle JWT errors specifically
+      if (error.name === 'JsonWebTokenError') {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid verification token format",
+        });
+      } else if (error.name === 'TokenExpiredError') {
+        return res.status(400).json({
+          success: false,
+          message: "Verification token has expired. Please request a new verification email.",
+        });
+      }
+      
       res.status(400).json({
         success: false,
         message: "Invalid or expired verification token",
@@ -554,6 +611,104 @@ class AuthController {
       });
     }
   }
+
+  // Resend verification token (limited to one resend)
+  async resendVerification(req, res) {
+    try {
+      const { email } = req.body;
+      
+      if (!email) {
+        return res.status(400).json({
+          success: false,
+          message: "Email is required",
+        });
+      }
+
+      // Find user by email
+      const user = await User.findOne({ email });
+      
+      if (!user) {
+        logger.warn(`Verification resend attempt for non-existent user: ${email}`);
+        return res.status(404).json({
+          success: false,
+          message: "No account found with this email address",
+        });
+      }
+      
+      // Check if account is already verified
+      if (user.isVerified) {
+        logger.warn(`Verification resend attempt for already verified account: ${email}`);
+        return res.status(400).json({
+          success: false,
+          message: "This account is already verified",
+        });
+      }
+      
+      // Check if this is the first resend attempt
+      if (user.verificationResent) {
+        logger.warn(`Multiple verification resend attempts for: ${email}`);
+        return res.status(400).json({
+          success: false,
+          message: "Verification email has already been resent. Please register again if you still cannot verify your account.",
+        });
+      }
+      
+      // Generate new verification token
+      const verificationToken = jwt.sign({ email }, process.env.JWTSECRET, {
+        expiresIn: "10m", // 10 minutes
+      });
+      
+      // Update user with new token and mark as resent
+      user.verificationToken = verificationToken;
+      user.verificationResent = true;
+      await user.save();
+      
+      // Send verification email
+      if (user.userType === 'agent') {
+        // Generate agent code again
+        const agentCode = this.generateAgentCode(user.businessName);
+        await emailService.sendAgentVerificationEmail(email, verificationToken, agentCode);
+      } else {
+        await emailService.sendVerificationEmail(email, verificationToken);
+      }
+      
+      logger.info(`Verification email resent to: ${email}`);
+      res.json({
+        success: true,
+        message: "Verification email has been resent. Please check your inbox.",
+      });
+    } catch (error) {
+      logger.error(`Resend verification error: ${error.message}`);
+      res.status(500).json({
+        success: false,
+        message: "Failed to resend verification email. Please try again.",
+      });
+    }
+  }
+
+  // Update user's first-time flag
+  async updateFirstTimeFlag(req, res) {
+    try {
+      const userId = req.user.userId;
+
+      // Update the user's isFirstTime flag
+      await User.findByIdAndUpdate(userId, { 
+        isFirstTime: false 
+      });
+
+      logger.info(`First-time flag updated for user: ${req.user.email}`);
+      res.json({
+        success: true,
+        message: "User preferences updated successfully"
+      });
+    } catch (error) {
+      logger.error(`Error updating first-time flag: ${error.message}`);
+      res.status(500).json({
+        success: false,
+        message: "Failed to update user preferences"
+      });
+    }
+  }
 }
 
 const authController = new AuthController();
@@ -567,5 +722,7 @@ export default {
   resetPassword: authController.resetPassword.bind(authController),
   verifyToken: authController.verifyToken.bind(authController),
   logout: authController.logout.bind(authController),
-  refreshToken: authController.refreshToken.bind(authController),   
+  refreshToken: authController.refreshToken.bind(authController),
+  resendVerification: authController.resendVerification.bind(authController),
+  updateFirstTimeFlag: authController.updateFirstTimeFlag.bind(authController),
 };

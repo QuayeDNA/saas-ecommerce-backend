@@ -26,12 +26,14 @@ router.post('/refresh', authController.refreshToken);
 router.post('/register/agent', authController.registerAgent);
 router.post('/register/customer', authController.registerCustomer);
 router.post('/verify-account', authController.verifyAccount);
+router.post('/resend-verification', authController.resendVerification);
 router.post('/forgot-password', authController.forgotPassword);
 router.post('/reset-password', authController.resetPassword);
 
 // Protected routes
 router.post('/verify-token', authenticate, authController.verifyToken);
 router.post('/logout', authenticate, authController.logout);
+router.post('/update-first-time', authenticate, authController.updateFirstTimeFlag);
 
 // Agent-specific routes
 router.get('/agent/dashboard', authenticate, authorize('agent'), authController.getAgentDashboard);

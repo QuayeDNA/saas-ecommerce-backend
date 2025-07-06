@@ -189,7 +189,7 @@ orderSchema.index({ tenantId: 1, orderType: 1, status: 1 });
 
 // Virtual for completion percentage
 orderSchema.virtual('completionPercentage').get(function() {
-  if (this.items.length === 0) return 0;
+  if (!this.items || this.items.length === 0) return 0;
   const completedItems = this.items.filter(item => item.processingStatus === 'completed').length;
   return Math.round((completedItems / this.items.length) * 100);
 });
@@ -205,7 +205,7 @@ orderSchema.pre('save', async function(next) {
   }
   
   // Calculate totals
-  if (this.items && this.items.length > 0) {
+  if (this.items && Array.isArray(this.items) && this.items.length > 0) {
     this.subtotal = this.items.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
   } else {
     this.subtotal = 0;
@@ -223,6 +223,9 @@ orderSchema.pre('save', async function(next) {
 
 // Instance methods
 orderSchema.methods.updateStatus = function() {
+  if (!this.items || this.items.length === 0) {
+    return this.save();
+  }
   const statuses = this.items.map(item => item.processingStatus);
   const uniqueStatuses = [...new Set(statuses)];
   

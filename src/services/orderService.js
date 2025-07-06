@@ -1,6 +1,9 @@
 // src/services/orderService.js
 import Order from '../models/Order.js';
 import Product from '../models/Product.js';
+import User from '../models/User.js';
+import WalletTransaction from '../models/WalletTransaction.js';
+import walletService from './walletService.js';
 import mongoose from 'mongoose';
 import logger from '../utils/logger.js';
 
@@ -75,6 +78,22 @@ class OrderService {
       if (packageItem.availableInventory < quantity) {
         throw new Error(`Insufficient inventory. Available: ${packageItem.availableInventory}`);
       }
+
+      // Calculate total price
+      const totalPrice = packageItem.price * quantity;
+      
+      // Check wallet balance
+      const user = session 
+        ? await User.findById(userId).session(session)
+        : await User.findById(userId);
+      
+      if (!user) {
+        throw new Error('User not found');
+      }
+      
+      if (user.walletBalance < totalPrice) {
+        throw new Error(`Insufficient wallet balance. Required: GH₵${totalPrice.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`);
+      }
       
       // Reserve inventory
       packageItem.reservedInventory += quantity;
@@ -111,6 +130,7 @@ class OrderService {
         }],
         paymentMethod: 'wallet',
         status: 'confirmed',
+        paymentStatus: 'paid',
         // The pre-save hook will calculate subtotal, total, and generate orderNumber
       });
       
@@ -119,21 +139,52 @@ class OrderService {
       } else {
         await order.save();
       }
+
+      // Deduct from wallet
+      try {
+        // We use walletService directly if in transaction mode
+        if (session) {
+          // Directly update wallet balance in transaction
+          user.walletBalance -= totalPrice;
+          await user.save({ session });
+          
+          // Create wallet transaction record in the transaction
+          const transaction = new WalletTransaction({
+            user: userId,
+            type: 'debit',
+            amount: totalPrice,
+            balanceAfter: user.walletBalance,
+            description: `Payment for order ${order.orderNumber}`,
+            relatedOrder: order._id
+          });
+          
+          await transaction.save({ session });
+        } else {
+          // Use wallet service if not in transaction mode
+          await walletService.debitWallet(
+            userId,
+            totalPrice,
+            `Payment for order ${order.orderNumber}`,
+            order._id
+          );
+        }
+      } catch (walletError) {
+        logger.error(`Failed to deduct from wallet: ${walletError.message}`);
+        throw new Error(`Order created but payment failed: ${walletError.message}`);
+      }
       
-      logger.info(`Single order created: ${order.orderNumber}`);
+      logger.info(`Order created successfully: ${order.orderNumber}`);
       return order;
     });
   }
-  
+
   // Create bulk order
-  async createBulkOrder(bulkData, tenantId, userId) {
+  async createBulkOrder(orderData, tenantId, userId) {
     return await this.executeWithTransaction(async (session) => {
-      const { packageGroupId, packageItemId, rawInput } = bulkData;
+      const { packageGroupId, packageItemId, bulkData, delimiter = ',' } = orderData;
       
-      // Parse bulk input
-      const parsedItems = this.parseBulkInput(rawInput);
-      if (parsedItems.length === 0) {
-        throw new Error('No valid items found in bulk input');
+      if (!bulkData || !bulkData.trim()) {
+        throw new Error('Bulk data is required');
       }
       
       // Get package group and package item details
@@ -160,10 +211,79 @@ class OrderService {
         throw new Error('Package item not found or inactive');
       }
       
-      // Check total inventory needed
-      const totalQuantity = parsedItems.length;
+      // Parse bulk data
+      const lines = bulkData.trim().split('\n');
+      const items = [];
+      let validItems = 0;
+      let totalQuantity = 0;
+      
+      for (const element of lines) {
+        const line = element.trim();
+        if (!line) continue;
+        
+        const parts = line.split(delimiter);
+        const phoneNumber = parts[0].trim();
+        // Optional: handle bundle size
+        let bundleSize;
+        if (parts.length > 1) {
+          const bundleValue = parseFloat(parts[1]);
+          const bundleUnit = parts.length > 2 ? parts[2].trim().toUpperCase() : 'GB';
+          
+          if (!isNaN(bundleValue)) {
+            bundleSize = {
+              value: bundleValue,
+              unit: bundleUnit === 'MB' ? 'MB' : 'GB'
+            };
+          }
+        }
+        
+        if (phoneNumber) {
+          validItems++;
+          totalQuantity++;
+          items.push({
+            packageGroup: packageGroupId,
+            packageItem: packageItemId,
+            packageDetails: {
+              name: packageItem.name,
+              code: packageItem.code,
+              price: packageItem.price,
+              dataVolume: packageItem.dataVolume,
+              validity: packageItem.validity,
+              provider: packageGroup.provider,
+            },
+            quantity: 1,
+            unitPrice: packageItem.price,
+            totalPrice: packageItem.price,
+            customerPhone: phoneNumber,
+            bundleSize,
+            processingStatus: 'pending'
+          });
+        }
+      }
+      
+      if (items.length === 0) {
+        throw new Error('No valid items found in bulk data');
+      }
+      
+      // Check inventory
       if (packageItem.availableInventory < totalQuantity) {
-        throw new Error(`Insufficient inventory. Available: ${packageItem.availableInventory}, Required: ${totalQuantity}`);
+        throw new Error(`Insufficient inventory. Required: ${totalQuantity}, Available: ${packageItem.availableInventory}`);
+      }
+      
+      // Calculate total price
+      const totalPrice = packageItem.price * totalQuantity;
+      
+      // Check wallet balance
+      const user = session 
+        ? await User.findById(userId).session(session)
+        : await User.findById(userId);
+      
+      if (!user) {
+        throw new Error('User not found');
+      }
+      
+      if (user.walletBalance < totalPrice) {
+        throw new Error(`Insufficient wallet balance. Required: GH₵${totalPrice.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`);
       }
       
       // Reserve inventory
@@ -174,42 +294,21 @@ class OrderService {
         await packageGroup.save();
       }
       
-      // Create order items
-      const orderItems = parsedItems.map(item => ({
-        packageGroup: packageGroupId,
-        packageItem: packageItemId,
-        packageDetails: {
-          name: packageItem.name,
-          code: packageItem.code,
-          price: packageItem.price,
-          dataVolume: packageItem.dataVolume,
-          validity: packageItem.validity,
-          provider: packageGroup.provider,
-        },
-        quantity: 1,
-        unitPrice: packageItem.price,
-        totalPrice: packageItem.price,
-        customerPhone: item.phone,
-        bundleSize: {
-          value: item.bundleSize.value,
-          unit: item.bundleSize.unit
-        }
-      }));
-      
       // Create order
       const order = new Order({
         orderType: 'bulk',
         tenantId,
         createdBy: userId,
-        items: orderItems,
+        items,
+        paymentMethod: 'wallet',
+        paymentStatus: 'paid',
+        status: 'confirmed',
         bulkData: {
-          rawInput,
-          totalItems: parsedItems.length,
+          rawInput: bulkData,
+          totalItems: items.length,
           successfulItems: 0,
           failedItems: 0
-        },
-        paymentMethod: 'wallet',
-        status: 'confirmed',
+        }
         // The pre-save hook will calculate subtotal, total, and generate orderNumber
       });
       
@@ -219,41 +318,45 @@ class OrderService {
         await order.save();
       }
       
-      logger.info(`Bulk order created: ${order.orderNumber} with ${parsedItems.length} items`);
+      // Deduct from wallet
+      try {
+        // We use walletService directly if in transaction mode
+        if (session) {
+          // Directly update wallet balance in transaction
+          user.walletBalance -= totalPrice;
+          await user.save({ session });
+          
+          // Create wallet transaction record in the transaction
+          const transaction = new WalletTransaction({
+            user: userId,
+            type: 'debit',
+            amount: totalPrice,
+            balanceAfter: user.walletBalance,
+            description: `Payment for bulk order ${order.orderNumber}`,
+            relatedOrder: order._id
+          });
+          
+          await transaction.save({ session });
+        } else {
+          // Use wallet service if not in transaction mode
+          await walletService.debitWallet(
+            userId,
+            totalPrice,
+            `Payment for bulk order ${order.orderNumber}`,
+            order._id
+          );
+        }
+      } catch (walletError) {
+        logger.error(`Failed to deduct from wallet: ${walletError.message}`);
+        throw new Error(`Order created but payment failed: ${walletError.message}`);
+      }
+      
+      logger.info(`Bulk order created successfully: ${order.orderNumber} with ${items.length} items`);
       return order;
     });
   }
-  
-  // Parse bulk input format: "phone:bundleSize" per line
-  parseBulkInput(rawInput) {
-    const lines = rawInput.split('\n').filter(line => line.trim());
-    const items = [];
-    
-    for (const line of lines) {
-      const [phone, bundleSizeStr] = line.split(':').map(s => s.trim());
-      
-      if (!phone || !bundleSizeStr) continue;
-      
-      // Parse bundle size (e.g., "1GB", "500MB")
-      const bundleMatch = bundleSizeStr.match(/^(\d+(?:\.\d+)?)(MB|GB)$/i);
-      if (!bundleMatch) continue;
-      
-      const value = parseFloat(bundleMatch[1]);
-      const unit = bundleMatch[2].toUpperCase();
-      
-      // Validate phone number
-      if (!/^\+?[\d\s-()]{10,}$/.test(phone)) continue;
-      
-      items.push({
-        phone,
-        bundleSize: { value, unit }
-      });
-    }
-    
-    return items;
-  }
-  
-  // Get orders with filtering
+
+   // Get orders with filtering
   async getOrders(tenantId, filters = {}, pagination = {}) {
     const { page = 1, limit = 20, sortBy = 'createdAt', sortOrder = -1 } = pagination;
     const {
@@ -307,8 +410,8 @@ class OrderService {
       }
     };
   }
-  
-  // Process single order item
+
+// Process single order item
   async processOrderItem(orderId, itemId, tenantId, userId) {
     return await this.executeWithTransaction(async (session) => {
       const order = session 

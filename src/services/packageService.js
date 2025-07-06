@@ -21,13 +21,15 @@ class PackageService {
       
       // Generate unique codes for package items if not provided
       if (packageData.packageItems) {
-        packageData.packageItems = packageData.packageItems.map(item => {
+        packageData.packageItems = packageData.packageItems.map((item, index) => {
           if (!item.code) {
+            const timestamp = Date.now();
+            const randomSuffix = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
             const baseCode = packageData.provider + '-' + 
                             (packageData.name.substring(0, 3).toUpperCase()) + '-' + 
                             item.dataVolume + 'GB-' + 
                             item.validity + 'D';
-            item.code = baseCode + '-' + Date.now().toString().substring(8);
+            item.code = baseCode + '-' + timestamp + '-' + randomSuffix + '-' + index;
           }
           return item;
         });
@@ -239,11 +241,13 @@ class PackageService {
           throw new Error('Package group not found');
         }
         
+        const timestamp = Date.now();
+        const randomSuffix = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
         itemData.code = packageGroup.provider + '-' + 
                         (packageGroup.name.substring(0, 3).toUpperCase()) + '-' + 
                         itemData.dataVolume + 'GB-' + 
                         itemData.validity + 'D' + '-' + 
-                        Date.now().toString().substring(8);
+                        timestamp + '-' + randomSuffix;
       }
       
       const updatedPackage = await PackageGroup.findOneAndUpdate(

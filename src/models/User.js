@@ -79,7 +79,15 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  isFirstTime: {
+    type: Boolean,
+    default: true
+  },
   verificationToken: String,
+  verificationResent: {
+    type: Boolean,
+    default: false
+  },
   resetPasswordToken: String,
   refreshToken: String,
   resetPasswordExpires: Date,
@@ -132,6 +140,7 @@ userSchema.methods.toJSON = function() {
   const userObject = this.toObject();
   delete userObject.password;
   delete userObject.verificationToken;
+  delete userObject.verificationResent;
   delete userObject.resetPasswordToken;
   delete userObject.resetPasswordExpires;
   return userObject;

@@ -9,7 +9,8 @@
     "dev": "nodemon app.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "seed:providers": "node src/scripts/seedProviders.js"
+    "seed:providers": "node src/scripts/seedProviders.js",
+    "fix-wallet-balance": "node src/scripts/fixWalletBalance.js"
   },
   "keywords": [],
   "author": "",

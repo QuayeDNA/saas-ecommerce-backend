@@ -9,18 +9,6 @@ const packageItemSchema = new mongoose.Schema(
     code: {
       type: String,
       required: true,
-      validate: {
-        validator: async function (code) {
-          const packageGroup = this.parent();
-          const existing = await packageGroup.constructor.findOne({
-            "packageItems.code": code,
-            tenantId: packageGroup.tenantId,
-            _id: { $ne: packageGroup._id },
-          });
-          return !existing;
-        },
-        message: "Package code must be unique within tenant",
-      },
     },
     price: { type: Number, required: true, min: 0 },
     costPrice: { type: Number, min: 0 },
@@ -55,7 +43,7 @@ const packageGroupSchema = new mongoose.Schema(
     provider: {
       type: String,
       required: true,
-      enum: ["MTN", "Vodafone", "AirtelTigo", "Glo"],
+      enum: ["MTN", "TELECEL", "AT", "GLO"],
     },
     packageItems: [packageItemSchema],
     banner: {
@@ -102,8 +90,9 @@ packageItemSchema.virtual("availableInventory").get(function () {
   return this.inventory - this.reservedInventory;
 });
 
-// Pre-save middleware for slug generation
-packageGroupSchema.pre("save", function (next) {
+// Pre-save middleware for slug generation and code validation
+packageGroupSchema.pre("save", async function (next) {
+  // Generate slug if needed
   if (this.isModified("name") && !this.slug) {
     this.slug =
       this.name
@@ -114,6 +103,30 @@ packageGroupSchema.pre("save", function (next) {
       "-" +
       Date.now();
   }
+  
+  // Validate package item codes are unique within tenant
+  if (this.packageItems && this.packageItems.length > 0) {
+    const codes = this.packageItems.map(item => item.code).filter(Boolean);
+    const uniqueCodes = new Set(codes);
+    
+    // Check for duplicates within the same package group
+    if (codes.length !== uniqueCodes.size) {
+      return next(new Error("Package codes must be unique within the same package group"));
+    }
+    
+    // Check for duplicates across other package groups in the same tenant
+    const existingCodes = await this.constructor.distinct("packageItems.code", {
+      tenantId: this.tenantId,
+      isDeleted: false,
+      _id: { $ne: this._id }
+    });
+    
+    const duplicateCodes = codes.filter(code => existingCodes.includes(code));
+    if (duplicateCodes.length > 0) {
+      return next(new Error(`Package codes already exist: ${duplicateCodes.join(", ")}`));
+    }
+  }
+  
   next();
 });
 

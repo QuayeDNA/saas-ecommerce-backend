@@ -12,10 +12,11 @@ import packageRoutes from './src/routes/packageRoutes.js';
 import storefrontRoutes from './src/routes/storefrontRoutes.js';
 import userRoutes from './src/routes/userRoutes.js';
 import providerRoutes from './src/routes/providerRoutes.js';
+import walletRoutes from './src/routes/walletRoutes.js';
 import deleteUnverifiedUsersJob from './src/jobs/deleteUnverifiedUsers.js';
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5050;
 
 // Database connection
 connectDB();
@@ -56,6 +57,7 @@ app.use('/api/storefront', storefrontRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/providers', providerRoutes);
 app.use('/api/packages', packageRoutes);
+app.use('/api/wallet', walletRoutes);
 
 
 // Health check
