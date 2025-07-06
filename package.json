@@ -8,10 +8,7 @@
     "start": "node app.js",
     "dev": "nodemon app.js",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
-    "seed:providers": "node src/scripts/seedProviders.js",
-    "seed:super-admin": "node src/scripts/seed-super-admin.js",
-    "fix-wallet-balance": "node src/scripts/fixWalletBalance.js"
+    "lint:fix": "eslint . --fix"
   },
   "keywords": [],
   "author": "",
