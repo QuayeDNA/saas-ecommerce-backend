@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "seed:providers": "node src/scripts/seedProviders.js",
+    "seed:super-admin": "node src/scripts/seed-super-admin.js",
     "fix-wallet-balance": "node src/scripts/fixWalletBalance.js"
   },
   "keywords": [],
@@ -28,6 +29,7 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.16.0",
     "node-cron": "^4.1.1",
+    "node-fetch": "^3.3.2",
     "nodemailer": "^7.0.3",
     "winston": "^3.17.0"
   }

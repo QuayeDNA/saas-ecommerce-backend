@@ -709,6 +709,69 @@ class AuthController {
       });
     }
   }
+
+  // Register super admin (system use only)
+  async registerSuperAdmin(req, res) {
+    try {
+      const {
+        fullName,
+        email,
+        phone,
+        password,
+      } = req.body;
+
+      // Check if user already exists
+      const existingUser = await User.findOne({ email });
+      if (existingUser) {
+        logger.warn(`Super admin registration attempt with existing email: ${email}`);
+        return res.status(400).json({
+          success: false,
+          message: "User already exists with this email",
+        });
+      }
+
+      // Create super admin user
+      const superAdmin = new User({
+        fullName,
+        email,
+        phone,
+        password,
+        userType: "super_admin",
+        isVerified: true, // Auto-verify super admin
+        isFirstTime: false,
+      });
+
+      await superAdmin.save();
+
+      // Generate tokens
+      const accessToken = this.generateAccessToken(superAdmin._id, "super_admin");
+      const refreshToken = this.generateRefreshToken(superAdmin._id);
+
+      // Store refresh token
+      superAdmin.refreshToken = refreshToken;
+      await superAdmin.save();
+
+      logger.info(`Super admin registered successfully: ${email}`);
+      res.status(201).json({
+        success: true,
+        message: "Super admin account created successfully",
+        user: {
+          id: superAdmin._id,
+          fullName: superAdmin.fullName,
+          email: superAdmin.email,
+          userType: superAdmin.userType,
+        },
+        accessToken,
+        refreshToken,
+      });
+    } catch (error) {
+      logger.error(`Super admin registration error: ${error.message}`);
+      res.status(500).json({
+        success: false,
+        message: "Super admin registration failed. Please try again.",
+      });
+    }
+  }
 }
 
 const authController = new AuthController();
@@ -725,4 +788,5 @@ export default {
   refreshToken: authController.refreshToken.bind(authController),
   resendVerification: authController.resendVerification.bind(authController),
   updateFirstTimeFlag: authController.updateFirstTimeFlag.bind(authController),
+  registerSuperAdmin: authController.registerSuperAdmin.bind(authController),
 };

@@ -6,6 +6,7 @@ import validate from '../middlewares/validate.js';
 import {
   registerAgentValidation,
   registerCustomerValidation,
+  registerSuperAdminValidation,
   loginValidation,
   forgotPasswordValidation,
   resetPasswordValidation
@@ -16,6 +17,7 @@ const router = express.Router();
 // Create validation middlewares (same pattern as product routes)
 const validateRegisterAgent = validate(registerAgentValidation);
 const validateRegisterCustomer = validate(registerCustomerValidation);
+const validateRegisterSuperAdmin = validate(registerSuperAdminValidation);
 const validateLogin = validate(loginValidation);
 const validateForgotPassword = validate(forgotPasswordValidation);
 const validateResetPassword = validate(resetPasswordValidation);
@@ -25,6 +27,7 @@ router.post('/login', authController.login);
 router.post('/refresh', authController.refreshToken);
 router.post('/register/agent', authController.registerAgent);
 router.post('/register/customer', authController.registerCustomer);
+router.post('/register/super-admin', validateRegisterSuperAdmin, authController.registerSuperAdmin);
 router.post('/verify-account', authController.verifyAccount);
 router.post('/resend-verification', authController.resendVerification);
 router.post('/forgot-password', authController.forgotPassword);
