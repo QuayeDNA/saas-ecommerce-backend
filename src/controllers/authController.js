@@ -9,7 +9,7 @@ class AuthController {
   // Generate JWT token with tenant info
   generateToken(userId, userType, tenantId = null) {
     return jwt.sign({ userId, userType, tenantId }, process.env.JWTSECRET, {
-      expiresIn: "7d",
+      expiresIn: "30d",
     });
   }
 
@@ -18,7 +18,7 @@ class AuthController {
     return jwt.sign(
       { userId, userType, tenantId },
       process.env.JWTSECRET,
-      { expiresIn: "15m" } // Short-lived access token
+      { expiresIn: "24h" } // Extended to 24 hours for better user experience
     );
   }
 
@@ -27,7 +27,7 @@ class AuthController {
     return jwt.sign(
       { userId, type: 'refresh' },
       process.env.REFRESH_TOKEN_SECRET || process.env.JWTSECRET,
-      { expiresIn: "7d" } // Long-lived refresh token
+      { expiresIn: "30d" } // Extended to 30 days for better user experience
     );
   }
 
