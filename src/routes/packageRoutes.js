@@ -114,4 +114,12 @@ router.get(
   packageController.getLowStockAlerts
 );
 
+// Fetch all package items with their parent group, optionally filtered by provider
+router.get(
+  '/all-items',
+  authenticate,
+  authorize('agent'),
+  packageController.getAllPackageItems
+);
+
 export default router;

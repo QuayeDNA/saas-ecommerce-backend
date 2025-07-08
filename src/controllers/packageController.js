@@ -349,6 +349,37 @@ class PackageController {
       });
     }
   }
+
+  // Fetch all package items with their parent group, optionally filtered by provider
+  async getAllPackageItems(req, res) {
+    try {
+      const { tenantId } = req.user;
+      const { provider } = req.query;
+      const query = { tenantId };
+      if (provider) query.provider = provider;
+      // Only fetch non-deleted groups
+      query.isDeleted = false;
+      // Fetch all groups
+      const packageGroups = await packageService.getPackageGroupsRaw(query);
+      // Flatten items with group info
+      const allItems = packageGroups.flatMap(group =>
+        group.packageItems.map(item => ({
+          ...item.toObject(),
+          groupId: group._id,
+          groupName: group.name,
+          groupDescription: group.description,
+          groupIsActive: group.isActive,
+          groupIsDeleted: group.isDeleted,
+          provider: group.provider,
+          tags: group.tags,
+        }))
+      );
+      res.json({ success: true, items: allItems });
+    } catch (error) {
+      logger.error(`Get all package items failed: ${error.message}`);
+      res.status(500).json({ success: false, message: 'Failed to fetch package items' });
+    }
+  }
 }
 
 export default new PackageController();

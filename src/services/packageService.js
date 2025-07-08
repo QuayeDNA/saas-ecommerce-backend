@@ -142,6 +142,18 @@ class PackageService {
     }
   }
 
+  // Get all package groups matching a query (raw, no pagination)
+  async getPackageGroupsRaw(query = {}) {
+    try {
+      return await PackageGroup.find(query)
+        .populate('createdBy', 'fullName email')
+        .populate('updatedBy', 'fullName email');
+    } catch (error) {
+      logger.error(`getPackageGroupsRaw failed: ${error.message}`);
+      throw error;
+    }
+  }
+
   // Update package group
   async updatePackageGroup(id, updateData, tenantId, userId) {
     try {
