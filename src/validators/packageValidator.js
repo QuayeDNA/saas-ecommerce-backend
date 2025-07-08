@@ -11,7 +11,11 @@ export const packageValidation = {
     body('packageItems.*.name').optional().notEmpty().withMessage('Package item name is required'),
     body('packageItems.*.price').optional().isFloat({ min: 0 }).withMessage('Price must be a positive number'),
     body('packageItems.*.dataVolume').optional().isFloat({ min: 0 }).withMessage('Data volume must be a positive number'),
-    body('packageItems.*.validity').optional().isInt({ min: 1 }).withMessage('Validity must be at least 1 day')
+    body('packageItems.*.validity').optional().custom((value) => {
+      if (value === null || value === undefined || value === 0) return true; // unlimited
+      if (Number.isInteger(value) && value >= 1) return true;
+      throw new Error('Validity must be at least 1 day or unlimited');
+    })
   ],
   
   updatePackageGroup: [
@@ -26,7 +30,11 @@ export const packageValidation = {
     body('name').notEmpty().withMessage('Package item name is required'),
     body('price').isFloat({ min: 0 }).withMessage('Price must be a positive number'),
     body('dataVolume').isFloat({ min: 0 }).withMessage('Data volume must be a positive number'),
-    body('validity').isInt({ min: 1 }).withMessage('Validity must be at least 1 day'),
+    body('validity').custom((value) => {
+      if (value === null || value === undefined || value === 0) return true; // unlimited
+      if (Number.isInteger(value) && value >= 1) return true;
+      throw new Error('Validity must be at least 1 day or unlimited');
+    }),
     body('inventory').optional().isInt({ min: 0 }).withMessage('Inventory must be a non-negative integer'),
     body('code').optional().isString().isLength({ min: 3 }).withMessage('Code must be at least 3 characters')
   ],
@@ -37,7 +45,11 @@ export const packageValidation = {
     body('name').optional().notEmpty(),
     body('price').optional().isFloat({ min: 0 }),
     body('dataVolume').optional().isFloat({ min: 0 }),
-    body('validity').optional().isInt({ min: 1 }),
+    body('validity').optional().custom((value) => {
+      if (value === null || value === undefined || value === 0) return true; // unlimited
+      if (Number.isInteger(value) && value >= 1) return true;
+      throw new Error('Validity must be at least 1 day or unlimited');
+    }),
     body('inventory').optional().isInt({ min: 0 }),
     body('isActive').optional().isBoolean()
   ],

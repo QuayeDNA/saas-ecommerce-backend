@@ -27,7 +27,7 @@ const packageItemSchema = new mongoose.Schema(
     
     // Mobile bundle specific fields
     dataVolume: { type: Number, required: true }, // in GB
-    validity: { type: Number, required: true }, // in days
+    validity: { type: Number, default: null }, // in days, null = unlimited
     isDeleted: { type: Boolean, default: false },
     deletedAt: Date,
     deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
