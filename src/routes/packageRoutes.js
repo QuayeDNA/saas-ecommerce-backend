@@ -1,125 +1,202 @@
 // src/routes/packageRoutes.js
 import express from 'express';
 import packageController from '../controllers/packageController.js';
+import bundleController from '../controllers/bundleController.js';
 import { authenticate, authorize } from '../middlewares/auth.js';
 import validate from '../middlewares/validate.js';
-import { packageValidation } from '../validators/packageValidator.js';
+import { packageValidation, bundleValidation } from '../validators/packageValidator.js';
 
 const router = express.Router();
 
-// Create validation middlewares
-const validateCreate = validate(packageValidation.createPackageGroup);
-const validateUpdate = validate(packageValidation.updatePackageGroup);
-const validateCreatePackageItem = validate(packageValidation.createPackageItem);
-const validateUpdatePackageItem = validate(packageValidation.updatePackageItem);
-const validateBulkInventory = validate(packageValidation.bulkInventory);
-
-// Package group operations
+// Package routes
 router.post(
   '/',
   authenticate,
   authorize('agent'),
-  validateCreate,
-  packageController.createPackageGroup
+  validate(packageValidation.create),
+  packageController.createPackage
 );
 
 router.get(
   '/',
   authenticate,
   authorize('agent'),
-  packageController.getPackageGroups
+  packageController.getPackages
+);
+
+router.get(
+  '/:id',
+  authenticate,
+  authorize('agent'),
+  packageController.getPackage
 );
 
 router.put(
   '/:id',
   authenticate,
   authorize('agent'),
-  validateUpdate,
-  packageController.updatePackageGroup
+  validate(packageValidation.update),
+  packageController.updatePackage
 );
 
 router.delete(
   '/:id',
   authenticate,
   authorize('agent'),
-  packageController.softDeletePackageGroup
+  packageController.deletePackage
 );
 
 router.post(
   '/:id/restore',
   authenticate,
   authorize('agent'),
-  packageController.restorePackageGroup
+  packageController.restorePackage
 );
 
-// Package item operations
-router.post(
-  '/:id/items',
+// Package-specific routes
+router.get(
+  '/provider/:provider',
   authenticate,
   authorize('agent'),
-  validateCreatePackageItem,
-  packageController.addPackageItem
+  packageController.getPackagesByProvider
+);
+
+router.get(
+  '/category/:category',
+  authenticate,
+  authorize('agent'),
+  packageController.getPackagesByCategory
+);
+
+router.get(
+  '/stats/summary',
+  authenticate,
+  authorize('agent'),
+  packageController.getPackageStats
+);
+
+// Bundle routes
+router.post(
+  '/bundles',
+  authenticate,
+  authorize('agent'),
+  validate(bundleValidation.create),
+  bundleController.createBundle
+);
+
+router.get(
+  '/bundles',
+  authenticate,
+  authorize('agent'),
+  bundleController.getAllBundles
+);
+
+router.get(
+  '/bundles/:id',
+  authenticate,
+  authorize('agent'),
+  bundleController.getBundleById
 );
 
 router.put(
-  '/:id/items/:itemId',
+  '/bundles/:id',
   authenticate,
   authorize('agent'),
-  validateUpdatePackageItem,
-  packageController.updatePackageItem
+  validate(bundleValidation.update),
+  bundleController.updateBundle
 );
 
 router.delete(
-  '/:id/items/:itemId',
+  '/bundles/:id',
   authenticate,
   authorize('agent'),
-  packageController.deletePackageItem
+  bundleController.deleteBundle
 );
 
-// Inventory management
-router.patch(
-  '/inventory/bulk',
-  authenticate,
-  authorize('agent'),
-  validateBulkInventory,
-  packageController.bulkUpdateInventory
-);
+// Remove or comment out restoreBundle and category routes as they are not present in the new controller
+// router.post(
+//   '/bundles/:id/restore',
+//   authenticate,
+//   authorize('agent'),
+//   bundleController.restoreBundle
+// );
 
-router.post(
-  '/inventory/reserve',
-  authenticate,
-  authorize('agent'),
-  packageController.reserveStock
-);
+// router.get(
+//   '/bundles/category/:category',
+//   authenticate,
+//   authorize('agent'),
+//   bundleController.getBundlesByCategory
+// );
 
-router.post(
-  '/inventory/release',
-  authenticate,
-  authorize('agent'),
-  packageController.releaseStock
-);
-
-// Analytics and alerts
 router.get(
-  '/analytics',
+  '/bundles/provider/:providerId',
   authenticate,
   authorize('agent'),
-  packageController.getAnalytics
+  bundleController.getBundlesByProvider
 );
 
 router.get(
-  '/alerts/low-stock',
+  '/bundles/package/:packageId',
   authenticate,
   authorize('agent'),
-  packageController.getLowStockAlerts
+  bundleController.getBundlesByPackage
 );
 
-// Fetch all package items with their parent group, optionally filtered by provider
+// Remove or comment out checkBundleAvailability as it is not present in the new controller
+// router.post(
+//   '/bundles/:id/check-availability',
+//   authenticate,
+//   authorize('agent'),
+//   validate(bundleValidation.checkAvailability),
+//   bundleController.checkBundleAvailability
+// );
+
 router.get(
-  '/all-items',
+  '/bundles/analytics/summary',
   authenticate,
   authorize('agent'),
-  packageController.getAllPackageItems
+  bundleController.getBundleAnalytics
+);
+
+// Public routes (for storefront and general access)
+router.get(
+  '/public',
+  packageController.getPackages
+);
+
+router.get(
+  '/public/:id',
+  packageController.getPackage
+);
+
+router.get(
+  '/public/provider/:provider',
+  packageController.getPackagesByProvider
+);
+
+router.get(
+  '/public/category/:category',
+  packageController.getPackagesByCategory
+);
+
+router.get(
+  '/public/bundles',
+  bundleController.getAllBundles
+);
+
+router.get(
+  '/public/bundles/:id',
+  bundleController.getBundleById
+);
+
+router.get(
+  '/public/bundles/provider/:providerId',
+  bundleController.getBundlesByProvider
+);
+
+router.get(
+  '/public/bundles/package/:packageId',
+  bundleController.getBundlesByPackage
 );
 
 export default router;

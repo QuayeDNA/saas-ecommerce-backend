@@ -1,42 +1,26 @@
 // src/validators/orderValidator.js
-import { body, param } from 'express-validator';
+import Joi from 'joi';
 
-export const orderValidation = {
-  createSingle: [
-    body('packageGroupId').isMongoId().withMessage('Invalid package group ID'),
-    body('packageItemId').notEmpty().withMessage('Package item ID is required'),
-    body('customerPhone')
-      .matches(/^\+?[\d\s-()]{10,}$/)
-      .withMessage('Please enter a valid phone number'),
-    body('bundleSize.value')
-      .optional()
-      .isFloat({ min: 0 })
-      .withMessage('Bundle size must be a positive number'),
-    body('bundleSize.unit')
-      .optional()
-      .isIn(['MB', 'GB'])
-      .withMessage('Bundle unit must be MB or GB'),
-    body('quantity')
-      .optional()
-      .isInt({ min: 1 })
-      .withMessage('Quantity must be at least 1')
-  ],
-  
-  createBulk: [
-    body('packageGroupId').isMongoId().withMessage('Invalid package group ID'),
-    body('packageItemId').notEmpty().withMessage('Package item ID is required'),
-    body('rawInput')
-      .notEmpty()
-      .withMessage('Bulk input data is required')
-      .isLength({ min: 10 })
-      .withMessage('Bulk input must contain valid data')
-  ],
-  
-  cancel: [
-    param('id').isMongoId().withMessage('Invalid order ID'),
-    body('reason')
-      .optional()
-      .isLength({ max: 500 })
-      .withMessage('Reason must be less than 500 characters')
-  ]
+const orderValidation = {
+  createSingle: Joi.object({
+    bundleId: Joi.string().required().hex().length(24),
+    customerPhone: Joi.string().required().pattern(/^\+?[\d\s-()]{10,}$/),
+    bundleSize: Joi.object({
+      value: Joi.number().min(0.1),
+      unit: Joi.string().valid('MB', 'GB')
+    }).optional(),
+    quantity: Joi.number().integer().min(1).default(1)
+  }),
+
+  createBulk: Joi.object({
+    bundleId: Joi.string().required().hex().length(24),
+    bulkData: Joi.string().required().min(1),
+    delimiter: Joi.string().optional()
+  }),
+
+  cancel: Joi.object({
+    reason: Joi.string().optional().max(500)
+  })
 };
+
+export { orderValidation };

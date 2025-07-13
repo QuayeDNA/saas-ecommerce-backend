@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import Order from '../../models/Order.js';
-import Product from '../../models/Product.js';
+import Package from '../../models/Package.js';
 import Provider from '../../models/Provider.js';
 import orderService from '../../services/orderService.js';
 
@@ -29,7 +29,7 @@ describe('Order Integration Tests', () => {
   beforeEach(async () => {
     // Clean up collections
     await Order.deleteMany({});
-    await Product.deleteMany({});
+    await Package.deleteMany({});
     await Provider.deleteMany({});
 
     // Create mock provider
@@ -42,7 +42,7 @@ describe('Order Integration Tests', () => {
     });
 
     // Create mock package group with items
-    mockPackageGroup = await Product.create({
+    mockPackageGroup = await Package.create({
       name: 'Daily Data Bundles',
       description: 'Affordable daily data packages',
       provider: 'MTN',
@@ -110,7 +110,7 @@ describe('Order Integration Tests', () => {
       await orderService.createSingleOrder(orderData, mockTenantId, mockUserId);
 
       // Check that inventory was reserved
-      const updatedPackageGroup = await Product.findById(mockPackageGroup._id);
+      const updatedPackageGroup = await Package.findById(mockPackageGroup._id);
       const packageItem = updatedPackageGroup.packageItems.id(mockPackageItemId);
       
       expect(packageItem.reservedInventory).toBe(3);
@@ -211,7 +211,7 @@ describe('Order Integration Tests', () => {
       expect(processedOrder.status).toBe('completed');
 
       // Check that inventory was reduced
-      const updatedPackageGroup = await Product.findById(mockPackageGroup._id);
+      const updatedPackageGroup = await Package.findById(mockPackageGroup._id);
       const packageItem = updatedPackageGroup.packageItems.id(mockPackageItemId);
       
       expect(packageItem.inventory).toBe(98); // 100 - 2
@@ -239,7 +239,7 @@ describe('Order Integration Tests', () => {
       expect(processedOrder.status).toBe('failed');
 
       // Check that inventory was not reduced but reservation was released
-      const updatedPackageGroup = await Product.findById(mockPackageGroup._id);
+      const updatedPackageGroup = await Package.findById(mockPackageGroup._id);
       const packageItem = updatedPackageGroup.packageItems.id(mockPackageItemId);
       
       expect(packageItem.inventory).toBe(100); // Not reduced
@@ -278,7 +278,7 @@ describe('Order Integration Tests', () => {
       expect(cancelledOrder.items[0].processingStatus).toBe('cancelled');
 
       // Check that reserved inventory was released
-      const updatedPackageGroup = await Product.findById(mockPackageGroup._id);
+      const updatedPackageGroup = await Package.findById(mockPackageGroup._id);
       const packageItem = updatedPackageGroup.packageItems.id(mockPackageItemId);
       
       expect(packageItem.reservedInventory).toBe(0);

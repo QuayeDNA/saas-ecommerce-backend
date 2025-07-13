@@ -1,166 +1,210 @@
 // src/services/storefrontService.js
 import Storefront from '../models/Storefront.js';
-import Product from '../models/Product.js';
-import Order from '../models/Order.js';
-import User from '../models/User.js';
-import mongoose from 'mongoose';
+import Package from '../models/Package.js';
 import logger from '../utils/logger.js';
 
 class StorefrontService {
-  // Create storefront for agent
-  async createStorefront(storefrontData, tenantId) {
+  // Create storefront
+  async createStorefront(storefrontData) {
     try {
-      // Check if agent already has a storefront
-      const existingStorefront = await Storefront.findOne({ tenantId });
-      if (existingStorefront) {
-        throw new Error('Agent already has a storefront');
-      }
-      
-      // Get agent details for default values
-      const agent = await User.findById(tenantId);
-      if (!agent || agent.userType !== 'agent') {
-        throw new Error('Invalid agent');
-      }
-      
-      // Generate unique slug
-      let slug = storefrontData.slug || storefrontData.name
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, '-')
-        .replace(/-+/g, '-')
-        .replace(/^-|-$/g, '');
-      
-      // Ensure slug uniqueness
-      let counter = 1;
-      let originalSlug = slug;
-      while (await Storefront.findOne({ slug })) {
-        slug = `${originalSlug}-${counter}`;
-        counter++;
-      }
-      
-      const storefront = new Storefront({
-        ...storefrontData,
-        tenantId,
-        slug,
-        contactInfo: {
-          email: agent.email,
-          ...storefrontData.contactInfo
-        }
-      });
-      
+      const storefront = new Storefront(storefrontData);
       await storefront.save();
-      logger.info(`Storefront created: ${storefront.slug} for agent ${tenantId}`);
+      logger.info(`Storefront created: ${storefront._id} by user ${storefrontData.createdBy}`);
       return storefront;
     } catch (error) {
       logger.error(`Storefront creation failed: ${error.message}`);
       throw error;
     }
   }
-  
+
+  // Get storefronts with filtering
+  async getStorefronts(tenantId, filters = {}, pagination = {}) {
+    const { page = 1, limit = 20, sortBy = 'createdAt', sortOrder = -1 } = pagination;
+    const { search, isActive, includeDeleted = false } = filters;
+    
+    const query = { tenantId };
+    
+    if (!includeDeleted) {
+      query.isDeleted = false;
+    }
+    
+    if (isActive !== undefined) query.isActive = isActive;
+    
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } },
+        { slug: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    const [storefronts, total] = await Promise.all([
+      Storefront.find(query)
+        .populate('createdBy', 'fullName email')
+        .populate('updatedBy', 'fullName email')
+        .skip((page - 1) * limit)
+        .limit(Number(limit))
+        .sort({ [sortBy]: sortOrder }),
+      Storefront.countDocuments(query)
+    ]);
+
+    return {
+      storefronts,
+      pagination: {
+        total,
+        page: Number(page),
+        pages: Math.ceil(total / limit),
+        limit: Number(limit)
+      }
+    };
+  }
+
+  // Get storefront by ID
+  async getStorefrontById(id, tenantId) {
+    const storefront = await Storefront.findOne({
+      _id: id,
+      tenantId,
+      isDeleted: false
+    }).populate('createdBy', 'fullName email')
+      .populate('updatedBy', 'fullName email');
+    
+    if (!storefront) {
+      throw new Error('Storefront not found');
+    }
+    
+    return storefront;
+  }
+
+  // Get storefront by slug (public)
+  async getStorefrontBySlug(slug) {
+    const storefront = await Storefront.findOne({
+      slug,
+      isActive: true,
+      isDeleted: false
+    }).populate('createdBy', 'fullName email');
+    
+    if (!storefront) {
+      throw new Error('Storefront not found');
+    }
+    
+    return storefront;
+  }
+
   // Update storefront
-  async updateStorefront(tenantId, updateData) {
+  async updateStorefront(id, updateData, tenantId, userId) {
     try {
       const storefront = await Storefront.findOneAndUpdate(
-        { tenantId },
-        updateData,
+        {
+          _id: id,
+          tenantId,
+          isDeleted: false
+        },
+        {
+          ...updateData,
+          updatedBy: userId
+        },
         { new: true, runValidators: true }
-      );
-      
+      ).populate('createdBy', 'fullName email')
+       .populate('updatedBy', 'fullName email');
+
       if (!storefront) {
         throw new Error('Storefront not found');
       }
-      
-      logger.info(`Storefront updated: ${storefront.slug}`);
+
+      logger.info(`Storefront updated: ${id} by user ${userId}`);
       return storefront;
     } catch (error) {
       logger.error(`Storefront update failed: ${error.message}`);
       throw error;
     }
   }
-  
-  // Get agent's storefront
-  async getStorefront(tenantId) {
-    try {
-      const storefront = await Storefront.findOne({ tenantId });
-      return storefront;
-    } catch (error) {
-      logger.error(`Get storefront failed: ${error.message}`);
-      throw error;
-    }
-  }
-  
-  // Get public storefront by slug
-  async getPublicStorefront(slug) {
+
+  // Delete storefront (soft delete)
+  async deleteStorefront(id, tenantId, userId) {
     try {
       const storefront = await Storefront.findOne({
-        slug,
-        isActive: true,
-        isPublic: true
-      }).populate('tenantId', 'businessName businessCategory');
-      
+        _id: id,
+        tenantId,
+        isDeleted: false
+      });
+
       if (!storefront) {
         throw new Error('Storefront not found');
       }
-      
-      // Increment view count
-      await storefront.incrementViews();
-      
+
+      await storefront.softDelete(userId);
+      logger.info(`Storefront deleted: ${id} by user ${userId}`);
       return storefront;
     } catch (error) {
-      logger.error(`Get public storefront failed: ${error.message}`);
+      logger.error(`Storefront deletion failed: ${error.message}`);
       throw error;
     }
   }
-  
+
+  // Restore storefront
+  async restoreStorefront(id, tenantId, userId) {
+    try {
+      const storefront = await Storefront.findOne({
+        _id: id,
+        tenantId,
+        isDeleted: true
+      });
+
+      if (!storefront) {
+        throw new Error('Storefront not found');
+      }
+
+      await storefront.restore();
+      logger.info(`Storefront restored: ${id} by user ${userId}`);
+      return storefront;
+    } catch (error) {
+      logger.error(`Storefront restoration failed: ${error.message}`);
+      throw error;
+    }
+  }
+
   // Get storefront products (public)
   async getStorefrontProducts(slug, filters = {}, pagination = {}) {
     try {
-      const storefront = await Storefront.findOne({
-        slug,
-        isActive: true,
-        isPublic: true
-      });
-      
-      if (!storefront) {
-        throw new Error('Storefront not found');
-      }
-      
       const { page = 1, limit = 20, sortBy = 'createdAt', sortOrder = -1 } = pagination;
-      const { category, provider, search, minPrice, maxPrice } = filters;
+      const { 
+        search, 
+        provider, 
+        category, 
+        minPrice, 
+        maxPrice 
+      } = filters;
+
+      // First get the storefront
+      const storefront = await this.getStorefrontBySlug(slug);
       
-      const query = {
+      const query = { 
         tenantId: storefront.tenantId,
         isActive: true,
         isDeleted: false
       };
       
-      if (category) query.category = category;
       if (provider) query.provider = provider;
+      if (category) query.category = category;
+      
       if (search) {
         query.$or = [
           { name: { $regex: search, $options: 'i' } },
-          { description: { $regex: search, $options: 'i' } },
-          { tags: { $in: [new RegExp(search, 'i')] } }
+          { description: { $regex: search, $options: 'i' } }
         ];
       }
-      
-      // Price filtering on variants
-      if (minPrice || maxPrice) {
-        const priceMatch = {};
-        if (minPrice) priceMatch['variants.price'] = { $gte: minPrice };
-        if (maxPrice) priceMatch['variants.price'] = { ...priceMatch['variants.price'], $lte: maxPrice };
-        Object.assign(query, priceMatch);
-      }
-      
+
       const [products, total] = await Promise.all([
-        Product.find(query)
-          .select('-createdBy -updatedBy -tenantId')
+        Package.find(query)
+          .populate('createdBy', 'fullName email')
           .skip((page - 1) * limit)
           .limit(Number(limit))
           .sort({ [sortBy]: sortOrder }),
-        Product.countDocuments(query)
+        Package.countDocuments(query)
       ]);
-      
+
       return {
+        storefront,
         products,
         pagination: {
           total,
@@ -174,224 +218,151 @@ class StorefrontService {
       throw error;
     }
   }
-  
-  // Create public order from storefront
-  async createStorefrontOrder(slug, orderData) {
-    const session = await mongoose.startSession();
+
+  // Process storefront order
+  async processStorefrontOrder(slug, orderData) {
+    const session = await Storefront.startSession();
     session.startTransaction();
-    
+
     try {
-      const storefront = await Storefront.findOne({
-        slug,
-        isActive: true,
-        isPublic: true
-      }).session(session);
-      
-      if (!storefront) {
-        throw new Error('Storefront not found');
-      }
-      
-      if (!storefront.features.allowOrders) {
-        throw new Error('Orders are not enabled for this storefront');
-      }
-      
-      const { items, customerInfo } = orderData;
+      // Get storefront
+      const storefront = await this.getStorefrontBySlug(slug);
       
       // Validate and process order items
       const processedItems = [];
-      let subtotal = 0;
-      
-      for (const item of items) {
-        const product = await Product.findOne({
+      let totalAmount = 0;
+
+      for (const item of orderData.items) {
+        const product = await Package.findOne({
           _id: item.productId,
           tenantId: storefront.tenantId,
           isActive: true,
           isDeleted: false
         }).session(session);
-        
+
         if (!product) {
           throw new Error(`Product not found: ${item.productId}`);
         }
-        
-        const variant = product.variants.id(item.variantId);
-        if (!variant || !variant.isActive) {
-          throw new Error(`Product variant not found: ${item.variantId}`);
+
+        // Check if product has variants
+        if (item.variantId && product.variants) {
+          const variant = product.variants.id(item.variantId);
+          if (!variant) {
+            throw new Error(`Product variant not found: ${item.variantId}`);
+          }
+          if (variant.inventory < item.quantity) {
+            throw new Error(`Insufficient inventory for ${product.name} - ${variant.name}`);
+          }
+          variant.inventory -= item.quantity;
+          totalAmount += variant.price * item.quantity;
+        } else {
+          // Handle non-variant products
+          totalAmount += (product.price || 0) * item.quantity;
         }
-        
-        // Check inventory
-        if (variant.availableInventory < item.quantity) {
-          throw new Error(`Insufficient inventory for ${product.name} - ${variant.name}`);
-        }
-        
-        // Reserve inventory
-        variant.reservedInventory += item.quantity;
+
         await product.save({ session });
-        
-        const itemTotal = variant.price * item.quantity;
-        subtotal += itemTotal;
-        
+
         processedItems.push({
           product: product._id,
-          variant: variant._id,
-          variantDetails: {
-            name: variant.name,
-            sku: variant.sku,
-            price: variant.price,
-            dataVolume: variant.dataVolume,
-            validity: variant.validity,
-            network: variant.network,
-            bundleType: variant.bundleType
-          },
           quantity: item.quantity,
-          unitPrice: variant.price,
-          totalPrice: itemTotal,
-          customerPhone: item.customerPhone || customerInfo.phone,
-          bundleSize: item.bundleSize
+          variantId: item.variantId,
+          price: item.variantId ? product.variants.id(item.variantId).price : product.price
         });
       }
-      
-      // Create order
-      const order = new Order({
-        orderType: 'single',
+
+      // Create order (this would typically be handled by order service)
+      const order = {
+        storefrontId: storefront._id,
         tenantId: storefront.tenantId,
-        createdBy: storefront.tenantId, // Agent as creator for storefront orders
-        customerInfo,
+        customerInfo: orderData.customerInfo,
         items: processedItems,
-        subtotal,
-        total: subtotal,
+        totalAmount,
         status: 'pending',
-        paymentStatus: 'pending',
-        notes: `Order from storefront: ${storefront.name}`,
-        tags: ['storefront', slug]
-      });
-      
-      await order.save({ session });
-      
-      // Increment storefront order count
-      await storefront.incrementOrders();
-      
+        paymentMethod: orderData.paymentMethod
+      };
+
       await session.commitTransaction();
       
-      logger.info(`Storefront order created: ${order.orderNumber} from ${slug}`);
+      logger.info(`Storefront order processed: ${storefront.slug} - ${totalAmount}`);
       return order;
     } catch (error) {
       await session.abortTransaction();
-      logger.error(`Storefront order creation failed: ${error.message}`);
+      logger.error(`Storefront order processing failed: ${error.message}`);
       throw error;
     } finally {
       session.endSession();
     }
   }
-  
+
   // Get storefront analytics
   async getStorefrontAnalytics(tenantId, timeframe = '30d') {
-    try {
-      const days = parseInt(timeframe.replace('d', ''));
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - days);
-      
-      const storefront = await Storefront.findOne({ tenantId });
-      if (!storefront) {
-        throw new Error('Storefront not found');
-      }
-      
-      const [
-        totalProducts,
-        totalOrders,
-        recentOrders,
-        ordersByStatus
-      ] = await Promise.all([
-        Product.countDocuments({
-          tenantId,
-          isActive: true,
-          isDeleted: false
-        }),
-        Order.countDocuments({
-          tenantId,
-          tags: 'storefront',
-          createdAt: { $gte: startDate }
-        }),
-        Order.find({
-          tenantId,
-          tags: 'storefront',
-          createdAt: { $gte: startDate }
-        })
-        .sort({ createdAt: -1 })
-        .limit(10)
-        .select('orderNumber total status createdAt customerInfo'),
-        Order.aggregate([
-          {
-            $match: {
-              tenantId: new mongoose.Types.ObjectId(tenantId),
-              tags: 'storefront',
-              createdAt: { $gte: startDate }
-            }
-          },
-          {
-            $group: {
-              _id: '$status',
-              count: { $sum: 1 },
-              revenue: { $sum: '$total' }
-            }
-          }
-        ])
-      ]);
-      
-      return {
-        storefront: {
-          views: storefront.analytics.totalViews,
-          orders: storefront.analytics.totalOrders,
-          lastVisit: storefront.analytics.lastVisit
-        },
-        products: {
-          total: totalProducts
-        },
-        orders: {
-          total: totalOrders,
-          recent: recentOrders,
-          byStatus: ordersByStatus
-        },
-        timeframe
-      };
-    } catch (error) {
-      logger.error(`Get storefront analytics failed: ${error.message}`);
-      throw error;
+    const endDate = new Date();
+    let startDate;
+    
+    switch (timeframe) {
+      case '7d':
+        startDate = new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case '30d':
+        startDate = new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      case '90d':
+        startDate = new Date(endDate.getTime() - 90 * 24 * 60 * 60 * 1000);
+        break;
+      case '365d':
+        startDate = new Date(endDate.getTime() - 365 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        startDate = new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
     }
+
+    const [totalStorefronts, activeStorefronts, totalProducts] = await Promise.all([
+      Storefront.countDocuments({ 
+        tenantId, 
+        isDeleted: false,
+        createdAt: { $gte: startDate, $lte: endDate }
+      }),
+      Storefront.countDocuments({ 
+        tenantId, 
+        isActive: true, 
+        isDeleted: false,
+        createdAt: { $gte: startDate, $lte: endDate }
+      }),
+      Package.countDocuments({
+        tenantId,
+        isActive: true,
+        isDeleted: false,
+        createdAt: { $gte: startDate, $lte: endDate }
+      })
+    ]);
+
+    return {
+      totalStorefronts,
+      activeStorefronts,
+      totalProducts,
+      timeframe
+    };
   }
-  
-  // Check slug availability
-  async checkSlugAvailability(slug, excludeTenantId = null) {
-    try {
-      const query = { slug };
-      if (excludeTenantId) {
-        query.tenantId = { $ne: excludeTenantId };
-      }
-      
-      const existing = await Storefront.findOne(query);
-      return !existing;
-    } catch (error) {
-      logger.error(`Check slug availability failed: ${error.message}`);
-      throw error;
+
+  // Get storefront by slug for public access
+  async getPublicStorefront(slug) {
+    const storefront = await Storefront.findOne({
+      slug,
+      isActive: true,
+      isDeleted: false
+    }).populate('createdBy', 'fullName email');
+    
+    if (!storefront) {
+      throw new Error('Storefront not found or inactive');
     }
+    
+    return storefront;
   }
-  
-  // Toggle storefront status
-  async toggleStorefrontStatus(tenantId) {
-    try {
-      const storefront = await Storefront.findOne({ tenantId });
-      if (!storefront) {
-        throw new Error('Storefront not found');
-      }
-      
-      storefront.isActive = !storefront.isActive;
-      await storefront.save();
-      
-      logger.info(`Storefront status toggled: ${storefront.slug} - ${storefront.isActive}`);
-      return storefront;
-    } catch (error) {
-      logger.error(`Toggle storefront status failed: ${error.message}`);
-      throw error;
-    }
+
+  // Get storefront products for public access
+  async getPublicStorefrontProducts(slug, filters = {}, pagination = {}) {
+    const storefront = await this.getPublicStorefront(slug);
+    return this.getStorefrontProducts(slug, filters, pagination);
   }
 }
 

@@ -1,6 +1,6 @@
 // src/services/orderService.js
 import Order from '../models/Order.js';
-import Product from '../models/Product.js';
+import Bundle from '../models/Bundle.js';
 import User from '../models/User.js';
 import WalletTransaction from '../models/WalletTransaction.js';
 import walletService from './walletService.js';
@@ -21,11 +21,11 @@ class OrderService {
     }
   }
 
-  // Execute operation with optional transaction support
+  // Execute operation with or without transactions
   async executeWithTransaction(operation) {
-    const useTransactions = await this.supportsTransactions();
+    const supportsTransactions = await this.supportsTransactions();
     
-    if (useTransactions) {
+    if (supportsTransactions) {
       const session = await mongoose.startSession();
       session.startTransaction();
       
@@ -48,39 +48,29 @@ class OrderService {
   // Create single order
   async createSingleOrder(orderData, tenantId, userId) {
     return await this.executeWithTransaction(async (session) => {
-      const { packageGroupId, packageItemId, customerPhone, bundleSize, quantity = 1 } = orderData;
+      const { bundleId, customerPhone, bundleSize, quantity = 1 } = orderData;
       
-      // Get package group and package item details
-      const packageGroup = session 
-        ? await Product.findOne({
-            _id: packageGroupId,
+      // Get bundle details
+      const bundle = session 
+        ? await Bundle.findOne({
+            _id: bundleId,
             tenantId,
             isActive: true,
             isDeleted: false
           }).session(session)
-        : await Product.findOne({
-            _id: packageGroupId,
+        : await Bundle.findOne({
+            _id: bundleId,
             tenantId,
             isActive: true,
             isDeleted: false
           });
       
-      if (!packageGroup) {
-        throw new Error('Package group not found');
-      }
-      
-      const packageItem = packageGroup.packageItems.id(packageItemId);
-      if (!packageItem || !packageItem.isActive || packageItem.isDeleted) {
-        throw new Error('Package item not found or inactive');
-      }
-      
-      // Check inventory
-      if (packageItem.availableInventory < quantity) {
-        throw new Error(`Insufficient inventory. Available: ${packageItem.availableInventory}`);
+      if (!bundle) {
+        throw new Error('Bundle not found or inactive');
       }
 
       // Calculate total price
-      const totalPrice = packageItem.price * quantity;
+      const totalPrice = bundle.price * quantity;
       
       // Check wallet balance
       const user = session 
@@ -95,33 +85,25 @@ class OrderService {
         throw new Error(`Insufficient wallet balance. Required: GH₵${totalPrice.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`);
       }
       
-      // Reserve inventory
-      packageItem.reservedInventory += quantity;
-      if (session) {
-        await packageGroup.save({ session });
-      } else {
-        await packageGroup.save();
-      }
-      
       // Create order
       const order = new Order({
         orderType: 'single',
         tenantId,
         createdBy: userId,
         items: [{
-          packageGroup: packageGroupId,
-          packageItem: packageItemId,
+          packageGroup: bundle.packageId,
+          packageItem: bundleId,
           packageDetails: {
-            name: packageItem.name,
-            code: packageItem.code,
-            price: packageItem.price,
-            dataVolume: packageItem.dataVolume,
-            validity: packageItem.validity,
-            provider: packageGroup.provider,
+            name: bundle.name,
+            code: bundle._id.toString(),
+            price: bundle.price,
+            dataVolume: bundle.dataVolume,
+            validity: bundle.validity,
+            provider: bundle.provider,
           },
           quantity,
-          unitPrice: packageItem.price,
-          totalPrice: packageItem.price * quantity,
+          unitPrice: bundle.price,
+          totalPrice: bundle.price * quantity,
           customerPhone,
           bundleSize: bundleSize ? {
             value: bundleSize.value,
@@ -181,97 +163,90 @@ class OrderService {
   // Create bulk order
   async createBulkOrder(orderData, tenantId, userId) {
     return await this.executeWithTransaction(async (session) => {
-      const { packageGroupId, packageItemId, bulkData, delimiter = ',' } = orderData;
-      
+      const { bundleId, bulkData, delimiter = /[ ,\t]+/ } = orderData;
       if (!bulkData || !bulkData.trim()) {
         throw new Error('Bulk data is required');
       }
       
-      // Get package group and package item details
-      const packageGroup = session 
-        ? await Product.findOne({
-            _id: packageGroupId,
-            tenantId,
-            isActive: true,
-            isDeleted: false
-          }).session(session)
-        : await Product.findOne({
-            _id: packageGroupId,
-            tenantId,
-            isActive: true,
-            isDeleted: false
-          });
+      // Get bundle
+      const bundle = session
+        ? await Bundle.findOne({ _id: bundleId, tenantId, isActive: true, isDeleted: false }).session(session)
+        : await Bundle.findOne({ _id: bundleId, tenantId, isActive: true, isDeleted: false });
       
-      if (!packageGroup) {
-        throw new Error('Package group not found');
+      if (!bundle) {
+        throw new Error('Bundle not found or inactive');
       }
       
-      const packageItem = packageGroup.packageItems.id(packageItemId);
-      if (!packageItem || !packageItem.isActive || packageItem.isDeleted) {
-        throw new Error('Package item not found or inactive');
-      }
+      // Provider prefix map
+      const providerPrefixes = {
+        MTN: ['024', '025', '054', '055', '059'],
+        TELECEL: ['020', '050'],
+        AT: ['027', '057', '026', '056'],
+        GLO: ['023']
+      };
+      const allowedPrefixes = providerPrefixes[bundle.provider] || [];
       
-      // Parse bulk data
+      // Parse lines
       const lines = bulkData.trim().split('\n');
       const items = [];
-      let validItems = 0;
+      const errors = [];
       let totalQuantity = 0;
       
-      for (const element of lines) {
-        const line = element.trim();
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
         if (!line) continue;
         
-        const parts = line.split(delimiter);
-        const phoneNumber = parts[0].trim();
-        // Optional: handle bundle size
-        let bundleSize;
-        if (parts.length > 1) {
-          const bundleValue = parseFloat(parts[1]);
-          const bundleUnit = parts.length > 2 ? parts[2].trim().toUpperCase() : 'GB';
-          
-          if (!isNaN(bundleValue)) {
-            bundleSize = {
-              value: bundleValue,
-              unit: bundleUnit === 'MB' ? 'MB' : 'GB'
-            };
-          }
+        const parts = line.split(delimiter).filter(Boolean);
+        if (parts.length < 1) {
+          errors.push({ line: i + 1, input: line, error: 'Invalid format. Use: phone (e.g., 0241234556)' });
+          continue;
         }
         
-        if (phoneNumber) {
-          validItems++;
-          totalQuantity++;
-          items.push({
-            packageGroup: packageGroupId,
-            packageItem: packageItemId,
-            packageDetails: {
-              name: packageItem.name,
-              code: packageItem.code,
-              price: packageItem.price,
-              dataVolume: packageItem.dataVolume,
-              validity: packageItem.validity,
-              provider: packageGroup.provider,
-            },
-            quantity: 1,
-            unitPrice: packageItem.price,
-            totalPrice: packageItem.price,
-            customerPhone: phoneNumber,
-            bundleSize,
-            processingStatus: 'pending'
-          });
+        const phone = parts[0];
+        
+        // Validate phone prefix
+        const prefix = phone.replace(/^\+?233/, '0').substring(0, 3);
+        if (!allowedPrefixes.includes(prefix)) {
+          errors.push({ line: i + 1, input: line, error: `Phone prefix ${prefix} not allowed for provider ${bundle.provider}` });
+          continue;
         }
+        
+        // Validate phone number format
+        const cleanPhone = phone.replace(/^\+?233/, '0');
+        if (!/^0\d{8}$/.test(cleanPhone)) {
+          errors.push({ line: i + 1, input: line, error: 'Invalid phone number format' });
+          continue;
+        }
+        
+        items.push({
+          packageGroup: bundle.packageId,
+          packageItem: bundleId,
+          packageDetails: {
+            name: bundle.name,
+            code: bundle._id.toString(),
+            price: bundle.price,
+            dataVolume: bundle.dataVolume,
+            validity: bundle.validity,
+            provider: bundle.provider,
+          },
+          quantity: 1,
+          unitPrice: bundle.price,
+          totalPrice: bundle.price,
+          customerPhone: cleanPhone,
+          bundleSize: {
+            value: bundle.dataVolume,
+            unit: bundle.dataUnit
+          }
+        });
+        
+        totalQuantity += 1;
       }
       
       if (items.length === 0) {
         throw new Error('No valid items found in bulk data');
       }
       
-      // Check inventory
-      if (packageItem.availableInventory < totalQuantity) {
-        throw new Error(`Insufficient inventory. Required: ${totalQuantity}, Available: ${packageItem.availableInventory}`);
-      }
-      
-      // Calculate total price
-      const totalPrice = packageItem.price * totalQuantity;
+      const totalPrice = bundle.price * totalQuantity;
       
       // Check wallet balance
       const user = session 
@@ -286,14 +261,6 @@ class OrderService {
         throw new Error(`Insufficient wallet balance. Required: GH₵${totalPrice.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`);
       }
       
-      // Reserve inventory
-      packageItem.reservedInventory += totalQuantity;
-      if (session) {
-        await packageGroup.save({ session });
-      } else {
-        await packageGroup.save();
-      }
-      
       // Create order
       const order = new Order({
         orderType: 'bulk',
@@ -306,10 +273,9 @@ class OrderService {
         bulkData: {
           rawInput: bulkData,
           totalItems: items.length,
-          successfulItems: 0,
-          failedItems: 0
+          successfulItems: items.length,
+          failedItems: errors.length
         }
-        // The pre-save hook will calculate subtotal, total, and generate orderNumber
       });
       
       if (session) {
@@ -320,13 +286,9 @@ class OrderService {
       
       // Deduct from wallet
       try {
-        // We use walletService directly if in transaction mode
         if (session) {
-          // Directly update wallet balance in transaction
           user.walletBalance -= totalPrice;
           await user.save({ session });
-          
-          // Create wallet transaction record in the transaction
           const transaction = new WalletTransaction({
             user: userId,
             type: 'debit',
@@ -335,10 +297,8 @@ class OrderService {
             description: `Payment for bulk order ${order.orderNumber}`,
             relatedOrder: order._id
           });
-          
           await transaction.save({ session });
         } else {
-          // Use wallet service if not in transaction mode
           await walletService.debitWallet(
             userId,
             totalPrice,
@@ -352,11 +312,21 @@ class OrderService {
       }
       
       logger.info(`Bulk order created successfully: ${order.orderNumber} with ${items.length} items`);
-      return order;
+      return {
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+        totalItems: items.length,
+        items: items.map(item => ({
+          customerPhone: item.customerPhone,
+          bundleSize: item.bundleSize,
+          status: item.processingStatus
+        })),
+        errors
+      };
     });
   }
 
-   // Get orders with filtering
+  // Get orders with filtering
   async getOrders(tenantId, filters = {}, pagination = {}) {
     const { page = 1, limit = 20, sortBy = 'createdAt', sortOrder = -1 } = pagination;
     const {
@@ -411,7 +381,7 @@ class OrderService {
     };
   }
 
-// Process single order item
+  // Process order item
   async processOrderItem(orderId, itemId, tenantId, userId) {
     return await this.executeWithTransaction(async (session) => {
       const order = session 
@@ -434,12 +404,17 @@ class OrderService {
       }
       
       if (item.processingStatus !== 'pending') {
-        throw new Error('Item is not in pending status');
+        throw new Error('Order item is not in pending status');
       }
       
-      // Update item status
       item.processingStatus = 'processing';
       item.processedBy = userId;
+      
+      if (session) {
+        await order.save({ session });
+      } else {
+        await order.save();
+      }
       
       // Simulate bundle processing (replace with actual API integration)
       try {
@@ -448,34 +423,9 @@ class OrderService {
         item.processingStatus = 'completed';
         item.processedAt = new Date();
         
-        // Release reserved inventory and reduce actual inventory
-        const packageGroup = session 
-          ? await Product.findById(item.packageGroup).session(session)
-          : await Product.findById(item.packageGroup);
-        const packageItem = packageGroup.packageItems.id(item.packageItem);
-        packageItem.reservedInventory -= item.quantity;
-        packageItem.inventory -= item.quantity;
-        if (session) {
-          await packageGroup.save({ session });
-        } else {
-          await packageGroup.save();
-        }
-        
       } catch (processingError) {
         item.processingStatus = 'failed';
         item.processingError = processingError.message;
-        
-        // Release reserved inventory without reducing actual inventory
-        const packageGroup = session 
-          ? await Product.findById(item.packageGroup).session(session)
-          : await Product.findById(item.packageGroup);
-        const packageItem = packageGroup.packageItems.id(item.packageItem);
-        packageItem.reservedInventory -= item.quantity;
-        if (session) {
-          await packageGroup.save({ session });
-        } else {
-          await packageGroup.save();
-        }
       }
       
       // Update order status
@@ -490,10 +440,14 @@ class OrderService {
       return order;
     });
   }
-  
+
   // Process bulk order
   async processBulkOrder(orderId, tenantId, userId) {
-    const order = await Order.findOne({ _id: orderId, tenantId });
+    const order = await Order.findOne({
+      _id: orderId,
+      tenantId
+    });
+    
     if (!order) {
       throw new Error('Order not found');
     }
@@ -502,75 +456,102 @@ class OrderService {
       throw new Error('Order is not a bulk order');
     }
     
-    // Process items in batches to avoid overwhelming the system
-    const batchSize = 10;
-    const items = order.items.filter(item => item.processingStatus === 'pending');
+    // Process all pending items in the bulk order
+    const pendingItems = order.items.filter(item => item.processingStatus === 'pending');
     
-    for (let i = 0; i < items.length; i += batchSize) {
-      const batch = items.slice(i, i + batchSize);
-      const promises = batch.map(item => 
-        this.processOrderItem(orderId, item._id, tenantId, userId)
-          .catch(error => {
-            logger.error(`Failed to process item ${item._id}: ${error.message}`);
-            return null;
-          })
-      );
-      
-      await Promise.all(promises);
-      
-      // Add delay between batches
-      if (i + batchSize < items.length) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+    for (const item of pendingItems) {
+      try {
+        await this.processOrderItem(orderId, item._id, tenantId, userId);
+      } catch (error) {
+        logger.error(`Failed to process bulk order item: ${error.message}`);
+        // Continue processing other items
       }
     }
     
-    return await Order.findById(orderId);
+    logger.info(`Bulk order processing completed: ${orderId}`);
+    return order;
   }
-  
-  // Simulate mobile bundle processing (replace with actual API)
+
+  // Simulate mobile bundle processing
   async processMobileBundle(item) {
     // Simulate API call delay
-    await new Promise(resolve => setTimeout(resolve, Math.random() * 2000 + 1000));
+    await new Promise(resolve => setTimeout(resolve, 1000));
     
-    // Simulate random failures for demo (remove in production)
-    if (Math.random() < 0.1) {
-      throw new Error('Network provider API error');
+    // Simulate random success/failure (90% success rate)
+    const success = Math.random() > 0.1;
+    
+    if (!success) {
+      throw new Error('Bundle activation failed - network error');
     }
     
-    logger.info(`Bundle processed: ${item.customerPhone} - ${item.bundleSize.value}${item.bundleSize.unit}`);
-    return true;
+    logger.info(`Bundle processed successfully for ${item.customerPhone}`);
   }
-  
+
   // Get order analytics
   async getOrderAnalytics(tenantId, timeframe = '30d') {
-    const days = parseInt(timeframe.replace('d', ''));
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
+    // Convert timeframe to date
+    const endDate = new Date();
+    let startDate;
     
-    const [
-      totalOrders,
-      completedOrders,
-      pendingOrders,
-      totalRevenue,
-      bulkOrders
-    ] = await Promise.all([
-      Order.countDocuments({ tenantId, createdAt: { $gte: startDate } }),
-      Order.countDocuments({ tenantId, status: 'completed', createdAt: { $gte: startDate } }),
-      Order.countDocuments({ tenantId, status: { $in: ['pending', 'processing'] } }),
-      Order.aggregate([
-        { $match: { tenantId: new mongoose.Types.ObjectId(tenantId), status: 'completed', createdAt: { $gte: startDate } } },
-        { $group: { _id: null, total: { $sum: '$total' } } }
-      ]),
-      Order.countDocuments({ tenantId, orderType: 'bulk', createdAt: { $gte: startDate } })
+    switch (timeframe) {
+      case '7d':
+        startDate = new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case '30d':
+        startDate = new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      case '90d':
+        startDate = new Date(endDate.getTime() - 90 * 24 * 60 * 60 * 1000);
+        break;
+      case '365d':
+        startDate = new Date(endDate.getTime() - 365 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        startDate = new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+    }
+
+    const stats = await Order.aggregate([
+      {
+        $match: {
+          tenantId: tenantId,
+          createdAt: { $gte: startDate, $lte: endDate }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalOrders: { $sum: 1 },
+          completedOrders: {
+            $sum: { $cond: ['$status', 1, 0] }
+          },
+          totalRevenue: { $sum: '$total' },
+          bulkOrders: {
+            $sum: { $cond: [{ $eq: ['$orderType', 'bulk'] }, 1, 0] }
+          }
+        }
+      }
     ]);
-    
+
+    if (stats.length === 0) {
+      return {
+        totalOrders: 0,
+        completedOrders: 0,
+        totalRevenue: 0,
+        bulkOrders: 0,
+        completionRate: 0,
+        timeframe
+      };
+    }
+
+    const result = stats[0];
+    const completionRate = result.totalOrders > 0 ? (result.completedOrders / result.totalOrders) * 100 : 0;
+
     return {
-      totalOrders,
-      completedOrders,
-      pendingOrders,
-      totalRevenue: totalRevenue[0]?.total || 0,
-      bulkOrders,
-      completionRate: totalOrders > 0 ? Math.round((completedOrders / totalOrders) * 100) : 0,
+      totalOrders: result.totalOrders,
+      completedOrders: result.completedOrders,
+      totalRevenue: result.totalRevenue,
+      bulkOrders: result.bulkOrders,
+      completionRate: Math.round(completionRate * 100) / 100,
       timeframe
     };
   }
@@ -596,20 +577,9 @@ class OrderService {
         throw new Error('Order cannot be cancelled in current status');
       }
       
-      // Release reserved inventory
+      // Update item statuses
       for (const item of order.items) {
         if (item.processingStatus === 'pending') {
-          const packageGroup = session 
-            ? await Product.findById(item.packageGroup).session(session)
-            : await Product.findById(item.packageGroup);
-          const packageItem = packageGroup.packageItems.id(item.packageItem);
-          packageItem.reservedInventory -= item.quantity;
-          if (session) {
-            await packageGroup.save({ session });
-          } else {
-            await packageGroup.save();
-          }
-          
           item.processingStatus = 'cancelled';
         }
       }

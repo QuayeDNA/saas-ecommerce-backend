@@ -7,7 +7,7 @@ import { orderValidation } from '../validators/orderValidator.js';
 
 const router = express.Router();
 
-// Order CRUD operations
+// Order CRUD operations - SPECIFIC ROUTES FIRST
 router.post(
   '/single',
   authenticate,
@@ -24,21 +24,15 @@ router.post(
   orderController.createBulkOrder
 );
 
+// Analytics - SPECIFIC ROUTES FIRST
 router.get(
-  '/',
+  '/analytics/summary',
   authenticate,
   authorize('agent'),
-  orderController.getOrders
+  orderController.getAnalytics
 );
 
-router.get(
-  '/:id',
-  authenticate,
-  authorize('agent'),
-  orderController.getOrder
-);
-
-// Order processing
+// Order processing - SPECIFIC ROUTES FIRST
 router.post(
   '/:orderId/items/:itemId/process',
   authenticate,
@@ -61,12 +55,19 @@ router.post(
   orderController.cancelOrder
 );
 
-// Analytics
+// GENERIC ROUTES LAST
 router.get(
-  '/analytics/summary',
+  '/',
   authenticate,
   authorize('agent'),
-  orderController.getAnalytics
+  orderController.getOrders
+);
+
+router.get(
+  '/:id',
+  authenticate,
+  authorize('agent'),
+  orderController.getOrder
 );
 
 export default router;

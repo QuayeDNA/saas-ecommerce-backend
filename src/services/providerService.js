@@ -1,6 +1,6 @@
 // src/services/providerService.js
 import Provider from '../models/Provider.js';
-import PackageGroup from '../models/Product.js';
+import Package from '../models/Package.js';
 import logger from '../utils/logger.js';
 
 class ProviderService {

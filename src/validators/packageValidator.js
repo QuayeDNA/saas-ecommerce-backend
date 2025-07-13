@@ -1,63 +1,79 @@
 // src/validators/packageValidator.js
-import { body, param } from 'express-validator';
+import Joi from 'joi';
 
-export const packageValidation = {
-  createPackageGroup: [
-    body('name').trim().notEmpty().withMessage('Package group name is required'),
-    body('provider')
-      .isIn(['MTN', 'TELECEL', 'AT', 'GLO'])
-      .withMessage('Invalid provider'),
-    body('packageItems').optional().isArray().withMessage('Package items must be an array'),
-    body('packageItems.*.name').optional().notEmpty().withMessage('Package item name is required'),
-    body('packageItems.*.price').optional().isFloat({ min: 0 }).withMessage('Price must be a positive number'),
-    body('packageItems.*.dataVolume').optional().isFloat({ min: 0 }).withMessage('Data volume must be a positive number'),
-    body('packageItems.*.validity').optional().custom((value) => {
-      if (value === null || value === undefined || value === 0) return true; // unlimited
-      if (Number.isInteger(value) && value >= 1) return true;
-      throw new Error('Validity must be at least 1 day or unlimited');
-    })
-  ],
-  
-  updatePackageGroup: [
-    param('id').isMongoId().withMessage('Invalid package group ID'),
-    body('name').optional().trim().notEmpty(),
-    body('provider').optional().isIn(['MTN', 'TELECEL', 'AT', 'GLO']),
-    body('isActive').optional().isBoolean()
-  ],
-  
-  createPackageItem: [
-    param('id').isMongoId().withMessage('Invalid package group ID'),
-    body('name').notEmpty().withMessage('Package item name is required'),
-    body('price').isFloat({ min: 0 }).withMessage('Price must be a positive number'),
-    body('dataVolume').isFloat({ min: 0 }).withMessage('Data volume must be a positive number'),
-    body('validity').custom((value) => {
-      if (value === null || value === undefined || value === 0) return true; // unlimited
-      if (Number.isInteger(value) && value >= 1) return true;
-      throw new Error('Validity must be at least 1 day or unlimited');
-    }),
-    body('inventory').optional().isInt({ min: 0 }).withMessage('Inventory must be a non-negative integer'),
-    body('code').optional().isString().isLength({ min: 3 }).withMessage('Code must be at least 3 characters')
-  ],
-  
-  updatePackageItem: [
-    param('id').isMongoId().withMessage('Invalid package group ID'),
-    param('itemId').isMongoId().withMessage('Invalid package item ID'),
-    body('name').optional().notEmpty(),
-    body('price').optional().isFloat({ min: 0 }),
-    body('dataVolume').optional().isFloat({ min: 0 }),
-    body('validity').optional().custom((value) => {
-      if (value === null || value === undefined || value === 0) return true; // unlimited
-      if (Number.isInteger(value) && value >= 1) return true;
-      throw new Error('Validity must be at least 1 day or unlimited');
-    }),
-    body('inventory').optional().isInt({ min: 0 }),
-    body('isActive').optional().isBoolean()
-  ],
-  
-  bulkInventory: [
-    body('updates').isArray({ min: 1 }).withMessage('Updates array is required'),
-    body('updates.*.packageGroupId').isMongoId().withMessage('Invalid package group ID'),
-    body('updates.*.itemId').isMongoId().withMessage('Invalid package item ID'),
-    body('updates.*.inventory').isInt({ min: 0 }).withMessage('Inventory must be a non-negative integer')
-  ]
+// Package validation schemas
+const packageValidation = {
+  create: Joi.object({
+    name: Joi.string().required().trim().min(2).max(100),
+    description: Joi.string().optional().trim().max(500),
+    provider: Joi.string().required().valid('MTN', 'TELECEL', 'AT', 'GLO'),
+    category: Joi.string().required().valid('daily', 'weekly', 'monthly', 'unlimited', 'custom')
+  }),
+
+  update: Joi.object({
+    name: Joi.string().optional().trim().min(2).max(100),
+    description: Joi.string().optional().trim().max(500),
+    provider: Joi.string().optional().valid('MTN', 'TELECEL', 'AT', 'GLO'),
+    category: Joi.string().optional().valid('daily', 'weekly', 'monthly', 'unlimited', 'custom'),
+    isActive: Joi.boolean().optional()
+  })
 };
+
+// Bundle validation schemas
+const bundleValidation = {
+  create: Joi.object({
+    name: Joi.string().required().trim().min(2).max(100),
+    description: Joi.string().optional().trim().max(500),
+    packageId: Joi.string().required().hex().length(24),
+    provider: Joi.string().required().valid('MTN', 'TELECEL', 'AT', 'GLO'),
+    
+    // Bundle Specifications
+    dataVolume: Joi.number().required().min(0.1).max(1000),
+    dataUnit: Joi.string().optional().valid('MB', 'GB').default('GB'),
+    validity: Joi.number().required().min(1).max(365),
+    validityType: Joi.string().optional().valid('hours', 'days', 'unlimited').default('days'),
+    
+    // Pricing
+    price: Joi.number().required().min(0.01).max(10000),
+    costPrice: Joi.number().optional().min(0).max(10000),
+    currency: Joi.string().optional().default('GHS'),
+    
+    // Bundle Features
+    features: Joi.array().items(Joi.string()).optional().default([]),
+    bundleType: Joi.string().optional().valid('data_only', 'data_voice', 'data_sms', 'data_voice_sms').default('data_only'),
+    
+    // Status
+    isActive: Joi.boolean().optional().default(true)
+  }),
+
+  update: Joi.object({
+    name: Joi.string().optional().trim().min(2).max(100),
+    description: Joi.string().optional().trim().max(500),
+    packageId: Joi.string().optional().hex().length(24),
+    provider: Joi.string().optional().valid('MTN', 'TELECEL', 'AT', 'GLO'),
+    
+    // Bundle Specifications
+    dataVolume: Joi.number().optional().min(0.1).max(1000),
+    dataUnit: Joi.string().optional().valid('MB', 'GB'),
+    validity: Joi.number().optional().min(1).max(365),
+    validityType: Joi.string().optional().valid('hours', 'days', 'unlimited'),
+    
+    // Pricing
+    price: Joi.number().optional().min(0.01).max(10000),
+    costPrice: Joi.number().optional().min(0).max(10000),
+    currency: Joi.string().optional(),
+    
+    // Bundle Features
+    features: Joi.array().items(Joi.string()).optional(),
+    bundleType: Joi.string().optional().valid('data_only', 'data_voice', 'data_sms', 'data_voice_sms'),
+    
+    // Status
+    isActive: Joi.boolean().optional()
+  }),
+
+  checkAvailability: Joi.object({
+    walletBalance: Joi.number().required().min(0)
+  })
+};
+
+export { packageValidation, bundleValidation };

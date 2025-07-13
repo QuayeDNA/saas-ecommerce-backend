@@ -8,7 +8,9 @@
     "start": "node app.js",
     "dev": "nodemon app.js",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "seed": "node src/scripts/seed-packages.js",
+    "seed:check": "node src/scripts/check-seeding.js"
   },
   "keywords": [],
   "author": "",

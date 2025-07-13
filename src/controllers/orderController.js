@@ -27,11 +27,11 @@ class OrderController {
   async createBulkOrder(req, res) {
     try {
       const { tenantId, userId } = req.user;
-      const order = await orderService.createBulkOrder(req.body, tenantId, userId);
+      const result = await orderService.createBulkOrder(req.body, tenantId, userId);
       
       res.status(201).json({
         success: true,
-        order
+        ...result
       });
     } catch (error) {
       logger.error(`Bulk order creation failed: ${error.message}`);
@@ -191,7 +191,7 @@ class OrderController {
         analytics
       });
     } catch (error) {
-      logger.error(`Get order analytics failed: ${error.message}`);
+      logger.error(`Get analytics failed: ${error.message}`);
       res.status(500).json({
         success: false,
         message: 'Failed to fetch analytics'

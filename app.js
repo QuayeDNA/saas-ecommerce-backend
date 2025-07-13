@@ -9,6 +9,8 @@ import logger from './src/utils/logger.js';
 import authRoutes from './src/routes/authRoutes.js';
 import orderRouter from './src/routes/orderRoutes.js';
 import packageRoutes from './src/routes/packageRoutes.js';
+import bundleRoutes from './src/routes/bundleRoutes.js';
+import publicRoutes from './src/routes/publicRoutes.js';
 import storefrontRoutes from './src/routes/storefrontRoutes.js';
 import userRoutes from './src/routes/userRoutes.js';
 import providerRoutes from './src/routes/providerRoutes.js';
@@ -20,6 +22,25 @@ const PORT = process.env.PORT || 5050;
 
 // Database connection
 connectDB();
+
+// Check and seed data if needed
+import('./src/scripts/check-seeding.js').then(async (seedingModule) => {
+  try {
+    const needsSeeding = await seedingModule.checkIfSeedingNeeded();
+    if (needsSeeding) {
+      logger.info('🌱 Seeding data...');
+      await seedingModule.runSeeding();
+      logger.info('✅ Data seeding completed');
+    } else {
+      logger.info('✅ No seeding needed - data is present');
+    }
+  } catch (error) {
+    logger.error('❌ Error during seeding check:', error);
+  }
+}).catch(error => {
+  logger.error('❌ Error loading seeding module:', error);
+});
+
 // Start job to delete unverified users
 if (process.env.NODE_ENV === 'development') {
   deleteUnverifiedUsersJob();
@@ -56,8 +77,10 @@ app.use('/api/orders', orderRouter);
 app.use('/api/storefront', storefrontRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/providers', providerRoutes);
-app.use('/api/packages', packageRoutes);
 app.use('/api/wallet', walletRoutes);
+app.use('/api', publicRoutes);
+app.use('/api/packages', packageRoutes);
+app.use('/api/bundles', bundleRoutes);
 
 
 // Health check
