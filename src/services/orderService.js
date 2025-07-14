@@ -182,171 +182,58 @@ class OrderService {
   }
 
   // Create bulk order
-  async createBulkOrder(orderData, tenantId, userId) {
+  async createBulkOrder(orderData, tenantId, userId, userType) {
     return await this.executeWithTransaction(async (session) => {
-      const { packageGroupId, packageItemId, items } = orderData;
+      let { packageGroupId, packageItemId, items } = orderData;
       if (!items || !Array.isArray(items) || items.length === 0) {
         throw new Error('Bulk order items are required');
       }
-      
-      // Get bundle with provider info
-      const bundle = session
-        ? await Bundle.findOne({ 
-            _id: packageItemId, 
-            packageId: packageGroupId,
-            tenantId, 
-            isActive: true, 
-            isDeleted: false 
-          }).populate('providerId', 'name code').session(session)
-        : await Bundle.findOne({ 
-            _id: packageItemId, 
-            packageId: packageGroupId,
-            tenantId, 
-            isActive: true, 
-            isDeleted: false 
-          }).populate('providerId', 'name code');
-      
-      if (!bundle) {
-        throw new Error('Bundle not found or inactive');
+      // Fallback for tenantId if missing/invalid and userType is admin/agent
+      if (!tenantId || !/^[a-fA-F0-9]{24}$/.test(tenantId.toString())) {
+        if (userId && (userType === 'admin' || userType === 'agent')) {
+          console.log('Fallback: using userId as tenantId for admin/agent');
+          tenantId = userId;
+        } else {
+          throw new Error('Invalid or missing tenantId for bulk order');
+        }
       }
-      
-      // Provider prefix map
-      const providerPrefixes = {
-        MTN: ['024', '025', '054', '055', '059'],
-        TELECEL: ['020', '050'],
-        AT: ['027', '057', '026', '056'],
-        GLO: ['023']
-      };
-      const providerCode = bundle.providerId?.code || bundle.providerId?.name;
-      const allowedPrefixes = providerPrefixes[providerCode] || [];
-      
-      // Process items
-      const orderItems = [];
+      // Convert IDs to ObjectId
+      try {
+        packageGroupId = mongoose.Types.ObjectId(packageGroupId);
+        packageItemId = mongoose.Types.ObjectId(packageItemId);
+        tenantId = mongoose.Types.ObjectId(tenantId);
+      } catch (e) {
+        throw new Error('Invalid ID format for bulk order');
+      }
+      // Debug log
+      console.log('Bulk order bundle lookup:', { packageItemId, packageGroupId, tenantId, userType });
+
+      // Refactored: Process each item as a single order
+      const results = [];
       const errors = [];
-      let totalQuantity = 0;
-      
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        
-        // Validate phone prefix
-        const cleanPhone = item.customerPhone.replace(/^\+?233/, '0');
-        const prefix = cleanPhone.substring(0, 3);
-        
-        if (!allowedPrefixes.includes(prefix)) {
-          errors.push({ line: i + 1, input: `${item.customerName} - ${item.customerPhone}`, error: `Phone prefix ${prefix} not allowed for provider ${providerCode}` });
-          continue;
+      for (const item of items) {
+        try {
+          const singleOrderData = {
+            packageGroupId,
+            packageItemId,
+            customerPhone: item.customerPhone,
+            bundleSize: item.bundleSize,
+            quantity: item.quantity || 1
+          };
+          const order = await this.createSingleOrder(singleOrderData, tenantId, userId);
+          results.push(order);
+        } catch (err) {
+          errors.push({ item, error: err.message });
         }
-        
-        // Validate phone number format
-        if (!/^0\d{8}$/.test(cleanPhone)) {
-          errors.push({ line: i + 1, input: `${item.customerName} - ${item.customerPhone}`, error: 'Invalid phone number format' });
-          continue;
-        }
-        
-        // Calculate price based on data volume ratio
-        const dataRatio = item.bundleSize.value / bundle.dataVolume;
-        const itemPrice = bundle.price * dataRatio;
-        
-        orderItems.push({
-          packageGroup: bundle.packageId,
-          packageItem: packageItemId,
-          packageDetails: {
-            name: bundle.name,
-            code: bundle._id.toString(),
-            price: itemPrice,
-            dataVolume: item.bundleSize.value,
-            validity: bundle.validity,
-            provider: bundle.providerId?.code || bundle.providerId?.name,
-          },
-          quantity: 1,
-          unitPrice: itemPrice,
-          totalPrice: itemPrice,
-          customerPhone: cleanPhone,
-          bundleSize: item.bundleSize
-        });
-        
-        totalQuantity += 1;
       }
-      
-      if (orderItems.length === 0) {
+      if (results.length === 0) {
         throw new Error('No valid items found in bulk order');
       }
-      
-      const totalPrice = orderItems.reduce((sum, item) => sum + item.totalPrice, 0);
-      
-      // Check wallet balance
-      const user = session 
-        ? await User.findById(userId).session(session)
-        : await User.findById(userId);
-      
-      if (!user) {
-        throw new Error('User not found');
-      }
-      
-      if (user.walletBalance < totalPrice) {
-        throw new Error(`Insufficient wallet balance. Required: GH₵${totalPrice.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`);
-      }
-      
-      // Create order
-      const order = new Order({
-        orderType: 'bulk',
-        tenantId,
-        createdBy: userId,
-        items: orderItems,
-        paymentMethod: 'wallet',
-        paymentStatus: 'paid',
-        status: 'confirmed',
-        bulkData: {
-          rawInput: JSON.stringify(items),
-          totalItems: orderItems.length,
-          successfulItems: orderItems.length,
-          failedItems: errors.length
-        }
-      });
-      
-      if (session) {
-        await order.save({ session });
-      } else {
-        await order.save();
-      }
-      
-      // Deduct from wallet
-      try {
-        if (session) {
-          user.walletBalance -= totalPrice;
-          await user.save({ session });
-          const transaction = new WalletTransaction({
-            user: userId,
-            type: 'debit',
-            amount: totalPrice,
-            balanceAfter: user.walletBalance,
-            description: `Payment for bulk order ${order.orderNumber}`,
-            relatedOrder: order._id
-          });
-          await transaction.save({ session });
-        } else {
-          await walletService.debitWallet(
-            userId,
-            totalPrice,
-            `Payment for bulk order ${order.orderNumber}`,
-            order._id
-          );
-        }
-      } catch (walletError) {
-        logger.error(`Failed to deduct from wallet: ${walletError.message}`);
-        throw new Error(`Order created but payment failed: ${walletError.message}`);
-      }
-      
-      logger.info(`Bulk order created successfully: ${order.orderNumber} with ${orderItems.length} items`);
       return {
-        orderId: order._id,
-        orderNumber: order.orderNumber,
-        totalItems: orderItems.length,
-        items: orderItems.map(item => ({
-          customerPhone: item.customerPhone,
-          bundleSize: item.bundleSize,
-          status: item.processingStatus
-        })),
+        totalItems: items.length,
+        successfulItems: results.length,
+        failedItems: errors.length,
+        orders: results,
         errors
       };
     });

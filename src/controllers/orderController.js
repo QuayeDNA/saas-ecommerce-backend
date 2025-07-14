@@ -26,8 +26,8 @@ class OrderController {
   // Create bulk order
   async createBulkOrder(req, res) {
     try {
-      const { tenantId, userId } = req.user;
-      const result = await orderService.createBulkOrder(req.body, tenantId, userId);
+      const { tenantId, userId, userType } = req.user;
+      const result = await orderService.createBulkOrder(req.body, tenantId, userId, userType);
       
       res.status(201).json({
         success: true,
