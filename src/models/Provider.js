@@ -46,7 +46,7 @@ providerSchema.index({ isActive: 1, isDeleted: 1 });
 
 // Virtual for package groups associated with this provider
 providerSchema.virtual('packageGroups', {
-  ref: 'PackageGroup',
+  ref: 'Package',
   localField: 'code',
   foreignField: 'provider',
   justOne: false

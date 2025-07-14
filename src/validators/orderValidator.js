@@ -3,7 +3,8 @@ import Joi from 'joi';
 
 const orderValidation = {
   createSingle: Joi.object({
-    bundleId: Joi.string().required().hex().length(24),
+    packageGroupId: Joi.string().required().hex().length(24),
+    packageItemId: Joi.string().required().hex().length(24),
     customerPhone: Joi.string().required().pattern(/^\+?[\d\s-()]{10,}$/),
     bundleSize: Joi.object({
       value: Joi.number().min(0.1),
@@ -13,7 +14,8 @@ const orderValidation = {
   }),
 
   createBulk: Joi.object({
-    bundleId: Joi.string().required().hex().length(24),
+    packageGroupId: Joi.string().required().hex().length(24),
+    packageItemId: Joi.string().required().hex().length(24),
     bulkData: Joi.string().required().min(1),
     delimiter: Joi.string().optional()
   }),

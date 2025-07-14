@@ -22,7 +22,7 @@ const bundleController = {
 
       res.json({
         success: true,
-        data: result.bundles,
+        bundles: result.bundles,
         pagination: result.pagination
       });
     } catch (error) {
@@ -63,7 +63,7 @@ const bundleController = {
   // Get bundles by provider (public)
   getBundlesByProvider: async (req, res) => {
     try {
-      const { providerId } = req.params;
+      const { providerId } = req.params; // This is actually the provider code
       const { page = 1, limit = 10 } = req.query;
       
       const result = await bundleService.getBundlesByProvider(providerId, {
@@ -73,7 +73,7 @@ const bundleController = {
 
       res.json({
         success: true,
-        data: result.bundles,
+        bundles: result.bundles,
         pagination: result.pagination
       });
     } catch (error) {
@@ -98,7 +98,7 @@ const bundleController = {
 
       res.json({
         success: true,
-        data: result.bundles,
+        bundles: result.bundles,
         pagination: result.pagination
       });
     } catch (error) {

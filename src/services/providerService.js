@@ -183,7 +183,7 @@ class ProviderService {
       
       const analytics = await Promise.all(providers.map(async (provider) => {
         // Get packages for this provider (across all tenants)
-        const packageCounts = await PackageGroup.aggregate([
+        const packageCounts = await Package.aggregate([
           { 
             $match: { 
               provider: provider.code,

@@ -4,7 +4,7 @@ import mongoose from 'mongoose';
 const orderItemSchema = new mongoose.Schema({
   packageGroup: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'PackageGroup',
+    ref: 'Package',
     required: true
   },
   packageItem: {

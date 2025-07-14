@@ -19,15 +19,11 @@ router.post(
 
 router.get(
   '/',
-  authenticate,
-  authorize('agent'),
   packageController.getPackages
 );
 
 router.get(
   '/:id',
-  authenticate,
-  authorize('agent'),
   packageController.getPackage
 );
 
@@ -56,22 +52,16 @@ router.post(
 // Package-specific routes
 router.get(
   '/provider/:provider',
-  authenticate,
-  authorize('agent'),
   packageController.getPackagesByProvider
 );
 
 router.get(
   '/category/:category',
-  authenticate,
-  authorize('agent'),
   packageController.getPackagesByCategory
 );
 
 router.get(
   '/stats/summary',
-  authenticate,
-  authorize('agent'),
   packageController.getPackageStats
 );
 

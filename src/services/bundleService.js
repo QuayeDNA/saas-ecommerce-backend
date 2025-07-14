@@ -41,9 +41,26 @@ const bundleService = {
         query.providerId = providerId;
       }
 
-      // Add provider filter by code - since providerId is null, filter by name
+      // Add provider filter by code - filter by provider code
       if (provider) {
-        query.name = { $regex: `^${provider}`, $options: 'i' };
+        // First find the provider by code, then filter bundles by that provider's ID
+        const providerDoc = await Provider.findOne({ code: provider, isActive: true });
+        if (providerDoc) {
+          query.providerId = providerDoc._id;
+        } else {
+          // If provider not found, return empty result
+          return {
+            bundles: [],
+            pagination: {
+              page,
+              limit,
+              total: 0,
+              totalPages: 0,
+              hasNext: false,
+              hasPrev: false
+            }
+          };
+        }
       }
 
       // Add package filter
@@ -58,7 +75,7 @@ const bundleService = {
 
       const [bundles, total] = await Promise.all([
         Bundle.find(query)
-          .populate('providerId', 'name logo')
+          .populate('providerId', 'name logo code')
           .populate('packageId', 'name description')
           .sort(sortOptions)
           .skip(skip)
@@ -90,7 +107,7 @@ const bundleService = {
   getBundleById: async (id) => {
     try {
       const bundle = await Bundle.findById(id)
-        .populate('providerId', 'name logo')
+        .populate('providerId', 'name logo code')
         .populate('packageId', 'name description')
         .lean();
 
@@ -102,19 +119,36 @@ const bundleService = {
   },
 
   // Get bundles by provider
-  getBundlesByProvider: async (providerId, options = {}) => {
+  getBundlesByProvider: async (providerCode, options = {}) => {
     try {
       const { page = 1, limit = 10 } = options;
       const skip = (page - 1) * limit;
 
+      // First find the provider by code
+      const provider = await Provider.findOne({ code: providerCode, isActive: true });
+      if (!provider) {
+        return {
+          bundles: [],
+          pagination: {
+            page,
+            limit,
+            total: 0,
+            totalPages: 0,
+            hasNext: false,
+            hasPrev: false
+          }
+        };
+      }
+
       const [bundles, total] = await Promise.all([
-        Bundle.find({ providerId, isActive: true })
+        Bundle.find({ providerId: provider._id, isActive: true })
           .populate('packageId', 'name description')
+          .populate('providerId', 'name logo code')
           .sort({ createdAt: -1 })
           .skip(skip)
           .limit(limit)
           .lean(),
-        Bundle.countDocuments({ providerId, isActive: true })
+        Bundle.countDocuments({ providerId: provider._id, isActive: true })
       ]);
 
       const totalPages = Math.ceil(total / limit);
@@ -144,7 +178,7 @@ const bundleService = {
 
       const [bundles, total] = await Promise.all([
         Bundle.find({ packageId, isActive: true })
-          .populate('providerId', 'name logo')
+          .populate('providerId', 'name logo code')
           .sort({ price: 1 })
           .skip(skip)
           .limit(limit)

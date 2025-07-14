@@ -23,23 +23,7 @@ const PORT = process.env.PORT || 5050;
 // Database connection
 connectDB();
 
-// Check and seed data if needed
-import('./src/scripts/check-seeding.js').then(async (seedingModule) => {
-  try {
-    const needsSeeding = await seedingModule.checkIfSeedingNeeded();
-    if (needsSeeding) {
-      logger.info('🌱 Seeding data...');
-      await seedingModule.runSeeding();
-      logger.info('✅ Data seeding completed');
-    } else {
-      logger.info('✅ No seeding needed - data is present');
-    }
-  } catch (error) {
-    logger.error('❌ Error during seeding check:', error);
-  }
-}).catch(error => {
-  logger.error('❌ Error loading seeding module:', error);
-});
+
 
 // Start job to delete unverified users
 if (process.env.NODE_ENV === 'development') {

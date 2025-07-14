@@ -48,26 +48,47 @@ class OrderService {
   // Create single order
   async createSingleOrder(orderData, tenantId, userId) {
     return await this.executeWithTransaction(async (session) => {
-      const { bundleId, customerPhone, bundleSize, quantity = 1 } = orderData;
+      const { packageGroupId, packageItemId, customerPhone, bundleSize, quantity = 1 } = orderData;
       
-      // Get bundle details
-      const bundle = session 
+      console.log('Order data received:', { packageGroupId, packageItemId, tenantId });
+      
+      // Get bundle details with provider info - try without tenantId first
+      let bundle = session 
         ? await Bundle.findOne({
-            _id: bundleId,
-            tenantId,
+            _id: packageItemId,
+            packageId: packageGroupId,
             isActive: true,
             isDeleted: false
-          }).session(session)
+          }).populate('providerId', 'name code').session(session)
         : await Bundle.findOne({
-            _id: bundleId,
-            tenantId,
+            _id: packageItemId,
+            packageId: packageGroupId,
             isActive: true,
             isDeleted: false
-          });
+          }).populate('providerId', 'name code');
       
       if (!bundle) {
+        console.log('Bundle not found with packageId, trying with just _id');
+        // Fallback: try to find bundle by ID only
+        bundle = session 
+          ? await Bundle.findOne({
+              _id: packageItemId,
+              isActive: true,
+              isDeleted: false
+            }).populate('providerId', 'name code').session(session)
+          : await Bundle.findOne({
+              _id: packageItemId,
+              isActive: true,
+              isDeleted: false
+            }).populate('providerId', 'name code');
+      }
+      
+      if (!bundle) {
+        console.log('Bundle still not found, available bundles:', await Bundle.find({ isActive: true }).select('_id packageId name'));
         throw new Error('Bundle not found or inactive');
       }
+      
+      console.log('Bundle found:', { id: bundle._id, name: bundle.name, packageId: bundle.packageId });
 
       // Calculate total price
       const totalPrice = bundle.price * quantity;
@@ -92,14 +113,14 @@ class OrderService {
         createdBy: userId,
         items: [{
           packageGroup: bundle.packageId,
-          packageItem: bundleId,
+          packageItem: packageItemId,
           packageDetails: {
             name: bundle.name,
             code: bundle._id.toString(),
             price: bundle.price,
             dataVolume: bundle.dataVolume,
             validity: bundle.validity,
-            provider: bundle.provider,
+            provider: bundle.providerId?.code || bundle.providerId?.name,
           },
           quantity,
           unitPrice: bundle.price,
@@ -163,15 +184,27 @@ class OrderService {
   // Create bulk order
   async createBulkOrder(orderData, tenantId, userId) {
     return await this.executeWithTransaction(async (session) => {
-      const { bundleId, bulkData, delimiter = /[ ,\t]+/ } = orderData;
+      const { packageGroupId, packageItemId, bulkData, delimiter = /[ ,\t]+/ } = orderData;
       if (!bulkData || !bulkData.trim()) {
         throw new Error('Bulk data is required');
       }
       
-      // Get bundle
+      // Get bundle with provider info
       const bundle = session
-        ? await Bundle.findOne({ _id: bundleId, tenantId, isActive: true, isDeleted: false }).session(session)
-        : await Bundle.findOne({ _id: bundleId, tenantId, isActive: true, isDeleted: false });
+        ? await Bundle.findOne({ 
+            _id: packageItemId, 
+            packageId: packageGroupId,
+            tenantId, 
+            isActive: true, 
+            isDeleted: false 
+          }).populate('providerId', 'name code').session(session)
+        : await Bundle.findOne({ 
+            _id: packageItemId, 
+            packageId: packageGroupId,
+            tenantId, 
+            isActive: true, 
+            isDeleted: false 
+          }).populate('providerId', 'name code');
       
       if (!bundle) {
         throw new Error('Bundle not found or inactive');
@@ -184,7 +217,8 @@ class OrderService {
         AT: ['027', '057', '026', '056'],
         GLO: ['023']
       };
-      const allowedPrefixes = providerPrefixes[bundle.provider] || [];
+      const providerCode = bundle.providerId?.code || bundle.providerId?.name;
+      const allowedPrefixes = providerPrefixes[providerCode] || [];
       
       // Parse lines
       const lines = bulkData.trim().split('\n');
@@ -207,7 +241,7 @@ class OrderService {
         // Validate phone prefix
         const prefix = phone.replace(/^\+?233/, '0').substring(0, 3);
         if (!allowedPrefixes.includes(prefix)) {
-          errors.push({ line: i + 1, input: line, error: `Phone prefix ${prefix} not allowed for provider ${bundle.provider}` });
+          errors.push({ line: i + 1, input: line, error: `Phone prefix ${prefix} not allowed for provider ${providerCode}` });
           continue;
         }
         
@@ -220,14 +254,14 @@ class OrderService {
         
         items.push({
           packageGroup: bundle.packageId,
-          packageItem: bundleId,
+          packageItem: packageItemId,
           packageDetails: {
             name: bundle.name,
             code: bundle._id.toString(),
             price: bundle.price,
             dataVolume: bundle.dataVolume,
             validity: bundle.validity,
-            provider: bundle.provider,
+            provider: bundle.providerId?.code || bundle.providerId?.name,
           },
           quantity: 1,
           unitPrice: bundle.price,
@@ -601,3 +635,4 @@ class OrderService {
 }
 
 export default new OrderService();
+

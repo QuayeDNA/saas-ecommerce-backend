@@ -30,11 +30,11 @@ class PackageService {
   }
 
   // Get packages with filtering and pagination
-  async getPackages(tenantId, filters = {}, pagination = {}) {
+  async getPackages(filters = {}, pagination = {}) {
     const { page = 1, limit = 20, sortBy = 'createdAt', sortOrder = -1 } = pagination;
     const { search, provider, category, isActive, includeDeleted = false } = filters;
     
-    const query = { tenantId };
+    const query = {};
     
     if (!includeDeleted) {
       query.isDeleted = false;
@@ -73,10 +73,9 @@ class PackageService {
   }
 
   // Get single package by ID
-  async getPackageById(packageId, tenantId) {
+  async getPackageById(packageId) {
     const packageGroup = await Package.findOne({
       _id: packageId,
-      tenantId,
       isDeleted: false
     }).populate('createdBy', 'fullName email')
       .populate('updatedBy', 'fullName email');
@@ -156,9 +155,8 @@ class PackageService {
   }
 
   // Get packages by provider
-  async getPackagesByProvider(tenantId, provider) {
+  async getPackagesByProvider(provider) {
     return await Package.find({
-      tenantId,
       provider,
       isActive: true,
       isDeleted: false
@@ -166,9 +164,8 @@ class PackageService {
   }
 
   // Get packages by category
-  async getPackagesByCategory(tenantId, category) {
+  async getPackagesByCategory(category) {
     return await Package.find({
-      tenantId,
       category,
       isActive: true,
       isDeleted: false
@@ -176,9 +173,9 @@ class PackageService {
   }
 
   // Get package statistics
-  async getPackageStats(tenantId) {
+  async getPackageStats() {
     const stats = await Package.aggregate([
-      { $match: { tenantId: tenantId, isDeleted: false } },
+      { $match: { isDeleted: false } },
       {
         $group: {
           _id: null,
