@@ -184,9 +184,9 @@ class OrderService {
   // Create bulk order
   async createBulkOrder(orderData, tenantId, userId) {
     return await this.executeWithTransaction(async (session) => {
-      const { packageGroupId, packageItemId, bulkData, delimiter = /[ ,\t]+/ } = orderData;
-      if (!bulkData || !bulkData.trim()) {
-        throw new Error('Bulk data is required');
+      const { packageGroupId, packageItemId, items } = orderData;
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        throw new Error('Bulk order items are required');
       }
       
       // Get bundle with provider info
@@ -220,67 +220,59 @@ class OrderService {
       const providerCode = bundle.providerId?.code || bundle.providerId?.name;
       const allowedPrefixes = providerPrefixes[providerCode] || [];
       
-      // Parse lines
-      const lines = bulkData.trim().split('\n');
-      const items = [];
+      // Process items
+      const orderItems = [];
       const errors = [];
       let totalQuantity = 0;
       
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
-        
-        const parts = line.split(delimiter).filter(Boolean);
-        if (parts.length < 1) {
-          errors.push({ line: i + 1, input: line, error: 'Invalid format. Use: phone (e.g., 0241234556)' });
-          continue;
-        }
-        
-        const phone = parts[0];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
         
         // Validate phone prefix
-        const prefix = phone.replace(/^\+?233/, '0').substring(0, 3);
+        const cleanPhone = item.customerPhone.replace(/^\+?233/, '0');
+        const prefix = cleanPhone.substring(0, 3);
+        
         if (!allowedPrefixes.includes(prefix)) {
-          errors.push({ line: i + 1, input: line, error: `Phone prefix ${prefix} not allowed for provider ${providerCode}` });
+          errors.push({ line: i + 1, input: `${item.customerName} - ${item.customerPhone}`, error: `Phone prefix ${prefix} not allowed for provider ${providerCode}` });
           continue;
         }
         
         // Validate phone number format
-        const cleanPhone = phone.replace(/^\+?233/, '0');
         if (!/^0\d{8}$/.test(cleanPhone)) {
-          errors.push({ line: i + 1, input: line, error: 'Invalid phone number format' });
+          errors.push({ line: i + 1, input: `${item.customerName} - ${item.customerPhone}`, error: 'Invalid phone number format' });
           continue;
         }
         
-        items.push({
+        // Calculate price based on data volume ratio
+        const dataRatio = item.bundleSize.value / bundle.dataVolume;
+        const itemPrice = bundle.price * dataRatio;
+        
+        orderItems.push({
           packageGroup: bundle.packageId,
           packageItem: packageItemId,
           packageDetails: {
             name: bundle.name,
             code: bundle._id.toString(),
-            price: bundle.price,
-            dataVolume: bundle.dataVolume,
+            price: itemPrice,
+            dataVolume: item.bundleSize.value,
             validity: bundle.validity,
             provider: bundle.providerId?.code || bundle.providerId?.name,
           },
           quantity: 1,
-          unitPrice: bundle.price,
-          totalPrice: bundle.price,
+          unitPrice: itemPrice,
+          totalPrice: itemPrice,
           customerPhone: cleanPhone,
-          bundleSize: {
-            value: bundle.dataVolume,
-            unit: bundle.dataUnit
-          }
+          bundleSize: item.bundleSize
         });
         
         totalQuantity += 1;
       }
       
-      if (items.length === 0) {
-        throw new Error('No valid items found in bulk data');
+      if (orderItems.length === 0) {
+        throw new Error('No valid items found in bulk order');
       }
       
-      const totalPrice = bundle.price * totalQuantity;
+      const totalPrice = orderItems.reduce((sum, item) => sum + item.totalPrice, 0);
       
       // Check wallet balance
       const user = session 
@@ -300,14 +292,14 @@ class OrderService {
         orderType: 'bulk',
         tenantId,
         createdBy: userId,
-        items,
+        items: orderItems,
         paymentMethod: 'wallet',
         paymentStatus: 'paid',
         status: 'confirmed',
         bulkData: {
-          rawInput: bulkData,
-          totalItems: items.length,
-          successfulItems: items.length,
+          rawInput: JSON.stringify(items),
+          totalItems: orderItems.length,
+          successfulItems: orderItems.length,
           failedItems: errors.length
         }
       });
@@ -345,12 +337,12 @@ class OrderService {
         throw new Error(`Order created but payment failed: ${walletError.message}`);
       }
       
-      logger.info(`Bulk order created successfully: ${order.orderNumber} with ${items.length} items`);
+      logger.info(`Bulk order created successfully: ${order.orderNumber} with ${orderItems.length} items`);
       return {
         orderId: order._id,
         orderNumber: order.orderNumber,
-        totalItems: items.length,
-        items: items.map(item => ({
+        totalItems: orderItems.length,
+        items: orderItems.map(item => ({
           customerPhone: item.customerPhone,
           bundleSize: item.bundleSize,
           status: item.processingStatus
