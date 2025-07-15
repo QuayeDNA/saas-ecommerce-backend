@@ -134,7 +134,7 @@ class OrderService {
         }],
         paymentMethod: 'wallet',
         status: 'confirmed',
-        paymentStatus: 'paid',
+        paymentStatus: 'pending',
         // The pre-save hook will calculate subtotal, total, and generate orderNumber
       });
       
@@ -144,44 +144,6 @@ class OrderService {
         await order.save();
       }
 
-      // Deduct from wallet
-      try {
-        // We use walletService directly if in transaction mode
-        if (session) {
-          // Directly update wallet balance in transaction
-          user.walletBalance -= totalPrice;
-          await user.save({ session });
-          
-          // Create wallet transaction record in the transaction
-          const transaction = new WalletTransaction({
-            user: userId,
-            type: 'debit',
-            amount: totalPrice,
-            balanceAfter: user.walletBalance,
-            description: `Payment for order ${order.orderNumber}`,
-            relatedOrder: order._id
-          });
-          
-          await transaction.save({ session });
-        } else {
-          // Use wallet service if not in transaction mode
-          await walletService.debitWallet(
-            userId,
-            totalPrice,
-            `Payment for order ${order.orderNumber}`,
-            order._id
-          );
-        }
-        // Set paymentStatus to 'Done' after successful deduction
-        order.paymentStatus = 'Done';
-        if (order.items && order.items.length > 0) {
-          order.items.forEach(item => { item.paymentStatus = 'Done'; });
-        }
-      } catch (walletError) {
-        logger.error(`Failed to deduct from wallet: ${walletError.message}`);
-        throw new Error(`Order created but payment failed: ${walletError.message}`);
-      }
-      
       logger.info(`Order created successfully: ${order.orderNumber}`);
       return order;
     });
@@ -553,4 +515,3 @@ class OrderService {
 }
 
 export default new OrderService();
-
