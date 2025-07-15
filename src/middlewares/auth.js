@@ -28,10 +28,10 @@ export const authenticate = async (req, res, next) => {
     }
 
     req.user = {
-      userId: user._id,
+      userId: user._id.toString(),
       email: user.email,
       userType: user.userType,
-      tenantId: decoded.tenantId,
+      tenantId: decoded.tenantId ? decoded.tenantId.toString() : user._id.toString(),
       ...user.toJSON()
     };
     

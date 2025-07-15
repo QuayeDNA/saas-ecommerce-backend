@@ -6,6 +6,7 @@ import WalletTransaction from '../models/WalletTransaction.js';
 import walletService from './walletService.js';
 import mongoose from 'mongoose';
 import logger from '../utils/logger.js';
+import { parseBulkOrderRow } from '../utils/parseBulkOrderRow.js';
 
 class OrderService {
   // Check if MongoDB supports transactions (replica set or sharded cluster)
@@ -171,6 +172,11 @@ class OrderService {
             order._id
           );
         }
+        // Set paymentStatus to 'Done' after successful deduction
+        order.paymentStatus = 'Done';
+        if (order.items && order.items.length > 0) {
+          order.items.forEach(item => { item.paymentStatus = 'Done'; });
+        }
       } catch (walletError) {
         logger.error(`Failed to deduct from wallet: ${walletError.message}`);
         throw new Error(`Order created but payment failed: ${walletError.message}`);
@@ -181,62 +187,92 @@ class OrderService {
     });
   }
 
-  // Create bulk order
-  async createBulkOrder(orderData, tenantId, userId, userType) {
-    return await this.executeWithTransaction(async (session) => {
-      let { packageGroupId, packageItemId, items } = orderData;
-      if (!items || !Array.isArray(items) || items.length === 0) {
-        throw new Error('Bulk order items are required');
-      }
-      // Fallback for tenantId if missing/invalid and userType is admin/agent
-      if (!tenantId || !/^[a-fA-F0-9]{24}$/.test(tenantId.toString())) {
-        if (userId && (userType === 'admin' || userType === 'agent')) {
-          console.log('Fallback: using userId as tenantId for admin/agent');
-          tenantId = userId;
-        } else {
-          throw new Error('Invalid or missing tenantId for bulk order');
-        }
-      }
-      // Convert IDs to ObjectId
-      try {
-        packageGroupId = mongoose.Types.ObjectId(packageGroupId);
-        packageItemId = mongoose.Types.ObjectId(packageItemId);
-        tenantId = mongoose.Types.ObjectId(tenantId);
-      } catch (e) {
-        throw new Error('Invalid ID format for bulk order');
-      }
-      // Debug log
-      console.log('Bulk order bundle lookup:', { packageItemId, packageGroupId, tenantId, userType });
+  // Create bulk order (new logic)
+  async createBulkOrders({ items, tenantId, userId }) {
+    const validOrderItems = [];
+    const errors = [];
 
-      // Refactored: Process each item as a single order
-      const results = [];
-      const errors = [];
-      for (const item of items) {
-        try {
-          const singleOrderData = {
-            packageGroupId,
-            packageItemId,
-            customerPhone: item.customerPhone,
-            bundleSize: item.bundleSize,
-            quantity: item.quantity || 1
-          };
-          const order = await this.createSingleOrder(singleOrderData, tenantId, userId);
-          results.push(order);
-        } catch (err) {
-          errors.push({ item, error: err.message });
-        }
+    // Ensure tenantId and userId are ObjectId instances
+    const getObjectId = (id) => {
+      if (typeof id === 'string') return new mongoose.Types.ObjectId(id);
+      if (id instanceof mongoose.Types.ObjectId) return id;
+      // fallback: try to convert
+      return new mongoose.Types.ObjectId(String(id));
+    };
+    const tenantObjectId = getObjectId(tenantId);
+    const userObjectId = getObjectId(userId);
+
+    for (let i = 0; i < items.length; i++) {
+      const row = items[i];
+      const parsed = parseBulkOrderRow(row);
+      if (parsed.error) {
+        errors.push({ index: i, row, error: parsed.error });
+        continue;
       }
-      if (results.length === 0) {
-        throw new Error('No valid items found in bulk order');
+
+      // Look up the correct bundle (packageItem) and its parent package (packageGroup)
+      const bundle = await Bundle.findOne({
+        dataVolume: parsed.value.bundleSize.value,
+        dataUnit: parsed.value.bundleSize.unit,
+        isActive: true,
+        isDeleted: false
+      });
+      if (!bundle) {
+        errors.push({ index: i, row, error: 'Bundle not found for specified data volume and unit' });
+        continue;
       }
-      return {
-        totalItems: items.length,
-        successfulItems: results.length,
-        failedItems: errors.length,
-        orders: results,
-        errors
-      };
-    });
+      const packageGroup = bundle.packageId;
+
+      validOrderItems.push({
+        orderType: 'bulk',
+        tenantId: tenantObjectId,
+        createdBy: userObjectId,
+        items: [
+          {
+            packageGroup,
+            packageItem: bundle._id,
+            packageDetails: {
+              name: bundle.name,
+              code: bundle._id.toString(),
+              price: bundle.price,
+              dataVolume: bundle.dataVolume,
+              validity: bundle.validity,
+              provider: bundle.providerId?.toString()
+            },
+            quantity: 1,
+            unitPrice: bundle.price,
+            totalPrice: bundle.price,
+            customerPhone: parsed.value.customerPhone,
+            bundleSize: parsed.value.bundleSize,
+            processingStatus: 'pending'
+          }
+        ],
+        status: 'pending',
+        paymentStatus: 'pending'
+      });
+    }
+  
+    if (!validOrderItems.length) {
+      throw new Error('No valid bulk order items');
+    }
+  
+    // Bulk insert
+    let inserted = [];
+    try {
+      inserted = await Order.insertMany(validOrderItems, { ordered: false });
+    } catch (err) {
+      // Some may fail, but 'inserted' will still have successful ones
+      if (err.insertedDocs) {
+        inserted = err.insertedDocs;
+      }
+    }
+  
+    return {
+      successCount: inserted.length,
+      failedCount: errors.length,
+      failedRecords: errors,
+      orders: inserted.map(o => o._id)
+    };
   }
 
   // Get orders with filtering
@@ -330,15 +366,26 @@ class OrderService {
       }
       
       // Simulate bundle processing (replace with actual API integration)
+      let processedSuccessfully = false;
       try {
         await this.processMobileBundle(item);
-        
         item.processingStatus = 'completed';
         item.processedAt = new Date();
-        
+        processedSuccessfully = true;
       } catch (processingError) {
         item.processingStatus = 'failed';
         item.processingError = processingError.message;
+      }
+      
+      // Deduct from wallet only if processed successfully and not already paid
+      if (processedSuccessfully && order.paymentMethod === 'wallet' && item.unitPrice > 0) {
+        await walletService.debitWallet(
+          order.createdBy.toString(),
+          item.totalPrice,
+          `Payment for order item ${order.orderNumber || order._id} - ${item.customerPhone}`,
+          order._id
+        );
+        item.paymentStatus = 'Done';
       }
       
       // Update order status

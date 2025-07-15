@@ -2,6 +2,7 @@
 import orderService from '../services/orderService.js';
 import Order from '../models/Order.js';
 import logger from '../utils/logger.js';
+import { orderValidation } from '../validators/orderValidator.js';
 
 class OrderController {
   // Create single order
@@ -25,20 +26,21 @@ class OrderController {
   
   // Create bulk order
   async createBulkOrder(req, res) {
+    // This assumes userId, tenantId come from req.user (middleware) or from the body for flexibility
+    const { error, value } = orderValidation.createBulk.validate({
+      ...req.body,
+      // Example: override with req.user for stricter tenancy
+      tenantId: req.user.tenantId,
+      userId: req.user.userId
+    });
+    if (error) {
+      return res.status(400).json({ success: false, message: error.details[0].message });
+    }
     try {
-      const { tenantId, userId, userType } = req.user;
-      const result = await orderService.createBulkOrder(req.body, tenantId, userId, userType);
-      
-      res.status(201).json({
-        success: true,
-        ...result
-      });
-    } catch (error) {
-      logger.error(`Bulk order creation failed: ${error.message}`);
-      res.status(400).json({
-        success: false,
-        message: error.message
-      });
+      const result = await orderService.createBulkOrders(value);
+      return res.status(201).json({ success: true, ...result });
+    } catch (err) {
+      return res.status(400).json({ success: false, message: err.message });
     }
   }
   

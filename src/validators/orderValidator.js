@@ -14,10 +14,11 @@ const orderValidation = {
   }),
 
   createBulk: Joi.object({
-    packageGroupId: Joi.string().required().hex().length(24),
-    packageItemId: Joi.string().required().hex().length(24),
-    bulkData: Joi.string().required().min(1),
-    delimiter: Joi.string().optional()
+    items: Joi.array().items(
+      Joi.string().min(6) // expects lines like '0542313561,10GB'
+    ).min(1).required(),
+    tenantId: Joi.string().required().hex().length(24),
+    userId: Joi.string().required().hex().length(24)
   }),
 
   cancel: Joi.object({
