@@ -24,14 +24,15 @@ const bundleSchema = new mongoose.Schema(
       default: "GB"
     },
     validity: {
-      type: Number,
+      type: String,
       required: true,
-      min: 1
+      enum: ["unlimited", "limited"],
+      default: "limited"
     },
     validityUnit: {
       type: String,
       required: true,
-      enum: ["hours", "days", "weeks", "months"],
+      enum: ["hours", "days", "weeks", "months", "unlimited"],
       default: "days"
     },
     price: {

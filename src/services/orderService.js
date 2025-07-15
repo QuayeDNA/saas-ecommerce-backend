@@ -189,7 +189,7 @@ class OrderService {
 
   // Create bulk order (new logic)
   async createBulkOrders({ items, tenantId, userId }) {
-    const validOrderItems = [];
+    const createdOrders = [];
     const errors = [];
 
     // Ensure tenantId and userId are ObjectId instances
@@ -223,55 +223,47 @@ class OrderService {
       }
       const packageGroup = bundle.packageId;
 
-      validOrderItems.push({
-        orderType: 'bulk',
-        tenantId: tenantObjectId,
-        createdBy: userObjectId,
-        items: [
-          {
-            packageGroup,
-            packageItem: bundle._id,
-            packageDetails: {
-              name: bundle.name,
-              code: bundle._id.toString(),
-              price: bundle.price,
-              dataVolume: bundle.dataVolume,
-              validity: bundle.validity,
-              provider: bundle.providerId?.toString()
-            },
-            quantity: 1,
-            unitPrice: bundle.price,
-            totalPrice: bundle.price,
-            customerPhone: parsed.value.customerPhone,
-            bundleSize: parsed.value.bundleSize,
-            processingStatus: 'pending'
-          }
-        ],
-        status: 'pending',
-        paymentStatus: 'pending'
-      });
-    }
-  
-    if (!validOrderItems.length) {
-      throw new Error('No valid bulk order items');
-    }
-  
-    // Bulk insert
-    let inserted = [];
-    try {
-      inserted = await Order.insertMany(validOrderItems, { ordered: false });
-    } catch (err) {
-      // Some may fail, but 'inserted' will still have successful ones
-      if (err.insertedDocs) {
-        inserted = err.insertedDocs;
+      // Create a single order for this item
+      try {
+        const order = await Order.create({
+          orderType: 'single',
+          tenantId: tenantObjectId,
+          createdBy: userObjectId,
+          items: [
+            {
+              packageGroup,
+              packageItem: bundle._id,
+              packageDetails: {
+                name: bundle.name,
+                code: bundle._id.toString(),
+                price: bundle.price,
+                dataVolume: bundle.dataVolume,
+                validity: bundle.validity,
+                validityUnit: bundle.validityUnit,
+                provider: bundle.providerId?.toString()
+              },
+              quantity: 1,
+              unitPrice: bundle.price,
+              totalPrice: bundle.price,
+              customerPhone: parsed.value.customerPhone,
+              bundleSize: parsed.value.bundleSize,
+              processingStatus: 'pending'
+            }
+          ],
+          status: 'pending',
+          paymentStatus: 'pending'
+        });
+        createdOrders.push(order);
+      } catch (err) {
+        errors.push({ index: i, row, error: err.message });
       }
     }
-  
+
     return {
-      successCount: inserted.length,
+      successCount: createdOrders.length,
       failedCount: errors.length,
       failedRecords: errors,
-      orders: inserted.map(o => o._id)
+      orders: createdOrders.map(o => o._id)
     };
   }
 

@@ -16,7 +16,8 @@ const orderItemSchema = new mongoose.Schema({
     code: String,
     price: Number,
     dataVolume: Number,
-    validity: Number,
+    validity: { type: mongoose.Schema.Types.Mixed },
+    validityUnit: { type: mongoose.Schema.Types.Mixed },
     provider: String,
   },
   quantity: {
@@ -41,7 +42,7 @@ const orderItemSchema = new mongoose.Schema({
     match: [/^\+?[\d\s-()]{10,}$/, 'Please enter a valid phone number']
   },
   bundleSize: {
-    value: Number,
+    value: { type: mongoose.Schema.Types.Mixed },
     unit: {
       type: String,
       enum: ['MB', 'GB'],
