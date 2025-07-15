@@ -39,7 +39,7 @@ const MTN_AGENT_BUNDLES = [
 ];
 
 async function main() {
-  await mongoose.connect(process.env.DBURI, { useNewUrlParser: true, useUnifiedTopology: true });
+  await mongoose.connect(process.env.DBURI, { });
   console.log('Connected to MongoDB');
 
   // Ensure admin user exists
@@ -65,6 +65,9 @@ async function main() {
   // Remove all existing packages and bundles for MTN
   await Package.deleteMany({ provider: 'MTN' });
   await Bundle.deleteMany({ provider: 'MTN' });
+  // Force-delete all bundles with the same bundleCodes to avoid unique index conflicts
+  const agentBundleCodes = MTN_AGENT_BUNDLES.map(b => b.name.replace(/\s+/g, '_').toUpperCase());
+  await Bundle.deleteMany({ bundleCode: { $in: agentBundleCodes } });
 
   // Create the MTN Agent Unlimited Package
   const pkg = await Package.create({
