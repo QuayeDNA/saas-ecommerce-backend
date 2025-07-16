@@ -20,7 +20,7 @@ const packageSchema = new mongoose.Schema(
     category: {
       type: String,
       required: true,
-      enum: ["daily", "weekly", "monthly", "unlimited", "custom"],
+      enum: ["daily", "weekly", "monthly", "unlimited", "custom", "big-time", "ishare-premium", "telecel"],
     },
     isActive: { 
       type: Boolean, 

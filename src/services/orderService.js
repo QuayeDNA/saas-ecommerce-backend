@@ -88,26 +88,8 @@ class OrderService {
         console.log('Bundle still not found, available bundles:', await Bundle.find({ isActive: true }).select('_id packageId name'));
         throw new Error('Bundle not found or inactive');
       }
-      
-      console.log('Bundle found:', { id: bundle._id, name: bundle.name, packageId: bundle.packageId });
-
-      // Calculate total price
-      const totalPrice = bundle.price * quantity;
-      
-      // Check wallet balance
-      const user = session 
-        ? await User.findById(userId).session(session)
-        : await User.findById(userId);
-      
-      if (!user) {
-        throw new Error('User not found');
-      }
-      
-      if (user.walletBalance < totalPrice) {
-        throw new Error(`Insufficient wallet balance. Required: GH₵${totalPrice.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`);
-      }
-      
-      // Create order
+            
+      // Create order (no wallet check or deduction here)
       const order = new Order({
         orderType: 'single',
         tenantId,
@@ -323,23 +305,44 @@ class OrderService {
       let processedSuccessfully = false;
       try {
         await this.processMobileBundle(item);
+        // Before marking as completed, check wallet and deduct
+        const user = session 
+          ? await User.findById(order.createdBy).session(session)
+          : await User.findById(order.createdBy);
+        if (!user) {
+          throw new Error('User not found');
+        }
+        if (user.walletBalance < item.totalPrice) {
+          throw new Error(`Insufficient wallet balance. Required: GH₵${item.totalPrice.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`);
+        }
+        // Deduct wallet
+        if (session) {
+          user.walletBalance -= item.totalPrice;
+          await user.save({ session });
+          const transaction = new WalletTransaction({
+            user: order.createdBy,
+            type: 'debit',
+            amount: item.totalPrice,
+            balanceAfter: user.walletBalance,
+            description: `Payment for order item ${order.orderNumber || order._id} - ${item.customerPhone}`,
+            relatedOrder: order._id
+          });
+          await transaction.save({ session });
+        } else {
+          await walletService.debitWallet(
+            order.createdBy.toString(),
+            item.totalPrice,
+            `Payment for order item ${order.orderNumber || order._id} - ${item.customerPhone}`,
+            order._id
+          );
+        }
+        item.paymentStatus = 'Done';
         item.processingStatus = 'completed';
         item.processedAt = new Date();
         processedSuccessfully = true;
       } catch (processingError) {
         item.processingStatus = 'failed';
         item.processingError = processingError.message;
-      }
-      
-      // Deduct from wallet only if processed successfully and not already paid
-      if (processedSuccessfully && order.paymentMethod === 'wallet' && item.unitPrice > 0) {
-        await walletService.debitWallet(
-          order.createdBy.toString(),
-          item.totalPrice,
-          `Payment for order item ${order.orderNumber || order._id} - ${item.customerPhone}`,
-          order._id
-        );
-        item.paymentStatus = 'Done';
       }
       
       // Update order status

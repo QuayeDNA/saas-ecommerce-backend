@@ -24,10 +24,9 @@ const bundleSchema = new mongoose.Schema(
       default: "GB"
     },
     validity: {
-      type: String,
+      type: mongoose.Schema.Types.Mixed,
       required: true,
-      enum: ["unlimited", "limited"],
-      default: "limited"
+      default: 30
     },
     validityUnit: {
       type: String,
