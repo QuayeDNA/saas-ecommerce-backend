@@ -160,7 +160,8 @@ class OrderService {
         dataUnit: parsed.value.bundleSize.unit,
         isActive: true,
         isDeleted: false
-      });
+      }).populate('providerId', 'name code');
+      
       if (!bundle) {
         errors.push({ index: i, row, error: 'Bundle not found for specified data volume and unit' });
         continue;
@@ -184,7 +185,7 @@ class OrderService {
                 dataVolume: bundle.dataVolume,
                 validity: bundle.validity,
                 validityUnit: bundle.validityUnit,
-                provider: bundle.providerId?.toString()
+                provider: bundle.providerId?.code || bundle.providerId?.name
               },
               quantity: 1,
               unitPrice: bundle.price,
