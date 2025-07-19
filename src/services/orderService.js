@@ -132,7 +132,7 @@ class OrderService {
   }
 
   // Create bulk order (new logic)
-  async createBulkOrders({ items, tenantId, userId }) {
+  async createBulkOrders({ items, tenantId, userId, packageId }) {
     const createdOrders = [];
     const errors = [];
 
@@ -154,8 +154,9 @@ class OrderService {
         continue;
       }
 
-      // Look up the correct bundle (packageItem) and its parent package (packageGroup)
+      // Look up the correct bundle (packageItem) within the specific package (packageGroup)
       const bundle = await Bundle.findOne({
+        packageId: packageId, // Use the specific packageId to ensure correct provider
         dataVolume: parsed.value.bundleSize.value,
         dataUnit: parsed.value.bundleSize.unit,
         isActive: true,
@@ -163,7 +164,7 @@ class OrderService {
       }).populate('providerId', 'name code');
       
       if (!bundle) {
-        errors.push({ index: i, row, error: 'Bundle not found for specified data volume and unit' });
+        errors.push({ index: i, row, error: 'Bundle not found for specified data volume and unit in this package' });
         continue;
       }
       const packageGroup = bundle.packageId;
