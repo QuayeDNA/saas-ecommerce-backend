@@ -3,6 +3,8 @@ import orderService from '../services/orderService.js';
 import Order from '../models/Order.js';
 import logger from '../utils/logger.js';
 import { orderValidation } from '../validators/orderValidator.js';
+import User from '../models/User.js'; // Added import for User
+import walletService from '../services/walletService.js'; // Added import for walletService
 
 class OrderController {
   // Create single order
@@ -173,6 +175,88 @@ class OrderController {
       });
     } catch (error) {
       logger.error(`Cancel order failed: ${error.message}`);
+      res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+  
+  // Update order status manually
+  async updateOrderStatus(req, res) {
+    try {
+      const { tenantId, userId } = req.user;
+      const { id } = req.params;
+      const { status, notes } = req.body;
+      
+      // Validate status - prevent setting to 'failed' manually
+      if (status === 'failed') {
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot manually set status to failed. This status is reserved for system events.'
+        });
+      }
+      
+      const order = await Order.findOne({ _id: id, tenantId });
+      if (!order) {
+        return res.status(404).json({
+          success: false,
+          message: 'Order not found'
+        });
+      }
+      
+      // If changing to processing or completed, check wallet balance
+      if (status === 'processing' || status === 'completed') {
+        const user = await User.findById(order.createdBy);
+        if (!user) {
+          return res.status(404).json({
+            success: false,
+            message: 'User not found'
+          });
+        }
+        
+        const totalCost = order.items.reduce((sum, item) => sum + item.totalPrice, 0);
+        if (user.walletBalance < totalCost) {
+          return res.status(400).json({
+            success: false,
+            message: `Insufficient wallet balance. Required: GH₵${totalCost.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`
+          });
+        }
+        
+        // If status is completed, deduct from wallet
+        if (status === 'completed') {
+          await walletService.debitWallet(
+            order.createdBy.toString(),
+            totalCost,
+            `Payment for order ${order.orderNumber || order._id}`,
+            order._id
+          );
+        }
+      }
+      
+      // Update order status
+      order.status = status;
+      if (notes) {
+        order.processingNotes = notes;
+      }
+      order.processedBy = userId;
+      
+      // Set processing timestamps
+      if (status === 'processing' && !order.processingStartedAt) {
+        order.processingStartedAt = new Date();
+      } else if (status === 'completed' && !order.processingCompletedAt) {
+        order.processingCompletedAt = new Date();
+      }
+      
+      await order.save();
+      
+      res.json({
+        success: true,
+        message: 'Order status updated successfully',
+        order
+      });
+    } catch (error) {
+      logger.error(`Update order status failed: ${error.message}`);
       res.status(400).json({
         success: false,
         message: error.message

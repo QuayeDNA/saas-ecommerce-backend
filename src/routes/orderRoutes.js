@@ -55,6 +55,13 @@ router.post(
   orderController.cancelOrder
 );
 
+router.patch(
+  '/:id/status',
+  authenticate,
+  authorize('agent'),
+  orderController.updateOrderStatus
+);
+
 // GENERIC ROUTES LAST
 router.get(
   '/',

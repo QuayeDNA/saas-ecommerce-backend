@@ -199,10 +199,11 @@ orderSchema.virtual('completionPercentage').get(function() {
 orderSchema.pre('save', async function(next) {
   // Generate order number if not provided
   if (!this.orderNumber) {
-    const date = new Date();
-    const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-    const randomStr = Math.random().toString(36).substring(2, 8).toUpperCase();
-    this.orderNumber = `ORD-${dateStr}-${randomStr}`;
+    // Get the count of existing orders to generate a sequential number
+    const count = await mongoose.model('Order').countDocuments();
+    // Generate a 5-digit number, starting from 10000
+    const orderNumber = (10000 + count + 1).toString();
+    this.orderNumber = orderNumber;
   }
   
   // Calculate totals
