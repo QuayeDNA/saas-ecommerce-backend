@@ -78,6 +78,7 @@ class AuthController {
         subscriptionPlan,
         subscriptionStatus: "active",
         verificationToken,
+        status: "pending", // Set agent status to pending
       });
 
       await agent.save();
@@ -222,12 +223,14 @@ class AuthController {
         });
       }
 
-      // For agents, check subscription status
-      if (user.userType === "agent" && user.subscriptionStatus !== "active") {
-        logger.warn(`Login attempt with inactive subscription: ${email}`);
+      // Block login if user is not active
+      if (user.status !== "active") {
+        logger.warn(`Login attempt for user with status '${user.status}': ${email}`);
         return res.status(401).json({
           success: false,
-          message: "Your subscription is inactive. Please contact support.",
+          message: user.status === 'pending'
+            ? "Your account is pending approval by a super admin."
+            : "Your account has been rejected. Please contact support.",
         });
       }
 
@@ -277,7 +280,11 @@ class AuthController {
         user: userData,
         token: accessToken,
         refreshToken: refreshToken, // Also send in response for frontend storage
-        dashboardUrl: user.userType === "agent" ? `/agent/dashboard` : `/customer/dashboard`,
+        dashboardUrl: user.userType === "super_admin"
+          ? "/superadmin"
+          : user.userType === "agent"
+            ? "/agent/dashboard"
+            : "/customer/dashboard",
       });
     } catch (error) {
       logger.error(`Login error: ${error.message}`);
@@ -772,6 +779,42 @@ class AuthController {
       });
     }
   }
+
+  // List all users (super admin only)
+  async listUsers(req, res) {
+    try {
+      const { status, userType } = req.query;
+      const filter = {};
+      if (status) filter.status = status;
+      if (userType) filter.userType = userType;
+      const users = await User.find(filter).select('-password -refreshToken');
+      res.json({ success: true, users });
+    } catch (error) {
+      logger.error(`List users failed: ${error.message}`);
+      res.status(500).json({ success: false, message: 'Failed to fetch users' });
+    }
+  }
+
+  // Approve or reject agent (super admin only)
+  async updateAgentStatus(req, res) {
+    try {
+      const { id } = req.params;
+      const { status } = req.body; // 'active' or 'rejected'
+      if (!['active', 'rejected'].includes(status)) {
+        return res.status(400).json({ success: false, message: 'Invalid status' });
+      }
+      const user = await User.findById(id);
+      if (!user || user.userType !== 'agent') {
+        return res.status(404).json({ success: false, message: 'Agent not found' });
+      }
+      user.status = status;
+      await user.save();
+      res.json({ success: true, message: `Agent status updated to ${status}` });
+    } catch (error) {
+      logger.error(`Update agent status failed: ${error.message}`);
+      res.status(500).json({ success: false, message: 'Failed to update agent status' });
+    }
+  }
 }
 
 const authController = new AuthController();
@@ -789,4 +832,6 @@ export default {
   resendVerification: authController.resendVerification.bind(authController),
   updateFirstTimeFlag: authController.updateFirstTimeFlag.bind(authController),
   registerSuperAdmin: authController.registerSuperAdmin.bind(authController),
+  listUsers: authController.listUsers.bind(authController),
+  updateAgentStatus: authController.updateAgentStatus.bind(authController),
 };

@@ -38,6 +38,10 @@ router.post('/verify-token', authenticate, authController.verifyToken);
 router.post('/logout', authenticate, authController.logout);
 router.post('/update-first-time', authenticate, authController.updateFirstTimeFlag);
 
+// Super admin user management routes
+router.get('/users', authenticate, authorize('super_admin'), authController.listUsers);
+router.patch('/users/:id/status', authenticate, authorize('super_admin'), authController.updateAgentStatus);
+
 // Agent-specific routes
 router.get('/agent/dashboard', authenticate, authorize('agent'), authController.getAgentDashboard);
 

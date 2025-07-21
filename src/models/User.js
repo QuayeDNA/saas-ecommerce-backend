@@ -111,7 +111,14 @@ const userSchema = new mongoose.Schema({
       default: 'pending'
     },
     registrationDate: Date
-  }
+  },
+  status: {
+    type: String,
+    enum: ['pending', 'active', 'rejected'],
+    default: function() {
+      return this.userType === 'agent' ? 'pending' : 'active';
+    },
+  },
 });
 
 // Compound index for multi-tenancy
