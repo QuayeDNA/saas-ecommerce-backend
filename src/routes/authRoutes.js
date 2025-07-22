@@ -40,6 +40,7 @@ router.post('/update-first-time', authenticate, authController.updateFirstTimeFl
 
 // Super admin user management routes
 router.get('/users', authenticate, authorize('super_admin'), authController.listUsers);
+router.get('/users/:id', authenticate, authorize('super_admin'), authController.getUserById);
 router.patch('/users/:id/status', authenticate, authorize('super_admin'), authController.updateAgentStatus);
 
 // Agent-specific routes

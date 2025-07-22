@@ -787,6 +787,7 @@ class AuthController {
       const filter = {};
       if (status) filter.status = status;
       if (userType) filter.userType = userType;
+      // No tenantId filtering; super admin sees all users
       const users = await User.find(filter).select('-password -refreshToken');
       res.json({ success: true, users });
     } catch (error) {
@@ -815,6 +816,21 @@ class AuthController {
       res.status(500).json({ success: false, message: 'Failed to update agent status' });
     }
   }
+
+  // Get single user by ID (super admin only)
+  async getUserById(req, res) {
+    try {
+      const { id } = req.params;
+      const user = await User.findById(id).select('-password -refreshToken');
+      if (!user) {
+        return res.status(404).json({ success: false, message: 'User not found' });
+      }
+      res.json({ success: true, user });
+    } catch (error) {
+      logger.error(`Get user by ID failed: ${error.message}`);
+      res.status(500).json({ success: false, message: 'Failed to fetch user' });
+    }
+  }
 }
 
 const authController = new AuthController();
@@ -834,4 +850,5 @@ export default {
   registerSuperAdmin: authController.registerSuperAdmin.bind(authController),
   listUsers: authController.listUsers.bind(authController),
   updateAgentStatus: authController.updateAgentStatus.bind(authController),
+  getUserById: authController.getUserById.bind(authController),
 };
