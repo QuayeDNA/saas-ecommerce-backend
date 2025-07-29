@@ -57,11 +57,14 @@ export const authenticate = async (req, res, next) => {
 
 export const authorize = (...roles) => {
   return (req, res, next) => {
+    logger.debug(`Authorization check - User:`, req.user, `Required roles: [${roles.join(', ')}]`);
     if (!roles.includes(req.user.userType)) {
-      logger.warn(`Unauthorized access attempt by ${req.user.email} to ${req.originalUrl}`);
+      logger.warn(`Unauthorized access attempt by ${req.user.email} (userType: "${req.user.userType}") to ${req.originalUrl}`);
       return res.status(403).json({ 
         success: false, 
-        message: 'Access denied. Insufficient permissions.' 
+        message: 'Access denied. Insufficient permissions.',
+        user: req.user,
+        requiredRoles: roles
       });
     }
     next();

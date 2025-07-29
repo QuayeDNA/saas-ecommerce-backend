@@ -37,11 +37,16 @@ router.post('/reset-password', authController.resetPassword);
 router.post('/verify-token', authenticate, authController.verifyToken);
 router.post('/logout', authenticate, authController.logout);
 router.post('/update-first-time', authenticate, authController.updateFirstTimeFlag);
+router.get('/debug-user', authenticate, authController.debugUser);
 
 // Super admin user management routes
 router.get('/users', authenticate, authorize('super_admin'), authController.listUsers);
 router.get('/users/:id', authenticate, authorize('super_admin'), authController.getUserById);
 router.patch('/users/:id/status', authenticate, authorize('super_admin'), authController.updateAgentStatus);
+router.patch('/users/:id', authenticate, authorize('super_admin'), authController.updateUser);
+router.post('/users/:id/reset-password', authenticate, authorize('super_admin'), authController.resetUserPassword);
+router.delete('/users/:id', authenticate, authorize('super_admin'), authController.deleteUser);
+router.post('/users/:id/impersonate', authenticate, authorize('super_admin'), authController.impersonateUser);
 
 // Agent-specific routes
 router.get('/agent/dashboard', authenticate, authorize('agent'), authController.getAgentDashboard);

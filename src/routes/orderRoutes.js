@@ -32,19 +32,27 @@ router.get(
   orderController.getAnalytics
 );
 
-// Order processing - SPECIFIC ROUTES FIRST
+// Order processing - RESTRICTED TO SUPER ADMIN ONLY
 router.post(
   '/:orderId/items/:itemId/process',
   authenticate,
-  authorize('agent'),
+  authorize('super_admin'),
   orderController.processOrderItem
 );
 
 router.post(
   '/:id/process-bulk',
   authenticate,
-  authorize('agent'),
+  authorize('super_admin'),
   orderController.processBulkOrder
+);
+
+// Bulk order processing - NEW ENDPOINT FOR SUPER ADMIN
+router.post(
+  '/bulk-process',
+  authenticate,
+  authorize('super_admin'),
+  orderController.bulkProcessOrders
 );
 
 router.post(
@@ -58,7 +66,7 @@ router.post(
 router.patch(
   '/:id/status',
   authenticate,
-  authorize('agent'),
+  authorize('super_admin'),
   orderController.updateOrderStatus
 );
 
@@ -66,14 +74,14 @@ router.patch(
 router.get(
   '/',
   authenticate,
-  authorize('agent'),
+  authorize('agent', 'super_admin'),
   orderController.getOrders
 );
 
 router.get(
   '/:id',
   authenticate,
-  authorize('agent'),
+  authorize('agent', 'super_admin'),
   orderController.getOrder
 );
 

@@ -18,7 +18,10 @@ router.get('/afa-registration', authenticate, userController.getAfaRegistration)
 
 // User management (Agents can view their customers, Super admin can view all)
 router.get('/', authenticate, authorize('agent', 'super_admin'), userController.getUsers);
+router.get('/with-wallet', authenticate, authorize('super_admin'), userController.getUsersWithWallet);
 router.get('/stats', authenticate, authorize('agent', 'super_admin'), userController.getUserStats);
+router.get('/dashboard-stats', authenticate, authorize('super_admin'), userController.getDashboardStats);
+router.get('/chart-data', authenticate, authorize('super_admin'), userController.getChartData);
 router.get('/:id', authenticate, userController.getUserById);
 
 // Admin only routes

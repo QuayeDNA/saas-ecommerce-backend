@@ -22,7 +22,7 @@ router.get(
 router.post(
   '/',
   authenticate,
-  authorize(['super_admin']), // Only super admins can create providers
+  authorize('admin', 'super_admin'), // Allow both admin and super admin
   validateCreate,
   providerController.createProvider
 );
@@ -37,7 +37,7 @@ router.get(
 router.get(
   '/analytics',
   authenticate,
-  authorize(['super_admin']),
+  authorize('admin', 'super_admin'),
   providerController.getProviderAnalytics
 );
 
@@ -52,7 +52,7 @@ router.get(
 router.put(
   '/:id',
   authenticate,
-  authorize(['super_admin']), // Only super admins can update providers
+  authorize('admin', 'super_admin'), // Allow both admin and super admin
   validateUpdate,
   providerController.updateProvider
 );
@@ -60,7 +60,7 @@ router.put(
 router.delete(
   '/:id',
   authenticate,
-  authorize(['super_admin']), // Only super admins can delete providers
+  authorize('admin', 'super_admin'), // Allow both admin and super admin
   validateGetById,
   providerController.softDeleteProvider
 );
@@ -68,7 +68,7 @@ router.delete(
 router.post(
   '/:id/restore',
   authenticate,
-  authorize(['super_admin']), // Only super admins can restore providers
+  authorize('admin', 'super_admin'), // Allow both admin and super admin
   validateGetById,
   providerController.restoreProvider
 );

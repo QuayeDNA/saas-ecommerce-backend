@@ -222,14 +222,18 @@ class OrderService {
       paymentStatus,
       startDate,
       endDate,
-      search
+      search,
+      createdBy
     } = filters;
     
-    const query = { tenantId };
+    // For super admins (tenantId is null), don't filter by tenant
+    // For regular users, filter by their tenant
+    const query = tenantId ? { tenantId } : {};
     
     if (status) query.status = status;
     if (orderType) query.orderType = orderType;
     if (paymentStatus) query.paymentStatus = paymentStatus;
+    if (createdBy) query.createdBy = createdBy;
     
     if (startDate || endDate) {
       query.createdAt = {};
@@ -271,15 +275,13 @@ class OrderService {
   // Process order item
   async processOrderItem(orderId, itemId, tenantId, userId) {
     return await this.executeWithTransaction(async (session) => {
+      // For super admins (tenantId is null), don't filter by tenant
+      // For regular users, filter by their tenant
+      const query = tenantId ? { _id: orderId, tenantId } : { _id: orderId };
+      
       const order = session 
-        ? await Order.findOne({
-            _id: orderId,
-            tenantId
-          }).session(session)
-        : await Order.findOne({
-            _id: orderId,
-            tenantId
-          });
+        ? await Order.findOne(query).session(session)
+        : await Order.findOne(query);
       
       if (!order) {
         throw new Error('Order not found');
@@ -355,7 +357,6 @@ class OrderService {
         await order.save();
       }
       
-      logger.info(`Order item processed: ${orderId}/${itemId} - Status: ${item.processingStatus}`);
       return order;
     });
   }
@@ -478,15 +479,13 @@ class OrderService {
   // Cancel order
   async cancelOrder(orderId, tenantId, userId, reason) {
     return await this.executeWithTransaction(async (session) => {
+      // For super admins (tenantId is null), don't filter by tenant
+      // For regular users, filter by their tenant
+      const query = tenantId ? { _id: orderId, tenantId } : { _id: orderId };
+      
       const order = session 
-        ? await Order.findOne({
-            _id: orderId,
-            tenantId
-          }).session(session)
-        : await Order.findOne({
-            _id: orderId,
-            tenantId
-          });
+        ? await Order.findOne(query).session(session)
+        : await Order.findOne(query);
       
       if (!order) {
         throw new Error('Order not found');

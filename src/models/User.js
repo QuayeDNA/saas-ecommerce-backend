@@ -83,6 +83,10 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
+  isActive: {
+    type: Boolean,
+    default: true,
+  },
   verificationToken: String,
   verificationResent: {
     type: Boolean,

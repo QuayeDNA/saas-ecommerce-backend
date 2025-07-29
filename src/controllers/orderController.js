@@ -49,14 +49,15 @@ class OrderController {
   // Get orders
   async getOrders(req, res) {
     try {
-      const { tenantId } = req.user;
+      const { tenantId, userType } = req.user;
       const filters = {
         status: req.query.status,
         orderType: req.query.orderType,
         paymentStatus: req.query.paymentStatus,
         startDate: req.query.startDate,
         endDate: req.query.endDate,
-        search: req.query.search
+        search: req.query.search,
+        createdBy: req.query.createdBy
       };
       
       const pagination = {
@@ -66,7 +67,11 @@ class OrderController {
         sortOrder: req.query.sortOrder === 'asc' ? 1 : -1
       };
       
-      const result = await orderService.getOrders(tenantId, filters, pagination);
+      // For super admins, allow access to all orders (no tenant restriction)
+      // For regular users, restrict to their tenant
+      const effectiveTenantId = userType === 'super_admin' ? null : tenantId;
+      
+      const result = await orderService.getOrders(effectiveTenantId, filters, pagination);
       
       res.json({
         success: true,
@@ -84,10 +89,14 @@ class OrderController {
   // Get single order
   async getOrder(req, res) {
     try {
-      const { tenantId } = req.user;
+      const { tenantId, userType } = req.user;
       const { id } = req.params;
       
-      const order = await Order.findOne({ _id: id, tenantId })
+      // For super admins, allow access to any order (no tenant restriction)
+      // For regular users, restrict to their tenant
+      const query = userType === 'super_admin' ? { _id: id } : { _id: id, tenantId };
+      
+      const order = await Order.findOne(query)
         .populate('items.packageGroup', 'name provider')
         .populate('createdBy', 'fullName email')
         .populate('processedBy', 'fullName email');
@@ -115,10 +124,14 @@ class OrderController {
   // Process single order item
   async processOrderItem(req, res) {
     try {
-      const { tenantId, userId } = req.user;
+      const { tenantId, userId, userType } = req.user;
       const { orderId, itemId } = req.params;
       
-      const order = await orderService.processOrderItem(orderId, itemId, tenantId, userId);
+      // For super admins, allow processing any order (no tenant restriction)
+      // For regular users, restrict to their tenant
+      const effectiveTenantId = userType === 'super_admin' ? null : tenantId;
+      
+      const order = await orderService.processOrderItem(orderId, itemId, effectiveTenantId, userId);
       
       res.json({
         success: true,
@@ -162,11 +175,15 @@ class OrderController {
   // Cancel order
   async cancelOrder(req, res) {
     try {
-      const { tenantId, userId } = req.user;
+      const { tenantId, userId, userType } = req.user;
       const { id } = req.params;
       const { reason } = req.body;
       
-      const order = await orderService.cancelOrder(id, tenantId, userId, reason);
+      // For super admins, allow cancelling any order (no tenant restriction)
+      // For regular users, restrict to their tenant
+      const effectiveTenantId = userType === 'super_admin' ? null : tenantId;
+      
+      const order = await orderService.cancelOrder(id, effectiveTenantId, userId, reason);
       
       res.json({
         success: true,
@@ -185,7 +202,7 @@ class OrderController {
   // Update order status manually
   async updateOrderStatus(req, res) {
     try {
-      const { tenantId, userId } = req.user;
+      const { tenantId, userId, userType } = req.user;
       const { id } = req.params;
       const { status, notes } = req.body;
       
@@ -197,7 +214,11 @@ class OrderController {
         });
       }
       
-      const order = await Order.findOne({ _id: id, tenantId });
+      // For super admins, allow updating any order (no tenant restriction)
+      // For regular users, restrict to their tenant
+      const query = userType === 'super_admin' ? { _id: id } : { _id: id, tenantId };
+      
+      const order = await Order.findOne(query);
       if (!order) {
         return res.status(404).json({
           success: false,
@@ -281,6 +302,127 @@ class OrderController {
       res.status(500).json({
         success: false,
         message: 'Failed to fetch analytics'
+      });
+    }
+  }
+
+  // Bulk process multiple orders
+  async bulkProcessOrders(req, res) {
+    try {
+      const { tenantId, userId, userType } = req.user;
+      const { orderIds, action } = req.body;
+      
+      if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Order IDs array is required'
+        });
+      }
+
+      if (!['processing', 'completed'].includes(action)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Action must be either "processing" or "completed"'
+        });
+      }
+
+      const results = {
+        successful: [],
+        failed: [],
+        total: orderIds.length
+      };
+
+      for (const orderId of orderIds) {
+        try {
+          // For super admins, allow processing any order (no tenant restriction)
+          // For regular users, restrict to their tenant
+          const query = userType === 'super_admin' ? { _id: orderId } : { _id: orderId, tenantId };
+          
+          const order = await Order.findOne(query);
+          if (!order) {
+            results.failed.push({
+              orderId,
+              reason: 'Order not found'
+            });
+            continue;
+          }
+
+          // Check if order can be processed
+          if (!['pending', 'confirmed'].includes(order.status)) {
+            results.failed.push({
+              orderId,
+              reason: `Order is in ${order.status} status and cannot be processed`
+            });
+            continue;
+          }
+
+          // If changing to processing or completed, check wallet balance
+          if (action === 'processing' || action === 'completed') {
+            const user = await User.findById(order.createdBy);
+            if (!user) {
+              results.failed.push({
+                orderId,
+                reason: 'User not found'
+              });
+              continue;
+            }
+            
+            const totalCost = order.items.reduce((sum, item) => sum + item.totalPrice, 0);
+            if (user.walletBalance < totalCost) {
+              results.failed.push({
+                orderId,
+                reason: `Insufficient wallet balance. Required: GH₵${totalCost.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`
+              });
+              continue;
+            }
+            
+            // If status is completed, deduct from wallet
+            if (action === 'completed') {
+              await walletService.debitWallet(
+                order.createdBy.toString(),
+                totalCost,
+                `Payment for order ${order.orderNumber || order._id}`,
+                order._id
+              );
+            }
+          }
+
+          // Update order status
+          order.status = action;
+          order.processedBy = userId;
+          
+          // Set processing timestamps
+          if (action === 'processing' && !order.processingStartedAt) {
+            order.processingStartedAt = new Date();
+          } else if (action === 'completed' && !order.processingCompletedAt) {
+            order.processingCompletedAt = new Date();
+          }
+          
+          await order.save();
+          
+          results.successful.push({
+            orderId,
+            orderNumber: order.orderNumber,
+            newStatus: action
+          });
+        } catch (error) {
+          results.failed.push({
+            orderId,
+            reason: error.message
+          });
+        }
+      }
+
+      res.json({
+        success: true,
+        message: `Bulk processing completed. ${results.successful.length} successful, ${results.failed.length} failed.`,
+        results
+      });
+    } catch (error) {
+      logger.error(`Bulk process orders failed: ${error.message}`);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to process orders'
       });
     }
   }

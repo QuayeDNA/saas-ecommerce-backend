@@ -224,13 +224,15 @@ class AuthController {
       }
 
       // Block login if user is not active
-      if (user.status !== "active") {
-        logger.warn(`Login attempt for user with status '${user.status}': ${email}`);
+      if (user.status !== "active" || user.isActive === false) {
+        logger.warn(`Login attempt for user with status '${user.status}' or inactive: ${email}`);
         return res.status(401).json({
           success: false,
-          message: user.status === 'pending'
-            ? "Your account is pending approval by a super admin."
-            : "Your account has been rejected. Please contact support.",
+          message: user.isActive === false
+            ? "Your account has been deactivated by an administrator."
+            : user.status === 'pending'
+              ? "Your account is pending approval by a super admin."
+              : "Your account has been rejected. Please contact support.",
         });
       }
 
@@ -383,13 +385,30 @@ class AuthController {
       // Mark user as verified and clear verification token
       user.isVerified = true;
       user.verificationToken = undefined;
+      
+      // For agents, keep status as pending until super admin approval
+      // For customers, set status to active
+      if (user.userType === 'agent') {
+        user.status = 'pending'; // Ensure agent remains pending
+        logger.info(`Agent account verified but pending approval: ${user.email}`);
+      } else {
+        user.status = 'active'; // Customers can be active immediately
+      }
+      
       await user.save();
 
-      logger.info(`Account verified successfully: ${user.email}`);
+      logger.info(`Account verified successfully: ${user.email} - Status: ${user.status}`);
+      
+      // Return appropriate message based on user type
+      const message = user.userType === 'agent' 
+        ? "Account verified successfully. Your account is pending approval by a super admin. You will be notified once approved."
+        : "Account verified successfully. You can now log in.";
+      
       res.json({
         success: true,
-        message: "Account verified successfully. You can now log in.",
+        message,
         userType: user.userType,
+        status: user.status,
       });
     } catch (error) {
       logger.error(`Account verification error: ${error.message}`);
@@ -831,6 +850,109 @@ class AuthController {
       res.status(500).json({ success: false, message: 'Failed to fetch user' });
     }
   }
+
+  // Update user info (super admin only)
+  async updateUser(req, res) {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+      // Only allow certain fields to be updated
+      const allowedFields = [
+        'fullName', 'email', 'phone', 'businessName', 'businessCategory', 'subscriptionPlan', 'subscriptionStatus', 'isActive', 'status'
+      ];
+      const updateData = {};
+      for (const key of allowedFields) {
+        if (updates[key] !== undefined) updateData[key] = updates[key];
+      }
+      const user = await User.findByIdAndUpdate(id, updateData, { new: true, runValidators: true }).select('-password -refreshToken');
+      if (!user) {
+        return res.status(404).json({ success: false, message: 'User not found' });
+      }
+      res.json({ success: true, user });
+    } catch (error) {
+      logger.error(`Update user failed: ${error.message}`);
+      res.status(500).json({ success: false, message: 'Failed to update user' });
+    }
+  }
+
+  // Super admin: Reset user password
+  async resetUserPassword(req, res) {
+    try {
+      const { id } = req.params;
+      const { newPassword } = req.body;
+      if (!newPassword || newPassword.length < 6) {
+        return res.status(400).json({ success: false, message: 'Password must be at least 6 characters.' });
+      }
+      const user = await User.findById(id);
+      if (!user) {
+        return res.status(404).json({ success: false, message: 'User not found' });
+      }
+      user.password = newPassword;
+      await user.save();
+      res.json({ success: true, message: 'Password reset successfully' });
+    } catch (error) {
+      logger.error(`Reset user password failed: ${error.message}`);
+      res.status(500).json({ success: false, message: 'Failed to reset password' });
+    }
+  }
+
+  // Super admin: Delete user
+  async deleteUser(req, res) {
+    try {
+      const { id } = req.params;
+      const user = await User.findByIdAndDelete(id);
+      if (!user) {
+        return res.status(404).json({ success: false, message: 'User not found' });
+      }
+      res.json({ success: true, message: 'User deleted successfully' });
+    } catch (error) {
+      logger.error(`Delete user failed: ${error.message}`);
+      res.status(500).json({ success: false, message: 'Failed to delete user' });
+    }
+  }
+
+  // Super admin: Impersonate user (return JWT for that user)
+  async impersonateUser(req, res) {
+    try {
+      const { id } = req.params;
+      const user = await User.findById(id);
+      if (!user) {
+        return res.status(404).json({ success: false, message: 'User not found' });
+      }
+      // Only allow impersonation of non-super_admin users
+      if (user.userType === 'super_admin') {
+        return res.status(403).json({ success: false, message: 'Cannot impersonate another super admin' });
+      }
+      const token = this.generateAccessToken(user._id, user.userType);
+      res.json({ success: true, token, user });
+    } catch (error) {
+      logger.error(`Impersonate user failed: ${error.message}`);
+      res.status(500).json({ success: false, message: 'Failed to impersonate user' });
+    }
+  }
+
+  // Debug endpoint to check current user info
+  async debugUser(req, res) {
+    try {
+      logger.debug(`Debug user request - User: ${req.user.email}, UserType: "${req.user.userType}", Full user object:`, req.user);
+      
+      res.json({
+        success: true,
+        user: {
+          id: req.user.userId,
+          email: req.user.email,
+          userType: req.user.userType,
+          fullName: req.user.fullName
+        }
+      });
+    } catch (error) {
+      logger.error(`Debug user error: ${error.message}`);
+      res.status(500).json({
+        success: false,
+        message: "Debug failed"
+      });
+    }
+  }
 }
 
 const authController = new AuthController();
@@ -851,4 +973,9 @@ export default {
   listUsers: authController.listUsers.bind(authController),
   updateAgentStatus: authController.updateAgentStatus.bind(authController),
   getUserById: authController.getUserById.bind(authController),
+  updateUser: authController.updateUser.bind(authController),
+  resetUserPassword: authController.resetUserPassword.bind(authController),
+  deleteUser: authController.deleteUser.bind(authController),
+  impersonateUser: authController.impersonateUser.bind(authController),
+  debugUser: authController.debugUser.bind(authController),
 };
