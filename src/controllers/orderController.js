@@ -247,34 +247,7 @@ class OrderController {
         });
       }
       
-      // If changing to processing or completed, check wallet balance
-      if (status === 'processing' || status === 'completed') {
-        const user = await User.findById(order.createdBy);
-        if (!user) {
-          return res.status(404).json({
-            success: false,
-            message: 'User not found'
-          });
-        }
-        
-        const totalCost = order.items.reduce((sum, item) => sum + item.totalPrice, 0);
-        if (user.walletBalance < totalCost) {
-          return res.status(400).json({
-            success: false,
-            message: `Insufficient wallet balance. Required: GH₵${totalCost.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`
-          });
-        }
-        
-        // If status is completed, deduct from wallet
-        if (status === 'completed') {
-          await walletService.debitWallet(
-            order.createdBy.toString(),
-            totalCost,
-            `Payment for order ${order.orderNumber || order._id}`,
-            order._id
-          );
-        }
-      }
+      // No wallet checks needed - wallet was already checked and deducted when order was created
       
       // Update order status
       order.status = status;

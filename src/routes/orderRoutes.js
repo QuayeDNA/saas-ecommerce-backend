@@ -31,7 +31,7 @@ router.post(
 router.get(
   '/analytics/summary',
   authenticate,
-  authorize('agent'),
+  authorize('agent', 'super_admin'),
   orderController.getAnalytics
 );
 
@@ -61,7 +61,7 @@ router.post(
 router.post(
   '/:id/cancel',
   authenticate,
-  authorize('agent'),
+  authorize('agent', 'super_admin'),
   validate(orderValidation.cancel),
   orderController.cancelOrder
 );
@@ -77,7 +77,7 @@ router.patch(
 router.post(
   '/process-drafts',
   authenticate,
-  authorize('agent'),
+  authorize('agent', 'super_admin'),
   orderController.processDraftOrders
 );
 
