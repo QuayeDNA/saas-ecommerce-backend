@@ -26,7 +26,14 @@ const bundleSchema = new mongoose.Schema(
     validity: {
       type: mongoose.Schema.Types.Mixed,
       required: true,
-      default: 30
+      validate: {
+        validator: function(value) {
+          // Allow numbers >= 1 or string 'unlimited'
+          return (typeof value === 'number' && value >= 1) || 
+                 (typeof value === 'string' && value === 'unlimited');
+        },
+        message: 'Validity must be a number >= 1 or "unlimited"'
+      }
     },
     validityUnit: {
       type: String,
@@ -129,6 +136,9 @@ bundleSchema.virtual('formattedDataVolume').get(function() {
 
 // Virtual for formatted validity
 bundleSchema.virtual('formattedValidity').get(function() {
+  if (this.validity === 'unlimited' || this.validityUnit === 'unlimited') {
+    return 'Unlimited';
+  }
   return `${this.validity} ${this.validityUnit}`;
 });
 

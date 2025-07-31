@@ -12,7 +12,7 @@ const router = express.Router();
 router.post(
   '/',
   authenticate,
-  authorize('agent'),
+  authorize('admin', 'super_admin'),
   validate(packageValidation.create),
   packageController.createPackage
 );
@@ -30,7 +30,7 @@ router.get(
 router.put(
   '/:id',
   authenticate,
-  authorize('agent'),
+  authorize('admin', 'super_admin'),
   validate(packageValidation.update),
   packageController.updatePackage
 );
@@ -38,14 +38,14 @@ router.put(
 router.delete(
   '/:id',
   authenticate,
-  authorize('agent'),
+  authorize('admin', 'super_admin'),
   packageController.deletePackage
 );
 
 router.post(
   '/:id/restore',
   authenticate,
-  authorize('agent'),
+  authorize('admin', 'super_admin'),
   packageController.restorePackage
 );
 
@@ -69,7 +69,7 @@ router.get(
 router.post(
   '/bundles',
   authenticate,
-  authorize('agent'),
+  authorize('admin', 'super_admin'),
   validate(bundleValidation.create),
   bundleController.createBundle
 );
@@ -77,21 +77,21 @@ router.post(
 router.get(
   '/bundles',
   authenticate,
-  authorize('agent'),
+  authorize('agent', 'admin', 'super_admin'),
   bundleController.getAllBundles
 );
 
 router.get(
   '/bundles/:id',
   authenticate,
-  authorize('agent'),
+  authorize('agent', 'admin', 'super_admin'),
   bundleController.getBundleById
 );
 
 router.put(
   '/bundles/:id',
   authenticate,
-  authorize('agent'),
+  authorize('admin', 'super_admin'),
   validate(bundleValidation.update),
   bundleController.updateBundle
 );
@@ -99,7 +99,7 @@ router.put(
 router.delete(
   '/bundles/:id',
   authenticate,
-  authorize('agent'),
+  authorize('admin', 'super_admin'),
   bundleController.deleteBundle
 );
 
@@ -121,14 +121,14 @@ router.delete(
 router.get(
   '/bundles/provider/:providerId',
   authenticate,
-  authorize('agent'),
+  authorize('agent', 'admin', 'super_admin'),
   bundleController.getBundlesByProvider
 );
 
 router.get(
   '/bundles/package/:packageId',
   authenticate,
-  authorize('agent'),
+  authorize('agent', 'admin', 'super_admin'),
   bundleController.getBundlesByPackage
 );
 
@@ -144,7 +144,7 @@ router.get(
 router.get(
   '/bundles/analytics/summary',
   authenticate,
-  authorize('agent'),
+  authorize('admin', 'super_admin'),
   bundleController.getBundleAnalytics
 );
 

@@ -3,6 +3,7 @@ import Bundle from '../models/Bundle.js';
 import Package from '../models/Package.js';
 import Provider from '../models/Provider.js';
 import logger from '../utils/logger.js';
+import mongoose from 'mongoose';
 
 const bundleService = {
   // Get all bundles with filtering and pagination
@@ -17,7 +18,8 @@ const bundleService = {
         packageId,
         provider, // Add provider filter by code
         sortBy = 'createdAt',
-        sortOrder = 'desc'
+        sortOrder = 'desc',
+        userType = 'agent' // Add user type for security
       } = options;
 
       const query = { isActive: true };
@@ -36,9 +38,24 @@ const bundleService = {
         query.category = category;
       }
 
-      // Add provider filter by ID
+      // Add provider filter by ID - ensure it's a valid ObjectId
       if (providerId) {
-        query.providerId = providerId;
+        if (mongoose.Types.ObjectId.isValid(providerId)) {
+          query.providerId = providerId;
+        } else {
+          // If invalid ObjectId, return empty result
+          return {
+            bundles: [],
+            pagination: {
+              page,
+              limit,
+              total: 0,
+              totalPages: 0,
+              hasNext: false,
+              hasPrev: false
+            }
+          };
+        }
       }
 
       // Add provider filter by code - filter by provider code
@@ -84,10 +101,52 @@ const bundleService = {
         Bundle.countDocuments(query)
       ]);
 
+      // Filter sensitive data based on user type
+      const filteredBundles = bundles.map(bundle => {
+        const baseBundle = {
+          _id: bundle._id,
+          name: bundle.name,
+          description: bundle.description,
+          dataVolume: bundle.dataVolume,
+          dataUnit: bundle.dataUnit,
+          validity: bundle.validity,
+          validityUnit: bundle.validityUnit,
+          price: bundle.price,
+          currency: bundle.currency,
+          features: bundle.features,
+          isActive: bundle.isActive,
+          bundleCode: bundle.bundleCode,
+          category: bundle.category,
+          tags: bundle.tags,
+          packageId: bundle.packageId,
+          providerId: bundle.providerId,
+          createdAt: bundle.createdAt,
+          updatedAt: bundle.updatedAt,
+          formattedDataVolume: bundle.formattedDataVolume,
+          formattedValidity: bundle.formattedValidity,
+          isAvailable: bundle.isAvailable
+        };
+
+        // Only include sensitive fields for admin users
+        if (userType === 'admin' || userType === 'super_admin') {
+          return {
+            ...baseBundle,
+            tenantId: bundle.tenantId,
+            createdBy: bundle.createdBy,
+            updatedBy: bundle.updatedBy,
+            isDeleted: bundle.isDeleted,
+            deletedAt: bundle.deletedAt,
+            deletedBy: bundle.deletedBy
+          };
+        }
+
+        return baseBundle;
+      });
+
       const totalPages = Math.ceil(total / limit);
 
       return {
-        bundles,
+        bundles: filteredBundles,
         pagination: {
           page,
           limit,
@@ -208,6 +267,24 @@ const bundleService = {
   // Create bundle
   createBundle: async (bundleData) => {
     try {
+      // Handle providerCode - convert to providerId if provided
+      if (bundleData.providerCode && !bundleData.providerId) {
+        const provider = await Provider.findOne({ code: bundleData.providerCode, isActive: true });
+        if (!provider) {
+          throw new Error('Provider not found with the provided code');
+        }
+        bundleData.providerId = provider._id;
+        delete bundleData.providerCode;
+      }
+
+      // Convert providerId to ObjectId if it's a string
+      if (bundleData.providerId && typeof bundleData.providerId === 'string') {
+        if (!mongoose.Types.ObjectId.isValid(bundleData.providerId)) {
+          throw new Error('Invalid providerId format');
+        }
+        bundleData.providerId = new mongoose.Types.ObjectId(bundleData.providerId);
+      }
+
       // Validate that provider and package exist
       const [provider, packageGroup] = await Promise.all([
         Provider.findById(bundleData.providerId),
@@ -230,7 +307,37 @@ const bundleService = {
       const bundle = new Bundle(bundleData);
       await bundle.save();
 
-      return bundle;
+      // Populate and return filtered data
+      const populatedBundle = await Bundle.findById(bundle._id)
+        .populate('providerId', 'name logo code')
+        .populate('packageId', 'name description');
+
+      // Return filtered data for security
+      const filteredBundle = {
+        _id: populatedBundle._id,
+        name: populatedBundle.name,
+        description: populatedBundle.description,
+        dataVolume: populatedBundle.dataVolume,
+        dataUnit: populatedBundle.dataUnit,
+        validity: populatedBundle.validity,
+        validityUnit: populatedBundle.validityUnit,
+        price: populatedBundle.price,
+        currency: populatedBundle.currency,
+        features: populatedBundle.features,
+        isActive: populatedBundle.isActive,
+        bundleCode: populatedBundle.bundleCode,
+        category: populatedBundle.category,
+        tags: populatedBundle.tags,
+        packageId: populatedBundle.packageId,
+        providerId: populatedBundle.providerId,
+        createdAt: populatedBundle.createdAt,
+        updatedAt: populatedBundle.updatedAt,
+        formattedDataVolume: populatedBundle.formattedDataVolume,
+        formattedValidity: populatedBundle.formattedValidity,
+        isAvailable: populatedBundle.isAvailable
+      };
+
+      return filteredBundle;
     } catch (error) {
       logger.error('Error in createBundle:', error);
       throw error;
@@ -240,6 +347,25 @@ const bundleService = {
   // Update bundle
   updateBundle: async (id, updateData) => {
     try {
+      // Handle providerCode - convert to providerId if provided
+      if (updateData.providerCode && !updateData.providerId) {
+        const provider = await Provider.findOne({ code: updateData.providerCode, isActive: true });
+        if (!provider) {
+          throw new Error('Provider not found with the provided code');
+        }
+        updateData.providerId = provider._id;
+        delete updateData.providerCode;
+      }
+
+      // Convert providerId to ObjectId if it's a string
+      if (updateData.providerId && typeof updateData.providerId === 'string') {
+        // Handle case where providerId might be "[object Object]" or invalid
+        if (updateData.providerId === '[object Object]' || !mongoose.Types.ObjectId.isValid(updateData.providerId)) {
+          throw new Error('Invalid providerId format. Please provide a valid provider ID.');
+        }
+        updateData.providerId = new mongoose.Types.ObjectId(updateData.providerId);
+      }
+
       // Validate that provider and package exist if being updated
       if (updateData.providerId) {
         const provider = await Provider.findById(updateData.providerId);
@@ -259,10 +385,39 @@ const bundleService = {
         id,
         { ...updateData, updatedAt: new Date() },
         { new: true, runValidators: true }
-      ).populate('providerId', 'name logo')
+      ).populate('providerId', 'name logo code')
        .populate('packageId', 'name description');
 
-      return bundle;
+      if (!bundle) {
+        throw new Error('Bundle not found');
+      }
+
+      // Return filtered data for security
+      const filteredBundle = {
+        _id: bundle._id,
+        name: bundle.name,
+        description: bundle.description,
+        dataVolume: bundle.dataVolume,
+        dataUnit: bundle.dataUnit,
+        validity: bundle.validity,
+        validityUnit: bundle.validityUnit,
+        price: bundle.price,
+        currency: bundle.currency,
+        features: bundle.features,
+        isActive: bundle.isActive,
+        bundleCode: bundle.bundleCode,
+        category: bundle.category,
+        tags: bundle.tags,
+        packageId: bundle.packageId,
+        providerId: bundle.providerId,
+        createdAt: bundle.createdAt,
+        updatedAt: bundle.updatedAt,
+        formattedDataVolume: bundle.formattedDataVolume,
+        formattedValidity: bundle.formattedValidity,
+        isAvailable: bundle.isAvailable
+      };
+
+      return filteredBundle;
     } catch (error) {
       logger.error('Error in updateBundle:', error);
       throw error;

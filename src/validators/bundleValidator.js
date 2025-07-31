@@ -5,32 +5,40 @@ const bundleSchema = Joi.object({
   description: Joi.string().optional().max(500),
   dataVolume: Joi.number().required().min(0.1),
   dataUnit: Joi.string().valid('MB', 'GB', 'TB').required(),
-  validity: Joi.number().required().min(1),
-  validityUnit: Joi.string().valid('hours', 'days', 'weeks', 'months').required(),
+  validity: Joi.alternatives().try(
+    Joi.number().min(1),
+    Joi.string().valid('unlimited')
+  ).required(),
+  validityUnit: Joi.string().valid('hours', 'days', 'weeks', 'months', 'unlimited').required(),
   price: Joi.number().required().min(0),
   currency: Joi.string().default('GHS'),
   features: Joi.array().items(Joi.string()).optional(),
   isActive: Joi.boolean().default(true),
   packageId: Joi.string().required(),
-  providerId: Joi.string().required(),
+  providerId: Joi.string().optional(),
+  providerCode: Joi.string().optional(),
   bundleCode: Joi.string().optional().max(20),
   category: Joi.string().optional().max(50),
   tags: Joi.array().items(Joi.string()).optional()
-});
+}).or('providerId', 'providerCode');
 
 const bundleUpdateSchema = Joi.object({
   name: Joi.string().optional().min(2).max(100),
   description: Joi.string().optional().max(500),
   dataVolume: Joi.number().optional().min(0.1),
   dataUnit: Joi.string().valid('MB', 'GB', 'TB').optional(),
-  validity: Joi.number().optional().min(1),
-  validityUnit: Joi.string().valid('hours', 'days', 'weeks', 'months').optional(),
+  validity: Joi.alternatives().try(
+    Joi.number().min(1),
+    Joi.string().valid('unlimited')
+  ).optional(),
+  validityUnit: Joi.string().valid('hours', 'days', 'weeks', 'months', 'unlimited').optional(),
   price: Joi.number().optional().min(0),
   currency: Joi.string().optional(),
   features: Joi.array().items(Joi.string()).optional(),
   isActive: Joi.boolean().optional(),
   packageId: Joi.string().optional(),
   providerId: Joi.string().optional(),
+  providerCode: Joi.string().optional(),
   bundleCode: Joi.string().optional().max(20),
   category: Joi.string().optional().max(50),
   tags: Joi.array().items(Joi.string()).optional()

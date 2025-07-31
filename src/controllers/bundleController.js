@@ -7,6 +7,7 @@ const bundleController = {
   getAllBundles: async (req, res) => {
     try {
       const { page = 1, limit = 10, search, category, providerId, packageId, provider, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+      const userType = req.user?.userType || 'agent';
       
       const result = await bundleService.getAllBundles({
         page: parseInt(page),
@@ -17,7 +18,8 @@ const bundleController = {
         packageId,
         provider,
         sortBy,
-        sortOrder
+        sortOrder,
+        userType
       });
 
       res.json({
@@ -113,7 +115,12 @@ const bundleController = {
   // Create bundle (admin only)
   createBundle: async (req, res) => {
     try {
-      const bundleData = req.body;
+      const bundleData = {
+        ...req.body,
+        tenantId: req.user.userId,
+        createdBy: req.user.userId
+      };
+      
       const bundle = await bundleService.createBundle(bundleData);
       
       res.status(201).json({
@@ -125,7 +132,7 @@ const bundleController = {
       logger.error('Error creating bundle:', error);
       res.status(500).json({
         success: false,
-        message: 'Failed to create bundle'
+        message: error.message || 'Failed to create bundle'
       });
     }
   },
@@ -134,7 +141,10 @@ const bundleController = {
   updateBundle: async (req, res) => {
     try {
       const { id } = req.params;
-      const updateData = req.body;
+      const updateData = {
+        ...req.body,
+        updatedBy: req.user.userId
+      };
       
       const bundle = await bundleService.updateBundle(id, updateData);
       
@@ -154,7 +164,7 @@ const bundleController = {
       logger.error('Error updating bundle:', error);
       res.status(500).json({
         success: false,
-        message: 'Failed to update bundle'
+        message: error.message || 'Failed to update bundle'
       });
     }
   },
