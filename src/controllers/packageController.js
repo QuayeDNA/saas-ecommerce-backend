@@ -16,7 +16,7 @@ class PackageController {
 
       res.status(201).json({
         success: true,
-        package: packageGroup,
+        data: packageGroup,
       });
     } catch (error) {
       logger.error(`Package creation failed: ${error.message}`);
@@ -69,7 +69,7 @@ class PackageController {
       
       res.json({
         success: true,
-        package: packageGroup
+        data: packageGroup
       });
     } catch (error) {
       logger.error(`Get package failed: ${error.message}`);
@@ -83,14 +83,17 @@ class PackageController {
   // Update package
   async updatePackage(req, res) {
     try {
-      const { tenantId, userId } = req.user;
+      const { tenantId, userId, userType } = req.user;
       const { id } = req.params;
       
-      const packageGroup = await packageService.updatePackage(id, req.body, tenantId, userId);
+      // For super admins, don't pass tenantId
+      const effectiveTenantId = userType === 'super_admin' ? null : tenantId;
+      
+      const packageGroup = await packageService.updatePackage(id, req.body, effectiveTenantId, userId);
       
       res.json({
         success: true,
-        package: packageGroup
+        data: packageGroup
       });
     } catch (error) {
       logger.error(`Update package failed: ${error.message}`);
@@ -104,10 +107,13 @@ class PackageController {
   // Delete package
   async deletePackage(req, res) {
     try {
-      const { tenantId, userId } = req.user;
+      const { tenantId, userId, userType } = req.user;
       const { id } = req.params;
       
-      await packageService.deletePackage(id, tenantId, userId);
+      // For super admins, don't pass tenantId
+      const effectiveTenantId = userType === 'super_admin' ? null : tenantId;
+      
+      await packageService.deletePackage(id, effectiveTenantId, userId);
       
       res.json({
         success: true,
@@ -125,14 +131,17 @@ class PackageController {
   // Restore package
   async restorePackage(req, res) {
     try {
-      const { tenantId, userId } = req.user;
+      const { tenantId, userId, userType } = req.user;
       const { id } = req.params;
       
-      const packageGroup = await packageService.restorePackage(id, tenantId, userId);
+      // For super admins, don't pass tenantId
+      const effectiveTenantId = userType === 'super_admin' ? null : tenantId;
+      
+      const packageGroup = await packageService.restorePackage(id, effectiveTenantId, userId);
       
       res.json({
         success: true,
-        package: packageGroup,
+        data: packageGroup,
         message: 'Package restored successfully'
       });
     } catch (error) {

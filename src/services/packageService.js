@@ -89,11 +89,18 @@ class PackageService {
 
   // Update package
   async updatePackage(packageId, updateData, tenantId, userId) {
-    const packageGroup = await Package.findOne({
+    // For super admins, don't filter by tenantId
+    const query = {
       _id: packageId,
-      tenantId,
       isDeleted: false
-    });
+    };
+    
+    // Only filter by tenantId for non-super admin users
+    if (tenantId) {
+      query.tenantId = tenantId;
+    }
+    
+    const packageGroup = await Package.findOne(query);
     
     if (!packageGroup) {
       throw new Error('Package not found');
@@ -122,11 +129,18 @@ class PackageService {
 
   // Soft delete package
   async deletePackage(packageId, tenantId, userId) {
-    const packageGroup = await Package.findOne({
+    // For super admins, don't filter by tenantId
+    const query = {
       _id: packageId,
-      tenantId,
       isDeleted: false
-    });
+    };
+    
+    // Only filter by tenantId for non-super admin users
+    if (tenantId) {
+      query.tenantId = tenantId;
+    }
+    
+    const packageGroup = await Package.findOne(query);
     
     if (!packageGroup) {
       throw new Error('Package not found');
@@ -139,11 +153,18 @@ class PackageService {
 
   // Restore package
   async restorePackage(packageId, tenantId, userId) {
-    const packageGroup = await Package.findOne({
+    // For super admins, don't filter by tenantId
+    const query = {
       _id: packageId,
-      tenantId,
       isDeleted: true
-    });
+    };
+    
+    // Only filter by tenantId for non-super admin users
+    if (tenantId) {
+      query.tenantId = tenantId;
+    }
+    
+    const packageGroup = await Package.findOne(query);
     
     if (!packageGroup) {
       throw new Error('Package not found');

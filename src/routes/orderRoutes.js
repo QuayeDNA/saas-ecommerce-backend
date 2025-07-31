@@ -4,6 +4,7 @@ import orderController from '../controllers/orderController.js';
 import { authenticate, authorize } from '../middlewares/auth.js';
 import validate from '../middlewares/validate.js';
 import { orderValidation } from '../validators/orderValidator.js';
+import { checkSiteStatusForOrders } from '../middlewares/siteStatus.js';
 
 const router = express.Router();
 
@@ -12,6 +13,7 @@ router.post(
   '/single',
   authenticate,
   authorize('agent'),
+  checkSiteStatusForOrders,
   validate(orderValidation.createSingle),
   orderController.createSingleOrder
 );
@@ -20,6 +22,7 @@ router.post(
   '/bulk',
   authenticate,
   authorize('agent'),
+  checkSiteStatusForOrders,
   validate(orderValidation.createBulk),
   orderController.createBulkOrder
 );
@@ -68,6 +71,14 @@ router.patch(
   authenticate,
   authorize('super_admin'),
   orderController.updateOrderStatus
+);
+
+// Process draft orders when wallet is topped up
+router.post(
+  '/process-drafts',
+  authenticate,
+  authorize('agent'),
+  orderController.processDraftOrders
 );
 
 // GENERIC ROUTES LAST

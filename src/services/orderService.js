@@ -51,8 +51,6 @@ class OrderService {
     return await this.executeWithTransaction(async (session) => {
       const { packageGroupId, packageItemId, customerPhone, bundleSize, quantity = 1 } = orderData;
       
-      // Order data received
-      
       // Get bundle details with provider info - try without tenantId first
       let bundle = session 
         ? await Bundle.findOne({
@@ -86,8 +84,58 @@ class OrderService {
       if (!bundle) {
         throw new Error('Bundle not found or inactive');
       }
+
+      // Calculate order total
+      const orderTotal = bundle.price * quantity;
+      
+      // Check wallet balance
+      const user = session 
+        ? await User.findById(userId).session(session)
+        : await User.findById(userId);
+      
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      // Determine order status based on wallet balance
+      let orderStatus = 'confirmed';
+      let paymentStatus = 'pending';
+      let walletDeducted = false;
+
+      if (user.walletBalance >= orderTotal) {
+        // Sufficient balance - deduct wallet and confirm order
+        if (session) {
+          user.walletBalance -= orderTotal;
+          await user.save({ session });
+          
+          // Record wallet transaction
+          const transaction = new WalletTransaction({
+            user: userId,
+            type: 'debit',
+            amount: orderTotal,
+            balanceAfter: user.walletBalance,
+            description: `Payment for order - ${bundle.name} for ${customerPhone}`,
+            metadata: { orderType: 'single' }
+          });
+          await transaction.save({ session });
+        } else {
+          await walletService.debitWallet(
+            userId.toString(),
+            orderTotal,
+            `Payment for order - ${bundle.name} for ${customerPhone}`,
+            null,
+            { orderType: 'single' }
+          );
+        }
+        walletDeducted = true;
+        paymentStatus = 'paid';
+      } else {
+        // Insufficient balance - create as draft
+        orderStatus = 'draft';
+        paymentStatus = 'pending';
+      }
             
-      // Create order (no wallet check or deduction here)
+      // Create order
       const order = new Order({
         orderType: 'single',
         tenantId,
@@ -105,7 +153,7 @@ class OrderService {
           },
           quantity,
           unitPrice: bundle.price,
-          totalPrice: bundle.price * quantity,
+          totalPrice: orderTotal,
           customerPhone,
           bundleSize: bundleSize ? {
             value: bundleSize.value,
@@ -113,8 +161,8 @@ class OrderService {
           } : undefined
         }],
         paymentMethod: 'wallet',
-        status: 'confirmed',
-        paymentStatus: 'pending',
+        status: orderStatus,
+        paymentStatus: paymentStatus,
         // The pre-save hook will calculate subtotal, total, and generate orderNumber
       });
       
@@ -124,91 +172,179 @@ class OrderService {
         await order.save();
       }
 
-      logger.info(`Order created successfully: ${order.orderNumber}`);
+      const statusMessage = walletDeducted 
+        ? `Order created successfully: ${order.orderNumber}`
+        : `Order created as draft due to insufficient wallet balance. Required: GH₵${orderTotal.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`;
+      
+      logger.info(statusMessage);
       return order;
     });
   }
 
   // Create bulk order (new logic)
   async createBulkOrders({ items, tenantId, userId, packageId }) {
-    const createdOrders = [];
-    const errors = [];
+    return await this.executeWithTransaction(async (session) => {
+      const createdOrders = [];
+      const errors = [];
+      let totalOrderAmount = 0;
+      const orderItems = [];
 
-    // Ensure tenantId and userId are ObjectId instances
-    const getObjectId = (id) => {
-      if (typeof id === 'string') return new mongoose.Types.ObjectId(id);
-      if (id instanceof mongoose.Types.ObjectId) return id;
-      // fallback: try to convert
-      return new mongoose.Types.ObjectId(String(id));
-    };
-    const tenantObjectId = getObjectId(tenantId);
-    const userObjectId = getObjectId(userId);
+      // Ensure tenantId and userId are ObjectId instances
+      const getObjectId = (id) => {
+        if (typeof id === 'string') return new mongoose.Types.ObjectId(id);
+        if (id instanceof mongoose.Types.ObjectId) return id;
+        // fallback: try to convert
+        return new mongoose.Types.ObjectId(String(id));
+      };
+      const tenantObjectId = getObjectId(tenantId);
+      const userObjectId = getObjectId(userId);
 
-    for (let i = 0; i < items.length; i++) {
-      const row = items[i];
-      const parsed = parseBulkOrderRow(row);
-      if (parsed.error) {
-        errors.push({ index: i, row, error: parsed.error });
-        continue;
-      }
+      // First pass: validate all items and calculate total
+      for (let i = 0; i < items.length; i++) {
+        const row = items[i];
+        const parsed = parseBulkOrderRow(row);
+        if (parsed.error) {
+          errors.push({ index: i, row, error: parsed.error });
+          continue;
+        }
 
-      // Look up the correct bundle (packageItem) within the specific package (packageGroup)
-      const bundle = await Bundle.findOne({
-        packageId: packageId, // Use the specific packageId to ensure correct provider
-        dataVolume: parsed.value.bundleSize.value,
-        dataUnit: parsed.value.bundleSize.unit,
-        isActive: true,
-        isDeleted: false
-      }).populate('providerId', 'name code');
-      
-      if (!bundle) {
-        errors.push({ index: i, row, error: 'Bundle not found for specified data volume and unit in this package' });
-        continue;
-      }
-      const packageGroup = bundle.packageId;
+        // Look up the correct bundle (packageItem) within the specific package (packageGroup)
+        const bundle = session 
+          ? await Bundle.findOne({
+              packageId: packageId,
+              dataVolume: parsed.value.bundleSize.value,
+              dataUnit: parsed.value.bundleSize.unit,
+              isActive: true,
+              isDeleted: false
+            }).populate('providerId', 'name code').session(session)
+          : await Bundle.findOne({
+              packageId: packageId,
+              dataVolume: parsed.value.bundleSize.value,
+              dataUnit: parsed.value.bundleSize.unit,
+              isActive: true,
+              isDeleted: false
+            }).populate('providerId', 'name code');
+        
+        if (!bundle) {
+          errors.push({ index: i, row, error: 'Bundle not found for specified data volume and unit in this package' });
+          continue;
+        }
 
-      // Create a single order for this item
-      try {
-        const order = await Order.create({
-          orderType: 'single',
-          tenantId: tenantObjectId,
-          createdBy: userObjectId,
-          items: [
-            {
-              packageGroup,
-              packageItem: bundle._id,
-              packageDetails: {
-                name: bundle.name,
-                code: bundle._id.toString(),
-                price: bundle.price,
-                dataVolume: bundle.dataVolume,
-                validity: bundle.validity,
-                validityUnit: bundle.validityUnit,
-                provider: bundle.providerId?.code || bundle.providerId?.name
-              },
-              quantity: 1,
-              unitPrice: bundle.price,
-              totalPrice: bundle.price,
-              customerPhone: parsed.value.customerPhone,
-              bundleSize: parsed.value.bundleSize,
-              processingStatus: 'pending'
-            }
-          ],
-          status: 'pending',
-          paymentStatus: 'pending'
+        orderItems.push({
+          index: i,
+          row,
+          bundle,
+          parsed: parsed.value
         });
-        createdOrders.push(order);
-      } catch (err) {
-        errors.push({ index: i, row, error: err.message });
+        totalOrderAmount += bundle.price;
       }
-    }
 
-    return {
-      successCount: createdOrders.length,
-      failedCount: errors.length,
-      failedRecords: errors,
-      orders: createdOrders.map(o => o._id)
-    };
+      // Check wallet balance
+      const user = session 
+        ? await User.findById(userId).session(session)
+        : await User.findById(userId);
+      
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      // Determine if we can process all orders or need to create as drafts
+      let canProcessAll = user.walletBalance >= totalOrderAmount;
+      let walletDeducted = false;
+
+      if (canProcessAll) {
+        // Deduct wallet for all orders
+        if (session) {
+          user.walletBalance -= totalOrderAmount;
+          await user.save({ session });
+          
+          // Record wallet transaction
+          const transaction = new WalletTransaction({
+            user: userId,
+            type: 'debit',
+            amount: totalOrderAmount,
+            balanceAfter: user.walletBalance,
+            description: `Bulk order payment for ${orderItems.length} items`,
+            metadata: { orderType: 'bulk', itemCount: orderItems.length }
+          });
+          await transaction.save({ session });
+        } else {
+          await walletService.debitWallet(
+            userId.toString(),
+            totalOrderAmount,
+            `Bulk order payment for ${orderItems.length} items`,
+            null,
+            { orderType: 'bulk', itemCount: orderItems.length }
+          );
+        }
+        walletDeducted = true;
+      }
+
+      // Second pass: create orders
+      for (const item of orderItems) {
+        const { bundle, parsed, index, row } = item;
+        const packageGroup = bundle.packageId;
+
+        try {
+          const orderStatus = canProcessAll ? 'confirmed' : 'draft';
+          const paymentStatus = canProcessAll ? 'paid' : 'pending';
+
+          const order = new Order({
+            orderType: 'single',
+            tenantId: tenantObjectId,
+            createdBy: userObjectId,
+            items: [
+              {
+                packageGroup,
+                packageItem: bundle._id,
+                packageDetails: {
+                  name: bundle.name,
+                  code: bundle._id.toString(),
+                  price: bundle.price,
+                  dataVolume: bundle.dataVolume,
+                  validity: bundle.validity,
+                  validityUnit: bundle.validityUnit,
+                  provider: bundle.providerId?.code || bundle.providerId?.name
+                },
+                quantity: 1,
+                unitPrice: bundle.price,
+                totalPrice: bundle.price,
+                customerPhone: parsed.customerPhone,
+                bundleSize: parsed.bundleSize,
+                processingStatus: 'pending'
+              }
+            ],
+            status: orderStatus,
+            paymentStatus: paymentStatus
+          });
+
+          if (session) {
+            await order.save({ session });
+          } else {
+            await order.save();
+          }
+          
+          createdOrders.push(order);
+        } catch (err) {
+          errors.push({ index, row, error: err.message });
+        }
+      }
+
+      const statusMessage = walletDeducted 
+        ? `Bulk order created successfully: ${createdOrders.length} orders`
+        : `Bulk order created as drafts due to insufficient wallet balance. Required: GH₵${totalOrderAmount.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`;
+
+      logger.info(statusMessage);
+
+      return {
+        successCount: createdOrders.length,
+        failedCount: errors.length,
+        failedRecords: errors,
+        orders: createdOrders.map(o => o._id),
+        totalAmount: totalOrderAmount,
+        walletDeducted
+      };
+    });
   }
 
   // Get orders with filtering
@@ -472,6 +608,101 @@ class OrderService {
       completionRate: Math.round(completionRate * 100) / 100,
       timeframe
     };
+  }
+
+  // Process draft orders when wallet is topped up
+  async processDraftOrders(userId, tenantId) {
+    return await this.executeWithTransaction(async (session) => {
+      // Get all draft orders for the user
+      const draftOrders = session 
+        ? await Order.find({
+            createdBy: userId,
+            tenantId,
+            status: 'draft'
+          }).session(session)
+        : await Order.find({
+            createdBy: userId,
+            tenantId,
+            status: 'draft'
+          });
+
+      if (draftOrders.length === 0) {
+        return { processed: 0, message: 'No draft orders found' };
+      }
+
+      // Get user's current wallet balance
+      const user = session 
+        ? await User.findById(userId).session(session)
+        : await User.findById(userId);
+      
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      let totalRequired = 0;
+      const processableOrders = [];
+
+      // Calculate total required for all draft orders
+      for (const order of draftOrders) {
+        const orderTotal = order.items.reduce((sum, item) => sum + item.totalPrice, 0);
+        totalRequired += orderTotal;
+        processableOrders.push({ order, orderTotal });
+      }
+
+      // Check if user has sufficient balance
+      if (user.walletBalance < totalRequired) {
+        throw new Error(`Insufficient wallet balance to process all draft orders. Required: GH₵${totalRequired.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`);
+      }
+
+      // Process all draft orders
+      let processedCount = 0;
+      for (const { order, orderTotal } of processableOrders) {
+        // Deduct wallet for this order
+        if (session) {
+          user.walletBalance -= orderTotal;
+          await user.save({ session });
+          
+          // Record wallet transaction
+          const transaction = new WalletTransaction({
+            user: userId,
+            type: 'debit',
+            amount: orderTotal,
+            balanceAfter: user.walletBalance,
+            description: `Payment for draft order ${order.orderNumber}`,
+            relatedOrder: order._id,
+            metadata: { orderType: 'draft_processing' }
+          });
+          await transaction.save({ session });
+        } else {
+          await walletService.debitWallet(
+            userId.toString(),
+            orderTotal,
+            `Payment for draft order ${order.orderNumber}`,
+            order._id,
+            { orderType: 'draft_processing' }
+          );
+        }
+
+        // Update order status
+        order.status = 'confirmed';
+        order.paymentStatus = 'paid';
+        
+        if (session) {
+          await order.save({ session });
+        } else {
+          await order.save();
+        }
+        
+        processedCount++;
+      }
+
+      logger.info(`Processed ${processedCount} draft orders for user ${userId}`);
+      return { 
+        processed: processedCount, 
+        message: `Successfully processed ${processedCount} draft orders`,
+        totalAmount: totalRequired
+      };
+    });
   }
   
   // Cancel order

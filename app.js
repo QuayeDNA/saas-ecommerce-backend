@@ -15,6 +15,7 @@ import storefrontRoutes from './src/routes/storefrontRoutes.js';
 import userRoutes from './src/routes/userRoutes.js';
 import providerRoutes from './src/routes/providerRoutes.js';
 import walletRoutes from './src/routes/walletRoutes.js';
+import settingsRoutes from './src/routes/settingsRoutes.js';
 import deleteUnverifiedUsersJob from './src/jobs/deleteUnverifiedUsers.js';
 
 const app = express();
@@ -63,6 +64,7 @@ app.use('/api/storefront', storefrontRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/providers', providerRoutes);
 app.use('/api/wallet', walletRoutes);
+app.use('/api/settings', settingsRoutes);
 app.use('/api', publicRoutes);
 app.use('/api/packages', packageRoutes);
 app.use('/api/bundles', bundleRoutes);
