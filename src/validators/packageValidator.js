@@ -6,14 +6,14 @@ const packageValidation = {
   create: Joi.object({
     name: Joi.string().required().trim().min(2).max(100),
     description: Joi.string().optional().trim().max(500),
-    provider: Joi.string().required().valid('MTN', 'TELECEL', 'AT', 'GLO'),
+    provider: Joi.string().required().valid('MTN', 'TELECEL', 'AT'),
     category: Joi.string().required().valid('daily', 'weekly', 'monthly', 'unlimited', 'custom')
   }),
 
   update: Joi.object({
     name: Joi.string().optional().trim().min(2).max(100),
     description: Joi.string().optional().trim().max(500),
-    provider: Joi.string().optional().valid('MTN', 'TELECEL', 'AT', 'GLO'),
+    provider: Joi.string().optional().valid('MTN', 'TELECEL', 'AT'),
     category: Joi.string().optional().valid('daily', 'weekly', 'monthly', 'unlimited', 'custom'),
     isActive: Joi.boolean().optional()
   })
@@ -25,7 +25,7 @@ const bundleValidation = {
     name: Joi.string().required().trim().min(2).max(100),
     description: Joi.string().optional().trim().max(500),
     packageId: Joi.string().required().hex().length(24),
-    provider: Joi.string().required().valid('MTN', 'TELECEL', 'AT', 'GLO'),
+    provider: Joi.string().required().valid('MTN', 'TELECEL', 'AT'),
     
     // Bundle Specifications
     dataVolume: Joi.number().required().min(0.1).max(1000),
@@ -50,7 +50,7 @@ const bundleValidation = {
     name: Joi.string().optional().trim().min(2).max(100),
     description: Joi.string().optional().trim().max(500),
     packageId: Joi.string().optional().hex().length(24),
-    provider: Joi.string().optional().valid('MTN', 'TELECEL', 'AT', 'GLO'),
+    provider: Joi.string().optional().valid('MTN', 'TELECEL', 'AT'),
     
     // Bundle Specifications
     dataVolume: Joi.number().optional().min(0.1).max(1000),

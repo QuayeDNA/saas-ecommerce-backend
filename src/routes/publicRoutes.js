@@ -23,8 +23,7 @@ router.get('/providers', (req, res) => {
   const providers = [
     { code: 'MTN', name: 'MTN Ghana' },
     { code: 'TELECEL', name: 'Telecel Ghana' },
-    { code: 'AT', name: 'AirtelTigo' },
-    { code: 'GLO', name: 'GLO Ghana' }
+    { code: 'AT', name: 'AirtelTigo' }
   ];
   res.json({ success: true, providers });
 });

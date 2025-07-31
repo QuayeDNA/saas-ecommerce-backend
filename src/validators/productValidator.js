@@ -9,7 +9,7 @@ export const productValidation = {
       .withMessage('Invalid product category'),
     body('provider')
       .optional()
-      .isIn(['MTN', 'TELECEL', 'AT', 'GLO', 'Other'])
+      .isIn(['MTN', 'TELECEL', 'AT', 'Other'])
       .withMessage('Invalid provider'),
     body('variants').isArray({ min: 1 }).withMessage('At least one variant is required'),
     body('variants.*.name').notEmpty().withMessage('Variant name is required'),
@@ -22,7 +22,7 @@ export const productValidation = {
     param('id').isMongoId().withMessage('Invalid product ID'),
     body('name').optional().trim().notEmpty(),
     body('category').optional().isIn(['data-bundle', 'voice-bundle', 'sms-bundle', 'combo-bundle', 'physical', 'digital', 'service']),
-    body('provider').optional().isIn(['MTN', 'TELECEL', 'AT', 'GLO', 'Other'])
+    body('provider').optional().isIn(['MTN', 'TELECEL', 'AT', 'Other'])
   ],
   
   bulkCreate: [

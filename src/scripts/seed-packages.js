@@ -137,7 +137,6 @@ const PACKAGES = [
 
 async function main() {
   await mongoose.connect(process.env.DBURI, {});
-  console.log('Connected to MongoDB');
 
   // Ensure admin user exists
   let admin = await User.findOne({ email: ADMIN_EMAIL });
@@ -149,7 +148,6 @@ async function main() {
       role: 'admin',
       isActive: true
     });
-    console.log('Admin user created');
   }
 
   // Ensure all providers exist
@@ -157,7 +155,6 @@ async function main() {
     let provider = await Provider.findOne({ code: p.code });
     if (!provider) {
       provider = await Provider.create({ ...p, createdBy: admin._id });
-      console.log(`${p.name} provider created`);
     }
   }
 
@@ -175,7 +172,6 @@ async function main() {
         tenantId: admin._id,
         createdBy: admin._id
       });
-      console.log(`Package created: ${pkgDef.name}`);
     } else {
       // Update if any field differs
       let needsUpdate = false;
@@ -187,7 +183,6 @@ async function main() {
       }
       if (needsUpdate) {
         await pkg.save();
-        console.log(`Package updated: ${pkgDef.name}`);
       }
     }
 
@@ -200,7 +195,6 @@ async function main() {
       const code = dbBundle.name.replace(/\s+/g, '_').toUpperCase();
       if (!scriptBundleCodes.includes(code)) {
         await dbBundle.deleteOne();
-        console.log(`Bundle removed: ${dbBundle.name}`);
       }
     }
 
@@ -230,7 +224,6 @@ async function main() {
           tenantId: admin._id,
           createdBy: admin._id
         });
-        console.log(`Bundle created: ${b.name}`);
       } else {
         // Update if any field differs
         let needsUpdate = false;
@@ -248,18 +241,15 @@ async function main() {
         }
         if (needsUpdate) {
           await bundle.save();
-          console.log(`Bundle updated: ${b.name}`);
         }
       }
     }
   }
 
-  console.log('All packages and bundles synced!');
   await mongoose.disconnect();
   process.exit(0);
 }
 
 main().catch(e => {
-  console.error(e);
   process.exit(1);
 }); 

@@ -118,7 +118,6 @@ const bundleSchema = new mongoose.Schema(
 bundleSchema.index({ tenantId: 1, providerId: 1 });
 bundleSchema.index({ tenantId: 1, packageId: 1 });
 bundleSchema.index({ tenantId: 1, isActive: 1, isDeleted: 1 });
-bundleSchema.index({ bundleCode: 1 });
 bundleSchema.index({ category: 1 });
 bundleSchema.index({ price: 1 });
 bundleSchema.index({ dataVolume: 1 });

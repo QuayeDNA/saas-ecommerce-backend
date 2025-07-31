@@ -12,11 +12,11 @@ const packageSchema = new mongoose.Schema(
       type: String, 
       trim: true 
     },
-    provider: {
-      type: String,
-      required: true,
-      enum: ["MTN", "TELECEL", "AT", "GLO"],
-    },
+      provider: {
+    type: String,
+    required: true,
+    enum: ["MTN", "TELECEL", "AT"],
+  },
     category: {
       type: String,
       required: true,

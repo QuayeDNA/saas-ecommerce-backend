@@ -51,7 +51,7 @@ class OrderService {
     return await this.executeWithTransaction(async (session) => {
       const { packageGroupId, packageItemId, customerPhone, bundleSize, quantity = 1 } = orderData;
       
-      console.log('Order data received:', { packageGroupId, packageItemId, tenantId });
+      // Order data received
       
       // Get bundle details with provider info - try without tenantId first
       let bundle = session 
@@ -69,7 +69,6 @@ class OrderService {
           }).populate('providerId', 'name code');
       
       if (!bundle) {
-        console.log('Bundle not found with packageId, trying with just _id');
         // Fallback: try to find bundle by ID only
         bundle = session 
           ? await Bundle.findOne({
@@ -85,7 +84,6 @@ class OrderService {
       }
       
       if (!bundle) {
-        console.log('Bundle still not found, available bundles:', await Bundle.find({ isActive: true }).select('_id packageId name'));
         throw new Error('Bundle not found or inactive');
       }
             

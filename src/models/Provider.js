@@ -7,7 +7,7 @@ const providerSchema = new mongoose.Schema(
     code: { 
       type: String,
       required: true,
-      enum: ["MTN", "TELECEL", "AT", "GLO"],
+      enum: ["MTN", "TELECEL", "AT"],
     },
     description: { type: String, trim: true },
     logo: {
