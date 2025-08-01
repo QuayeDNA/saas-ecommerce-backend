@@ -80,7 +80,7 @@ describe('Order Integration Tests', () => {
       expect(order.items[0].packageItem.toString()).toBe(mockBundle._id.toString());
       expect(order.items[0].customerPhone).toBe('+233551234567');
       expect(order.total).toBe(5.00);
-      expect(order.status).toBe('confirmed');
+      expect(order.status).toBe('pending');
     });
 
     it('should create order successfully', async () => {

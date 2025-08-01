@@ -123,13 +123,13 @@ class OrderService {
         throw new Error('User not found');
       }
 
-      // Determine order status based on wallet balance
-      let orderStatus = 'confirmed';
+      // Determine order status based on wallet balance and user type
+      let orderStatus = 'pending'; // Default to pending for agents
       let paymentStatus = 'pending';
       let walletDeducted = false;
 
       if (user.walletBalance >= orderTotal) {
-        // Sufficient balance - deduct wallet and confirm order
+        // Sufficient balance - deduct wallet
         if (session) {
           user.walletBalance -= orderTotal;
           await user.save({ session });
@@ -155,6 +155,11 @@ class OrderService {
         }
         walletDeducted = true;
         paymentStatus = 'paid';
+        
+        // Only set status to confirmed for super admins, agents stay pending
+        if (user.userType === 'super_admin') {
+          orderStatus = 'confirmed';
+        }
       } else {
         // Insufficient balance - create as draft
         orderStatus = 'draft';
@@ -353,8 +358,18 @@ class OrderService {
         const packageGroup = bundle.packageId;
 
         try {
-          const orderStatus = canProcessAll ? 'confirmed' : 'draft';
+          // Determine order status based on user type and wallet balance
+          let orderStatus = 'pending'; // Default to pending for agents
           const paymentStatus = canProcessAll ? 'paid' : 'pending';
+          
+          if (canProcessAll) {
+            // Only set status to confirmed for super admins, agents stay pending
+            if (user.userType === 'super_admin') {
+              orderStatus = 'confirmed';
+            }
+          } else {
+            orderStatus = 'draft';
+          }
 
           const order = new Order({
             orderType: 'single',
