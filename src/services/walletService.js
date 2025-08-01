@@ -2,6 +2,7 @@
 import User from '../models/User.js';
 import WalletTransaction from '../models/WalletTransaction.js';
 import logger from '../utils/logger.js';
+import notificationService from './notificationService.js';
 
 class WalletService {
   /**
@@ -210,6 +211,23 @@ class WalletService {
       }
 
       await transaction.save();
+      
+      // Send notification based on approval status
+      if (approve) {
+        await notificationService.sendWalletTopUpApprovalNotification(
+          transaction.user.toString(),
+          transaction.amount,
+          adminId
+        );
+      } else {
+        await notificationService.sendWalletTopUpRejectionNotification(
+          transaction.user.toString(),
+          transaction.amount,
+          'Request rejected by administrator',
+          adminId
+        );
+      }
+      
       return transaction;
     } catch (error) {
       logger.error(`Process top-up request error: ${error.message}`);

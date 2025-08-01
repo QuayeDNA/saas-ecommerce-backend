@@ -6,6 +6,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import connectDB from './src/config/db.js';
 import logger from './src/utils/logger.js';
+import websocketService from './src/services/websocketService.js';
 import authRoutes from './src/routes/authRoutes.js';
 import orderRouter from './src/routes/orderRoutes.js';
 import packageRoutes from './src/routes/packageRoutes.js';
@@ -16,6 +17,7 @@ import userRoutes from './src/routes/userRoutes.js';
 import providerRoutes from './src/routes/providerRoutes.js';
 import walletRoutes from './src/routes/walletRoutes.js';
 import settingsRoutes from './src/routes/settingsRoutes.js';
+import notificationRoutes from './src/routes/notificationRoutes.js';
 import deleteUnverifiedUsersJob from './src/jobs/deleteUnverifiedUsers.js';
 
 const app = express();
@@ -65,6 +67,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/providers', providerRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/notifications', notificationRoutes);
 app.use('/api', publicRoutes);
 app.use('/api/packages', packageRoutes);
 app.use('/api/bundles', bundleRoutes);
@@ -92,6 +95,9 @@ app.use((req, res) => {
   });
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   logger.info(`Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
 });
+
+// Initialize WebSocket server
+websocketService.initialize(server);

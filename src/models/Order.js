@@ -224,10 +224,12 @@ orderSchema.pre('save', async function(next) {
 });
 
 // Instance methods
-orderSchema.methods.updateStatus = function() {
+orderSchema.methods.updateStatus = async function() {
   if (!this.items || this.items.length === 0) {
     return this.save();
   }
+  
+  const oldStatus = this.status;
   const statuses = this.items.map(item => item.processingStatus);
   const uniqueStatuses = [...new Set(statuses)];
   
@@ -255,7 +257,46 @@ orderSchema.methods.updateStatus = function() {
     this.bulkData.failedItems = statuses.filter(s => s === 'failed').length;
   }
   
-  return this.save();
+  await this.save();
+  
+  // Send notification if status changed
+  if (oldStatus !== this.status) {
+    try {
+      const notificationService = (await import('../services/notificationService.js')).default;
+      await notificationService.sendOrderStatusNotification(
+        this.createdBy.toString(),
+        this._id.toString(),
+        this.orderNumber,
+        oldStatus,
+        this.status,
+        {
+          total: this.total,
+          items: this.items.length,
+          orderType: this.orderType
+        }
+      );
+      
+      // Send bulk order progress notification for bulk orders
+      if (this.orderType === 'bulk' && this.bulkData) {
+        const processed = this.bulkData.successfulItems + this.bulkData.failedItems;
+        const total = this.bulkData.totalItems;
+        
+        if (processed > 0 && total > 0) {
+          await notificationService.sendBulkOrderProgressNotification(
+            this.createdBy.toString(),
+            this._id.toString(),
+            this.orderNumber,
+            processed,
+            total
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Failed to send order status notification:', error);
+    }
+  }
+  
+  return this;
 };
 
 export default mongoose.model('Order', orderSchema);

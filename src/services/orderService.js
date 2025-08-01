@@ -4,11 +4,37 @@ import Bundle from '../models/Bundle.js';
 import User from '../models/User.js';
 import WalletTransaction from '../models/WalletTransaction.js';
 import walletService from './walletService.js';
+import notificationService from './notificationService.js';
 import mongoose from 'mongoose';
 import logger from '../utils/logger.js';
 import { parseBulkOrderRow } from '../utils/parseBulkOrderRow.js';
 
 class OrderService {
+  /**
+   * Get the correct navigation link based on user type
+   * @param {string} userType - User type (agent, super_admin, etc.)
+   * @param {string} page - Page to navigate to (wallet, orders, etc.)
+   * @returns {string} Navigation link
+   */
+  getNavigationLink(userType, page) {
+    const routes = {
+      'agent': {
+        'wallet': '/agent/dashboard/wallet',
+        'orders': '/agent/dashboard/orders'
+      },
+      'super_admin': {
+        'wallet': '/superadmin/wallet',
+        'orders': '/superadmin/orders'
+      },
+      'admin': {
+        'wallet': '/admin/wallet',
+        'orders': '/admin/orders'
+      }
+    };
+
+    return routes[userType]?.[page] || `/${page}`;
+  }
+
   // Check if MongoDB supports transactions (replica set or sharded cluster)
   async supportsTransactions() {
     try {
@@ -177,6 +203,47 @@ class OrderService {
         : `Order created as draft due to insufficient wallet balance. Required: GH₵${orderTotal.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`;
       
       logger.info(statusMessage);
+
+      // Send notification for new order creation
+      try {
+        // Notify super admins about new order
+        const superAdmins = await User.find({ userType: 'super_admin' }, 'userType');
+        for (const admin of superAdmins) {
+          await notificationService.createInAppNotification(
+            admin._id.toString(),
+            'New Order Created',
+            `Order ${order.orderNumber} has been created by ${user.email || user.name || 'User'}. Amount: GH₵${orderTotal.toFixed(2)}`,
+            'info',
+            {
+              orderId: order._id.toString(),
+              orderNumber: order.orderNumber,
+              amount: orderTotal,
+              customerEmail: user.email,
+              type: 'new_order_created',
+              navigationLink: this.getNavigationLink(admin.userType, 'orders')
+            }
+          );
+        }
+
+        // Notify the order creator about their order
+        await notificationService.createInAppNotification(
+          userId.toString(),
+          'Order Created Successfully',
+          `Your order ${order.orderNumber} has been created. ${walletDeducted ? 'Payment processed from wallet.' : 'Payment pending - insufficient wallet balance.'}`,
+          walletDeducted ? 'success' : 'warning',
+          {
+            orderId: order._id.toString(),
+            orderNumber: order.orderNumber,
+            amount: orderTotal,
+            paymentStatus: paymentStatus,
+            type: 'order_created',
+            navigationLink: this.getNavigationLink(user.userType, 'orders')
+          }
+        );
+      } catch (error) {
+        logger.error(`Failed to send order creation notification: ${error.message}`);
+      }
+
       return order;
     });
   }
@@ -336,6 +403,44 @@ class OrderService {
 
       logger.info(statusMessage);
 
+      // Send notification for bulk order creation
+      try {
+        // Notify super admins about bulk order
+        const superAdmins = await User.find({ userType: 'super_admin' }, 'userType');
+        for (const admin of superAdmins) {
+          await notificationService.createInAppNotification(
+            admin._id.toString(),
+            'Bulk Order Created',
+            `Bulk order with ${createdOrders.length} items has been created by ${user.email || user.name || 'User'}. Total amount: GH₵${totalOrderAmount.toFixed(2)}`,
+            'info',
+            {
+              orderCount: createdOrders.length,
+              totalAmount: totalOrderAmount,
+              customerEmail: user.email,
+              type: 'bulk_order_created',
+              navigationLink: this.getNavigationLink(admin.userType, 'orders')
+            }
+          );
+        }
+
+        // Notify the order creator about their bulk order
+        await notificationService.createInAppNotification(
+          userId.toString(),
+          'Bulk Order Created Successfully',
+          `Your bulk order with ${createdOrders.length} items has been created. ${walletDeducted ? 'Payment processed from wallet.' : 'Payment pending - insufficient wallet balance.'}`,
+          walletDeducted ? 'success' : 'warning',
+          {
+            orderCount: createdOrders.length,
+            totalAmount: totalOrderAmount,
+            paymentStatus: walletDeducted ? 'paid' : 'pending',
+            type: 'bulk_order_created',
+            navigationLink: this.getNavigationLink(user.userType, 'orders')
+          }
+        );
+      } catch (error) {
+        logger.error(`Failed to send bulk order creation notification: ${error.message}`);
+      }
+
       return {
         successCount: createdOrders.length,
         failedCount: errors.length,
@@ -460,6 +565,50 @@ class OrderService {
       } else {
         await order.save();
       }
+
+      // Send notification for order processing
+      try {
+        const orderCreator = await User.findById(order.createdBy);
+        const processor = await User.findById(userId);
+        
+        if (orderCreator) {
+          await notificationService.createInAppNotification(
+            orderCreator._id.toString(),
+            'Order Processing Update',
+            `Your order ${order.orderNumber} is being processed by ${processor?.fullName || processor?.email || 'Admin'}. Status: ${processedSuccessfully ? 'Completed' : 'Failed'}`,
+            processedSuccessfully ? 'success' : 'error',
+            {
+              orderId: order._id.toString(),
+              orderNumber: order.orderNumber,
+              status: processedSuccessfully ? 'completed' : 'failed',
+              processedBy: processor?.fullName || processor?.email,
+              type: 'order_processing_update',
+              navigationLink: this.getNavigationLink(orderCreator.userType, 'orders')
+            }
+          );
+        }
+
+        // Notify super admins about order processing
+        const superAdmins = await User.find({ userType: 'super_admin' }, 'userType');
+        for (const admin of superAdmins) {
+          await notificationService.createInAppNotification(
+            admin._id.toString(),
+            'Order Processed',
+            `Order ${order.orderNumber} has been processed by ${processor?.fullName || processor?.email || 'Admin'}. Status: ${processedSuccessfully ? 'Completed' : 'Failed'}`,
+            processedSuccessfully ? 'success' : 'error',
+            {
+              orderId: order._id.toString(),
+              orderNumber: order.orderNumber,
+              status: processedSuccessfully ? 'completed' : 'failed',
+              processedBy: processor?.fullName || processor?.email,
+              type: 'order_processed',
+              navigationLink: this.getNavigationLink(admin.userType, 'orders')
+            }
+          );
+        }
+      } catch (error) {
+        logger.error(`Failed to send order processing notification: ${error.message}`);
+      }
       
       return order;
     });
@@ -493,6 +642,49 @@ class OrderService {
     }
     
     logger.info(`Bulk order processing completed: ${orderId}`);
+
+    // Send notification for bulk order processing
+    try {
+      const orderCreator = await User.findById(order.createdBy);
+      const processor = await User.findById(userId);
+      
+      if (orderCreator) {
+        await notificationService.createInAppNotification(
+          orderCreator._id.toString(),
+          'Bulk Order Processing Update',
+          `Your bulk order ${order.orderNumber} is being processed by ${processor?.fullName || processor?.email || 'Admin'}.`,
+          'info',
+          {
+            orderId: order._id.toString(),
+            orderNumber: order.orderNumber,
+            processedBy: processor?.fullName || processor?.email,
+            type: 'bulk_order_processing_update',
+            navigationLink: this.getNavigationLink(orderCreator.userType, 'orders')
+          }
+        );
+      }
+
+      // Notify super admins about bulk order processing
+      const superAdmins = await User.find({ userType: 'super_admin' }, 'userType');
+      for (const admin of superAdmins) {
+        await notificationService.createInAppNotification(
+          admin._id.toString(),
+          'Bulk Order Processing',
+          `Bulk order ${order.orderNumber} is being processed by ${processor?.fullName || processor?.email || 'Admin'}.`,
+          'info',
+          {
+            orderId: order._id.toString(),
+            orderNumber: order.orderNumber,
+            processedBy: processor?.fullName || processor?.email,
+            type: 'bulk_order_processing',
+            navigationLink: this.getNavigationLink(admin.userType, 'orders')
+          }
+        );
+      }
+    } catch (error) {
+      logger.error(`Failed to send bulk order processing notification: ${error.message}`);
+    }
+
     return order;
   }
 
@@ -667,6 +859,45 @@ class OrderService {
       }
 
       logger.info(`Processed ${processedCount} draft orders for user ${userId}`);
+
+      // Send notification for draft order processing
+      try {
+        if (processedCount > 0) {
+          await notificationService.createInAppNotification(
+            userId.toString(),
+            'Draft Orders Processed',
+            `Successfully processed ${processedCount} draft orders. Total amount: GH₵${totalRequired.toFixed(2)}`,
+            'success',
+            {
+              processedCount,
+              totalAmount: totalRequired,
+              type: 'draft_orders_processed',
+              navigationLink: this.getNavigationLink(user.userType, 'orders')
+            }
+          );
+
+          // Notify super admins about draft order processing
+          const superAdmins = await User.find({ userType: 'super_admin' }, 'userType');
+          for (const admin of superAdmins) {
+            await notificationService.createInAppNotification(
+              admin._id.toString(),
+              'Draft Orders Processed',
+              `User ${user.email || user.name || 'User'} processed ${processedCount} draft orders. Total amount: GH₵${totalRequired.toFixed(2)}`,
+              'info',
+              {
+                processedCount,
+                totalAmount: totalRequired,
+                userEmail: user.email,
+                type: 'draft_orders_processed',
+                navigationLink: this.getNavigationLink(admin.userType, 'orders')
+              }
+            );
+          }
+        }
+      } catch (error) {
+        logger.error(`Failed to send draft order processing notification: ${error.message}`);
+      }
+
       return { 
         processed: processedCount, 
         message: `Successfully processed ${processedCount} draft orders`,
@@ -712,6 +943,51 @@ class OrderService {
       }
       
       logger.info(`Order cancelled: ${order.orderNumber}`);
+
+      // Send notification for order cancellation
+      try {
+        const orderCreator = await User.findById(order.createdBy);
+        const canceller = await User.findById(userId);
+        
+        if (orderCreator) {
+          await notificationService.createInAppNotification(
+            orderCreator._id.toString(),
+            'Order Cancelled',
+            `Your order ${order.orderNumber} has been cancelled by ${canceller?.fullName || canceller?.email || 'Admin'}. Reason: ${reason || 'No reason provided'}`,
+            'error',
+            {
+              orderId: order._id.toString(),
+              orderNumber: order.orderNumber,
+              cancelledBy: canceller?.fullName || canceller?.email,
+              reason: reason || 'No reason provided',
+              type: 'order_cancelled',
+              navigationLink: this.getNavigationLink(orderCreator.userType, 'orders')
+            }
+          );
+        }
+
+        // Notify super admins about order cancellation
+        const superAdmins = await User.find({ userType: 'super_admin' }, 'userType');
+        for (const admin of superAdmins) {
+          await notificationService.createInAppNotification(
+            admin._id.toString(),
+            'Order Cancelled',
+            `Order ${order.orderNumber} has been cancelled by ${canceller?.fullName || canceller?.email || 'Admin'}. Reason: ${reason || 'No reason provided'}`,
+            'warning',
+            {
+              orderId: order._id.toString(),
+              orderNumber: order.orderNumber,
+              cancelledBy: canceller?.fullName || canceller?.email,
+              reason: reason || 'No reason provided',
+              type: 'order_cancelled',
+              navigationLink: this.getNavigationLink(admin.userType, 'orders')
+            }
+          );
+        }
+      } catch (error) {
+        logger.error(`Failed to send order cancellation notification: ${error.message}`);
+      }
+
       return order;
     });
   }
