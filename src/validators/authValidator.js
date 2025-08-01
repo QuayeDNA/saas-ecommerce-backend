@@ -32,9 +32,9 @@ export const registerAgentValidation = [
     .withMessage('Business name must be between 2 and 100 characters'),
   
   body('businessCategory')
-    .trim()
-    .notEmpty()
-    .withMessage('Business category is required'),
+    .optional()
+    .isIn(['electronics', 'fashion', 'food', 'services', 'other'])
+    .withMessage('Invalid business category'),
   
   body('subscriptionPlan')
     .optional()

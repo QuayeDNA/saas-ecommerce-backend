@@ -47,7 +47,7 @@ class AuthController {
         phone,
         password,
         businessName,
-        businessCategory,
+        businessCategory = "services",
         subscriptionPlan = "basic",
       } = req.body;
 

@@ -50,6 +50,7 @@ const userSchema = new mongoose.Schema({
   businessCategory: {
     type: String,
     enum: ['electronics', 'fashion', 'food', 'services', 'other'],
+    default: 'services',
     required: function() {
       return this.userType === 'agent';
     }
