@@ -5,8 +5,34 @@ import logger from '../utils/logger.js';
 import { orderValidation } from '../validators/orderValidator.js';
 import User from '../models/User.js'; // Added import for User
 import walletService from '../services/walletService.js'; // Added import for walletService
+import notificationService from '../services/notificationService.js'; // Added import for notificationService
 
 class OrderController {
+  /**
+   * Get the correct navigation link based on user type
+   * @param {string} userType - User type (agent, super_admin, etc.)
+   * @param {string} page - Page to navigate to (wallet, orders, etc.)
+   * @returns {string} Navigation link
+   */
+  getNavigationLink(userType, page) {
+    const routes = {
+      'agent': {
+        'wallet': '/agent/dashboard/wallet',
+        'orders': '/agent/dashboard/orders'
+      },
+      'super_admin': {
+        'wallet': '/superadmin/wallet',
+        'orders': '/superadmin/orders'
+      },
+      'admin': {
+        'wallet': '/admin/wallet',
+        'orders': '/admin/orders'
+      }
+    };
+
+    return routes[userType]?.[page] || `/${page}`;
+  }
+
   // Create single order
   async createSingleOrder(req, res) {
     try {
@@ -342,16 +368,24 @@ class OrderController {
           }
 
           // Check if order can be processed
-          if (!['pending', 'confirmed'].includes(order.status)) {
+          if (action === 'processing' && !['pending', 'confirmed'].includes(order.status)) {
             results.failed.push({
               orderId,
-              reason: `Order is in ${order.status} status and cannot be processed`
+              reason: `Order is in ${order.status} status and cannot be started processing`
+            });
+            continue;
+          }
+          
+          if (action === 'completed' && !['pending', 'confirmed', 'processing'].includes(order.status)) {
+            results.failed.push({
+              orderId,
+              reason: `Order is in ${order.status} status and cannot be completed`
             });
             continue;
           }
 
-          // If changing to processing or completed, check wallet balance
-          if (action === 'processing' || action === 'completed') {
+          // If changing to processing, check wallet balance
+          if (action === 'processing') {
             const user = await User.findById(order.createdBy);
             if (!user) {
               results.failed.push({
@@ -369,9 +403,32 @@ class OrderController {
               });
               continue;
             }
+          }
+          
+          // If changing to completed, check wallet balance and deduct if not already deducted
+          if (action === 'completed') {
+            const user = await User.findById(order.createdBy);
+            if (!user) {
+              results.failed.push({
+                orderId,
+                reason: 'User not found'
+              });
+              continue;
+            }
             
-            // If status is completed, deduct from wallet
-            if (action === 'completed') {
+            const totalCost = order.items.reduce((sum, item) => sum + item.totalPrice, 0);
+            
+            // Only deduct if the order wasn't already paid for (i.e., if it's still pending)
+            if (order.status === 'pending' && user.walletBalance < totalCost) {
+              results.failed.push({
+                orderId,
+                reason: `Insufficient wallet balance. Required: GH₵${totalCost.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`
+              });
+              continue;
+            }
+            
+            // Deduct from wallet only if the order was pending (not already processing)
+            if (order.status === 'pending') {
               await walletService.debitWallet(
                 order.createdBy.toString(),
                 totalCost,
@@ -393,6 +450,50 @@ class OrderController {
           }
           
           await order.save();
+          
+          // Send notification for bulk processing
+          try {
+            const orderCreator = await User.findById(order.createdBy);
+            const processor = await User.findById(userId);
+            
+            if (orderCreator) {
+              await notificationService.createInAppNotification(
+                orderCreator._id.toString(),
+                `Order ${action === 'completed' ? 'Completed' : 'Processing Started'}`,
+                `Your order ${order.orderNumber} has been ${action === 'completed' ? 'completed' : 'started processing'} by ${processor?.fullName || processor?.email || 'Admin'}.`,
+                action === 'completed' ? 'success' : 'info',
+                {
+                  orderId: order._id.toString(),
+                  orderNumber: order.orderNumber,
+                  status: action,
+                  processedBy: processor?.fullName || processor?.email,
+                  type: `order_${action}`,
+                  navigationLink: this.getNavigationLink(orderCreator.userType, 'orders')
+                }
+              );
+            }
+
+            // Notify super admins about bulk processing
+            const superAdmins = await User.find({ userType: 'super_admin' }, 'userType');
+            for (const admin of superAdmins) {
+              await notificationService.createInAppNotification(
+                admin._id.toString(),
+                `Order ${action === 'completed' ? 'Completed' : 'Processing Started'}`,
+                `Order ${order.orderNumber} has been ${action === 'completed' ? 'completed' : 'started processing'} by ${processor?.fullName || processor?.email || 'Admin'}.`,
+                action === 'completed' ? 'success' : 'info',
+                {
+                  orderId: order._id.toString(),
+                  orderNumber: order.orderNumber,
+                  status: action,
+                  processedBy: processor?.fullName || processor?.email,
+                  type: `order_${action}`,
+                  navigationLink: this.getNavigationLink(admin.userType, 'orders')
+                }
+              );
+            }
+          } catch (error) {
+            logger.error(`Failed to send bulk processing notification: ${error.message}`);
+          }
           
           results.successful.push({
             orderId,

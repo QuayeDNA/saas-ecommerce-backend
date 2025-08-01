@@ -861,7 +861,7 @@ class OrderService {
         }
 
         // Update order status
-        order.status = 'confirmed';
+        order.status = 'pending'; // Changed from 'confirmed' to 'pending' for agents
         order.paymentStatus = 'paid';
         
         if (session) {
