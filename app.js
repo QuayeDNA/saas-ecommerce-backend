@@ -36,7 +36,13 @@ if (process.env.NODE_ENV === 'development') {
 // Security middleware
 app.use(helmet());
 app.use(cors({
-  origin: process.env.FRONTEND_URL,
+  origin: [
+    process.env.FRONTEND_URL,
+    'https://brytelink-chi.vercel.app',
+    'https://saas-ecommerce.vercel.app',
+    'http://localhost:5173',
+    'http://localhost:3000'
+  ].filter(Boolean),
   credentials: true
 }));
 
