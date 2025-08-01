@@ -277,7 +277,7 @@ describe('Order Integration Tests', () => {
     });
 
     it('should retrieve orders with filtering', async () => {
-      const result = await orderService.getOrders(mockTenantId, { orderType: 'single' });
+      const result = await orderService.getOrders(mockTenantId, { orderType: 'single' }, {}, null);
 
       expect(result.orders).toHaveLength(1);
       expect(result.orders[0].orderType).toBe('single');
@@ -285,7 +285,7 @@ describe('Order Integration Tests', () => {
     });
 
     it('should retrieve orders with pagination', async () => {
-      const result = await orderService.getOrders(mockTenantId, {}, { page: 1, limit: 1 });
+      const result = await orderService.getOrders(mockTenantId, {}, { page: 1, limit: 1 }, null);
 
       expect(result.orders).toHaveLength(1);
       expect(result.pagination.page).toBe(1);
@@ -294,7 +294,7 @@ describe('Order Integration Tests', () => {
     });
 
     it('should search orders by phone number', async () => {
-      const result = await orderService.getOrders(mockTenantId, { search: '+233551234567' });
+      const result = await orderService.getOrders(mockTenantId, { search: '+233551234567' }, {}, null);
 
       expect(result.orders.length).toBeGreaterThan(0);
       expect(result.orders[0].items[0].customerPhone).toContain('+233551234567');

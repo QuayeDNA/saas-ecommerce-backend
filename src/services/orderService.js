@@ -197,10 +197,45 @@ class OrderService {
         // The pre-save hook will calculate subtotal, total, and generate orderNumber
       });
       
-      if (session) {
-        await order.save({ session });
-      } else {
-        await order.save();
+      try {
+        if (session) {
+          await order.save({ session });
+        } else {
+          await order.save();
+        }
+      } catch (error) {
+        // If order creation fails and wallet was deducted, refund the amount
+        if (walletDeducted) {
+          try {
+            if (session) {
+              user.walletBalance += orderTotal;
+              await user.save({ session });
+              
+              // Record refund transaction
+              const refundTransaction = new WalletTransaction({
+                user: userId,
+                type: 'credit',
+                amount: orderTotal,
+                balanceAfter: user.walletBalance,
+                description: `Refund for failed order creation - ${bundle.name} for ${customerPhone}`,
+                metadata: { orderType: 'single', refund: true }
+              });
+              await refundTransaction.save({ session });
+            } else {
+              await walletService.creditWallet(
+                userId.toString(),
+                orderTotal,
+                `Refund for failed order creation - ${bundle.name} for ${customerPhone}`,
+                null,
+                { orderType: 'single', refund: true }
+              );
+            }
+            logger.info(`Refunded GH₵${orderTotal.toFixed(2)} for failed order creation`);
+          } catch (refundError) {
+            logger.error(`Failed to refund wallet for failed order creation: ${refundError.message}`);
+          }
+        }
+        throw error;
       }
 
       const statusMessage = walletDeducted 
@@ -468,7 +503,7 @@ class OrderService {
   }
 
   // Get orders with filtering
-  async getOrders(tenantId, filters = {}, pagination = {}) {
+  async getOrders(tenantId, filters = {}, pagination = {}, currentUserId = null) {
     const { page = 1, limit = 20, sortBy = 'createdAt', sortOrder = -1 } = pagination;
     const {
       status,
@@ -489,6 +524,23 @@ class OrderService {
     if (paymentStatus) query.paymentStatus = paymentStatus;
     if (createdBy) query.createdBy = createdBy;
     
+    // Restrict draft orders to only the creator (agents can only see their own drafts)
+    if (status === 'draft') {
+      // If specifically filtering for drafts, only show user's own drafts
+      if (currentUserId) {
+        query.createdBy = currentUserId;
+      } else {
+        // If no currentUserId (super admin), don't show any drafts
+        query.status = { $ne: 'draft' };
+      }
+    } else if (!status && currentUserId) {
+      // If no specific status filter and user is not super admin, exclude draft orders from other users
+      query.$or = [
+        { status: { $ne: 'draft' } },
+        { createdBy: currentUserId }
+      ];
+    }
+    
     if (startDate || endDate) {
       query.createdAt = {};
       if (startDate) query.createdAt.$gte = new Date(startDate);
@@ -496,12 +548,26 @@ class OrderService {
     }
     
     if (search) {
-      query.$or = [
+      const searchConditions = [
         { orderNumber: { $regex: search, $options: 'i' } },
         { 'customerInfo.name': { $regex: search, $options: 'i' } },
         { 'customerInfo.phone': { $regex: search, $options: 'i' } },
         { 'items.customerPhone': { $regex: search, $options: 'i' } }
       ];
+      
+      // If we already have an $or condition (from draft restrictions), combine them
+      if (query.$or) {
+        // We need to combine the existing $or with search conditions
+        // This is complex, so we'll use $and to combine both conditions
+        const existingOr = query.$or;
+        delete query.$or;
+        query.$and = [
+          { $or: existingOr },
+          { $or: searchConditions }
+        ];
+      } else {
+        query.$or = searchConditions;
+      }
     }
     
     const [orders, total] = await Promise.all([
@@ -936,8 +1002,46 @@ class OrderService {
         throw new Error('Order not found');
       }
       
-      if (!['pending', 'confirmed'].includes(order.status)) {
+      // Allow cancellation of pending, confirmed, and draft orders
+      if (!['pending', 'confirmed', 'draft'].includes(order.status)) {
         throw new Error('Order cannot be cancelled in current status');
+      }
+      
+      // For draft orders, permanently delete instead of just cancelling
+      if (order.status === 'draft') {
+        if (session) {
+          await Order.deleteOne({ _id: orderId }).session(session);
+        } else {
+          await Order.deleteOne({ _id: orderId });
+        }
+        
+        logger.info(`Draft order deleted: ${order.orderNumber}`);
+        
+        // Send notification for draft order deletion
+        try {
+          const orderCreator = await User.findById(order.createdBy);
+          const deleter = await User.findById(userId);
+          
+          if (orderCreator) {
+            await notificationService.createInAppNotification(
+              orderCreator._id.toString(),
+              'Draft Order Deleted',
+              `Your draft order ${order.orderNumber} has been deleted by ${deleter?.fullName || deleter?.email || 'Admin'}.`,
+              'info',
+              {
+                orderId: order._id.toString(),
+                orderNumber: order.orderNumber,
+                deletedBy: deleter?.fullName || deleter?.email,
+                type: 'draft_order_deleted',
+                navigationLink: this.getNavigationLink(orderCreator.userType, 'orders')
+              }
+            );
+          }
+        } catch (error) {
+          logger.error(`Failed to send draft order deletion notification: ${error.message}`);
+        }
+        
+        return { ...order.toObject(), status: 'deleted' };
       }
       
       // Update item statuses

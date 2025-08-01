@@ -238,7 +238,7 @@ const bundleService = {
       const [bundles, total] = await Promise.all([
         Bundle.find({ packageId, isActive: true })
           .populate('providerId', 'name logo code')
-          .sort({ price: 1 })
+          .sort({ dataVolume: 1 })
           .skip(skip)
           .limit(limit)
           .lean(),

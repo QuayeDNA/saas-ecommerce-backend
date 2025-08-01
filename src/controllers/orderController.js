@@ -75,7 +75,7 @@ class OrderController {
   // Get orders
   async getOrders(req, res) {
     try {
-      const { tenantId, userType } = req.user;
+      const { tenantId, userType, userId } = req.user;
       const filters = {
         status: req.query.status,
         orderType: req.query.orderType,
@@ -97,7 +97,7 @@ class OrderController {
       // For regular users, restrict to their tenant
       const effectiveTenantId = userType === 'super_admin' ? null : tenantId;
       
-      const result = await orderService.getOrders(effectiveTenantId, filters, pagination);
+      const result = await orderService.getOrders(effectiveTenantId, filters, pagination, userId);
       
       res.json({
         success: true,
@@ -368,10 +368,10 @@ class OrderController {
           }
 
           // Check if order can be processed
-          if (action === 'processing' && !['pending', 'confirmed'].includes(order.status)) {
+          if (action === 'processing' && order.status === 'completed') {
             results.failed.push({
               orderId,
-              reason: `Order is in ${order.status} status and cannot be started processing`
+              reason: `Order is already completed and cannot be set to processing`
             });
             continue;
           }
@@ -384,59 +384,7 @@ class OrderController {
             continue;
           }
 
-          // If changing to processing, check wallet balance
-          if (action === 'processing') {
-            const user = await User.findById(order.createdBy);
-            if (!user) {
-              results.failed.push({
-                orderId,
-                reason: 'User not found'
-              });
-              continue;
-            }
-            
-            const totalCost = order.items.reduce((sum, item) => sum + item.totalPrice, 0);
-            if (user.walletBalance < totalCost) {
-              results.failed.push({
-                orderId,
-                reason: `Insufficient wallet balance. Required: GH₵${totalCost.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`
-              });
-              continue;
-            }
-          }
-          
-          // If changing to completed, check wallet balance and deduct if not already deducted
-          if (action === 'completed') {
-            const user = await User.findById(order.createdBy);
-            if (!user) {
-              results.failed.push({
-                orderId,
-                reason: 'User not found'
-              });
-              continue;
-            }
-            
-            const totalCost = order.items.reduce((sum, item) => sum + item.totalPrice, 0);
-            
-            // Only deduct if the order wasn't already paid for (i.e., if it's still pending)
-            if (order.status === 'pending' && user.walletBalance < totalCost) {
-              results.failed.push({
-                orderId,
-                reason: `Insufficient wallet balance. Required: GH₵${totalCost.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`
-              });
-              continue;
-            }
-            
-            // Deduct from wallet only if the order was pending (not already processing)
-            if (order.status === 'pending') {
-              await walletService.debitWallet(
-                order.createdBy.toString(),
-                totalCost,
-                `Payment for order ${order.orderNumber || order._id}`,
-                order._id
-              );
-            }
-          }
+
 
           // Update order status
           order.status = action;
