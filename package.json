@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "seed": "node src/scripts/seed-packages.js",
-    "seed:check": "node src/scripts/check-seeding.js"
+    "seed:check": "node src/scripts/check-seeding.js",
+    "build": "npm install && npm install --only=dev && npm install --only=production"
   },
   "keywords": [],
   "author": "",
