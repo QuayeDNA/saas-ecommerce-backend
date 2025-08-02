@@ -256,7 +256,7 @@ class WalletService {
         throw new Error('Wallet already initialized');
       }
 
-      const initialAmount = 100; // 100 GH₵
+      const initialAmount = 0; // 100 GH₵
       user.walletBalance = initialAmount;
       await user.save();
 
