@@ -48,30 +48,96 @@ class OrderService {
     }
   }
 
-  // Execute operation with or without transactions
-  async executeWithTransaction(operation) {
-    const supportsTransactions = await this.supportsTransactions();
-    
-    if (supportsTransactions) {
+  // More robust transaction support check for production
+  async checkTransactionSupport() {
+    try {
+      // Try to start a session and transaction to see if it works
       const session = await mongoose.startSession();
       session.startTransaction();
+      await session.abortTransaction();
+      session.endSession();
+      logger.info('MongoDB transactions are supported');
+      return true;
+    } catch (error) {
+      logger.info('MongoDB transactions not supported:', error.message);
+      return false;
+    }
+  }
+
+  // Test transaction support and log results
+  async testTransactionSupport() {
+    logger.info('Testing MongoDB transaction support...');
+    const supportsTransactions = await this.checkTransactionSupport();
+    
+    if (supportsTransactions) {
+      logger.info('✅ MongoDB transactions are supported and working');
+    } else {
+      logger.info('⚠️ MongoDB transactions are not supported, will use fallback mode');
+    }
+    
+    return supportsTransactions;
+  }
+
+  // Execute operation with or without transactions - more robust for production
+  async executeWithTransaction(operation) {
+    // Check if we're in production and should avoid transactions
+    const isProduction = process.env.NODE_ENV === 'production';
+    const forceNoTransactions = process.env.FORCE_NO_TRANSACTIONS === 'true';
+    
+    if (isProduction && forceNoTransactions) {
+      logger.info('Forcing non-transactional execution in production');
+      return await operation(null);
+    }
+    
+    try {
+      // Try to use transactions first
+      const session = await mongoose.startSession();
       
       try {
+        session.startTransaction();
+        logger.debug('Transaction started successfully');
+        
         const result = await operation(session);
         await session.commitTransaction();
+        logger.debug('Transaction committed successfully');
         return result;
       } catch (error) {
-        // Only abort if transaction hasn't been committed
-        if (session.transaction.state === 'TRANSACTION_STARTED') {
-          await session.abortTransaction();
+        logger.error('Error during transaction execution:', error.message);
+        
+        // More robust transaction abort handling
+        try {
+          if (session.transaction && session.transaction.state === 'TRANSACTION_STARTED') {
+            await session.abortTransaction();
+            logger.debug('Transaction aborted successfully');
+          } else {
+            logger.debug('Transaction already committed or not started');
+          }
+        } catch (abortError) {
+          logger.warn('Failed to abort transaction:', abortError.message);
+          // Don't throw abort errors, just log them
         }
+        
         throw error;
       } finally {
-        session.endSession();
+        try {
+          session.endSession();
+          logger.debug('Session ended successfully');
+        } catch (endError) {
+          logger.warn('Failed to end session:', endError.message);
+          // Don't throw session end errors, just log them
+        }
       }
-    } else {
-      // Execute without transactions for standalone MongoDB
-      return await operation(null);
+    } catch (transactionError) {
+      // If transaction fails, fall back to non-transactional execution
+      logger.warn('Transaction failed, falling back to non-transactional execution:', transactionError.message);
+      logger.warn('This is normal for standalone MongoDB instances or when transactions are not supported');
+      
+      try {
+        return await operation(null);
+      } catch (fallbackError) {
+        logger.error('Fallback operation also failed:', fallbackError.message);
+        throw fallbackError;
+      }
     }
   }
 
