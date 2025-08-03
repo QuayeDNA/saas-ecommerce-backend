@@ -58,6 +58,56 @@ class WebSocketService {
     }
   }
 
+  // Send wallet update to specific user
+  sendWalletUpdateToUser(userId, walletData) {
+    const ws = this.clients.get(userId);
+    if (ws && ws.readyState === 1) { // 1 = OPEN
+      try {
+        ws.send(JSON.stringify({
+          type: 'wallet_update',
+          userId: userId,
+          balance: walletData.balance,
+          recentTransactions: walletData.recentTransactions
+        }));
+        logger.info(`Wallet update sent to user ${userId} via WebSocket`);
+      } catch (error) {
+        logger.error(`Failed to send WebSocket wallet update to user ${userId}:`, error);
+      }
+    }
+  }
+
+  // Send order update to specific user
+  sendOrderUpdateToUser(userId, orderData) {
+    const ws = this.clients.get(userId);
+    if (ws && ws.readyState === 1) { // 1 = OPEN
+      try {
+        ws.send(JSON.stringify({
+          type: 'order_update',
+          data: orderData
+        }));
+        logger.info(`Order update sent to user ${userId} via WebSocket`);
+      } catch (error) {
+        logger.error(`Failed to send WebSocket order update to user ${userId}:`, error);
+      }
+    }
+  }
+
+  // Send transaction update to specific user
+  sendTransactionUpdateToUser(userId, transactionData) {
+    const ws = this.clients.get(userId);
+    if (ws && ws.readyState === 1) { // 1 = OPEN
+      try {
+        ws.send(JSON.stringify({
+          type: 'transaction_update',
+          data: transactionData
+        }));
+        logger.info(`Transaction update sent to user ${userId} via WebSocket`);
+      } catch (error) {
+        logger.error(`Failed to send WebSocket transaction update to user ${userId}:`, error);
+      }
+    }
+  }
+
   // Send notification to multiple users
   sendNotificationToUsers(userIds, notification) {
     userIds.forEach(userId => {

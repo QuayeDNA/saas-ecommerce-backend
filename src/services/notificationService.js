@@ -365,6 +365,145 @@ class NotificationService {
       throw error;
     }
   }
+
+  /**
+   * Get all notifications for a user (both read and unread)
+   * @param {string} userId - User ID
+   * @param {object} options - Query options
+   * @returns {Promise<Array>} All notifications
+   */
+  async getAllNotifications(userId, options = {}) {
+    try {
+      const { limit = 50, skip = 0, filter = {} } = options;
+      
+      const query = { user: userId, ...filter };
+      
+      const notifications = await Notification.find(query)
+        .sort({ createdAt: -1 })
+        .limit(limit)
+        .skip(skip);
+
+      return notifications;
+    } catch (error) {
+      logger.error(`Failed to get all notifications: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Get notification count for a user
+   * @param {string} userId - User ID
+   * @param {object} filter - Filter options
+   * @returns {Promise<number>} Notification count
+   */
+  async getNotificationCount(userId, filter = {}) {
+    try {
+      const query = { user: userId, ...filter };
+      const count = await Notification.countDocuments(query);
+      return count;
+    } catch (error) {
+      logger.error(`Failed to get notification count: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Mark notification as unread
+   * @param {string} notificationId - Notification ID
+   * @param {string} userId - User ID
+   * @returns {Promise<object>} Updated notification
+   */
+  async markNotificationAsUnread(notificationId, userId) {
+    try {
+      const notification = await Notification.findOneAndUpdate(
+        { _id: notificationId, user: userId },
+        { read: false },
+        { new: true }
+      );
+
+      return notification;
+    } catch (error) {
+      logger.error(`Failed to mark notification as unread: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a notification
+   * @param {string} notificationId - Notification ID
+   * @param {string} userId - User ID
+   * @returns {Promise<boolean>} Success status
+   */
+  async deleteNotification(notificationId, userId) {
+    try {
+      const result = await Notification.findOneAndDelete({
+        _id: notificationId,
+        user: userId
+      });
+
+      return !!result;
+    } catch (error) {
+      logger.error(`Failed to delete notification: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete multiple notifications
+   * @param {Array} notificationIds - Array of notification IDs
+   * @param {string} userId - User ID
+   * @returns {Promise<object>} Delete result
+   */
+  async deleteMultipleNotifications(notificationIds, userId) {
+    try {
+      const result = await Notification.deleteMany({
+        _id: { $in: notificationIds },
+        user: userId
+      });
+
+      return result;
+    } catch (error) {
+      logger.error(`Failed to delete multiple notifications: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Clear all read notifications for a user
+   * @param {string} userId - User ID
+   * @returns {Promise<object>} Delete result
+   */
+  async clearReadNotifications(userId) {
+    try {
+      const result = await Notification.deleteMany({
+        user: userId,
+        read: true
+      });
+
+      return result;
+    } catch (error) {
+      logger.error(`Failed to clear read notifications: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Clear all notifications for a user
+   * @param {string} userId - User ID
+   * @returns {Promise<object>} Delete result
+   */
+  async clearAllNotifications(userId) {
+    try {
+      const result = await Notification.deleteMany({
+        user: userId
+      });
+
+      return result;
+    } catch (error) {
+      logger.error(`Failed to clear all notifications: ${error.message}`);
+      throw error;
+    }
+  }
 }
 
 export default new NotificationService(); 

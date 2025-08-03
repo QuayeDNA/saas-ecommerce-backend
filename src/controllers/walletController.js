@@ -2,6 +2,7 @@
 import User from '../models/User.js';
 import WalletTransaction from '../models/WalletTransaction.js';
 import walletService from '../services/walletService.js';
+import websocketService from '../services/websocketService.js';
 import logger from '../utils/logger.js';
 
 class WalletController {
@@ -206,6 +207,22 @@ class WalletController {
         { adminAction: true }
       );
       
+      // Get updated wallet info for WebSocket update
+      const user = await User.findById(userId).select('walletBalance');
+      const recentTransactions = await WalletTransaction.find({ user: userId })
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .populate([
+          { path: 'approvedBy', select: 'fullName' },
+          { path: 'relatedOrder', select: 'orderNumber' }
+        ]);
+      
+      // Emit WebSocket wallet update to the user
+      websocketService.sendWalletUpdateToUser(userId, {
+        balance: user.walletBalance || 0,
+        recentTransactions: recentTransactions
+      });
+      
       res.json({
         success: true,
         message: "Wallet topped up successfully",
@@ -235,6 +252,24 @@ class WalletController {
         !!approve,
         adminId
       );
+      
+      // If approved, send WebSocket update to the user
+      if (approve && transaction.user) {
+        const user = await User.findById(transaction.user).select('walletBalance');
+        const recentTransactions = await WalletTransaction.find({ user: transaction.user })
+          .sort({ createdAt: -1 })
+          .limit(10)
+          .populate([
+            { path: 'approvedBy', select: 'fullName' },
+            { path: 'relatedOrder', select: 'orderNumber' }
+          ]);
+        
+        // Emit WebSocket wallet update to the user
+        websocketService.sendWalletUpdateToUser(transaction.user.toString(), {
+          balance: user.walletBalance || 0,
+          recentTransactions: recentTransactions
+        });
+      }
       
       res.json({
         success: true,
@@ -337,6 +372,81 @@ class WalletController {
       res.status(500).json({
         success: false,
         message: "Failed to get wallet analytics"
+      });
+    }
+  }
+
+  /**
+   * Admin: Debit a user's wallet
+   */
+  async adminDebitWallet(req, res) {
+    try {
+      const { userId, amount, description } = req.body;
+      const adminId = req.user.userId;
+      
+      logger.debug(`[adminDebitWallet] Admin ${adminId} debiting ${amount} from user ${userId}`);
+      
+      if (!userId || !amount || amount <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid request. User ID and positive amount are required."
+        });
+      }
+
+      // Check if user exists
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found"
+        });
+      }
+
+      // Check if user has sufficient balance
+      if (user.walletBalance < amount) {
+        return res.status(400).json({
+          success: false,
+          message: `Insufficient wallet balance. Required: GH₵${amount}, Available: GH₵${user.walletBalance}`
+        });
+      }
+
+      // Perform debit operation
+      const transaction = await walletService.debitWallet(
+        userId, 
+        amount, 
+        description || `Wallet debit by admin`, 
+        null, 
+        { debitedBy: adminId }
+      );
+
+      // Get updated user info
+      const updatedUser = await User.findById(userId).select('walletBalance fullName email');
+      
+      // Send WebSocket notification to the user
+      try {
+        websocketService.sendToUser(userId, {
+          type: 'wallet_update',
+          userId: userId,
+          balance: updatedUser.walletBalance,
+          message: `Your wallet has been debited by GH₵${amount}. New balance: GH₵${updatedUser.walletBalance}`
+        });
+      } catch (wsError) {
+        logger.warn(`[adminDebitWallet] Failed to send WebSocket notification: ${wsError.message}`);
+      }
+
+      logger.info(`[adminDebitWallet] Successfully debited ${amount} from user ${userId}. New balance: ${updatedUser.walletBalance}`);
+      
+      res.json({
+        success: true,
+        message: `Successfully debited GH₵${amount} from ${updatedUser.fullName}'s wallet`,
+        transaction: transaction,
+        user: updatedUser
+      });
+    } catch (error) {
+      logger.error(`[adminDebitWallet] Error: ${error.message}`);
+      res.status(500).json({
+        success: false,
+        message: error.message || "Failed to debit wallet"
       });
     }
   }

@@ -15,9 +15,10 @@ router.get('/transactions', authenticate, validate(walletValidation.transactionH
 router.post('/request-top-up', authenticate, authorize('agent'), validate(walletValidation.topUpRequest), walletController.requestWalletTopUp);
 
 // Routes for admins/super_admins
-router.post('/top-up', authenticate, authorize('agent', 'super_admin'), validate(walletValidation.adminTopUp), walletController.topUpWallet);
-router.get('/pending-requests', authenticate, authorize('agent', 'super_admin'), walletController.getPendingTopUpRequests);
-router.post('/requests/:transactionId/process', authenticate, authorize('agent', 'super_admin'), validate(walletValidation.processTopUpRequest), walletController.processTopUpRequest);
-router.get('/analytics', authenticate, authorize('agent', 'super_admin'), walletController.getWalletAnalytics);
+router.post('/top-up', authenticate, authorize('super_admin'), validate(walletValidation.adminTopUp), walletController.topUpWallet);
+router.post('/debit', authenticate, authorize('super_admin'), validate(walletValidation.adminTopUp), walletController.adminDebitWallet);
+router.get('/pending-requests', authenticate, authorize('super_admin'), walletController.getPendingTopUpRequests);
+router.post('/requests/:transactionId/process', authenticate, authorize('super_admin'), validate(walletValidation.processTopUpRequest), walletController.processTopUpRequest);
+router.get('/analytics', authenticate, authorize('super_admin'), walletController.getWalletAnalytics);
 
 export default router;
