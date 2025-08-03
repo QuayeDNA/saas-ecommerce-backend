@@ -1131,6 +1131,41 @@ class OrderService {
         };
       }
       
+      // Handle wallet refund for paid orders
+      let refundAmount = 0;
+      let refundTransaction = null;
+      
+      if (order.paymentStatus === 'paid' && order.paymentMethod === 'wallet' && order.total > 0) {
+        try {
+          // Get the order creator
+          const orderCreator = await User.findById(order.createdBy);
+          if (!orderCreator) {
+            throw new Error('Order creator not found');
+          }
+          
+          refundAmount = order.total;
+          
+          // Refund the amount to the user's wallet
+          refundTransaction = await walletService.creditWallet(
+            order.createdBy.toString(),
+            refundAmount,
+            `Refund for cancelled order ${order.orderNumber}`,
+            userId, // approvedBy
+            { 
+              orderId: order._id.toString(),
+              orderNumber: order.orderNumber,
+              refundReason: reason || 'Order cancelled',
+              cancelledBy: userId
+            }
+          );
+          
+          logger.info(`Wallet refund processed for order ${order.orderNumber}: ${refundAmount} GH₵ refunded to user ${order.createdBy}`);
+        } catch (refundError) {
+          logger.error(`Failed to process wallet refund for order ${order.orderNumber}: ${refundError.message}`);
+          throw new Error(`Order cancellation failed: Unable to process refund - ${refundError.message}`);
+        }
+      }
+      
       // Update item statuses
       for (const item of order.items) {
         if (item.processingStatus === 'pending') {
@@ -1139,6 +1174,7 @@ class OrderService {
       }
       
       order.status = 'cancelled';
+      order.paymentStatus = refundAmount > 0 ? 'refunded' : order.paymentStatus;
       order.notes = reason || 'Order cancelled';
       order.processedBy = userId;
       
@@ -1148,19 +1184,21 @@ class OrderService {
         await order.save();
       }
       
-      logger.info(`Order cancelled: ${order.orderNumber}`);
+      logger.info(`Order cancelled: ${order.orderNumber}${refundAmount > 0 ? ` with ${refundAmount} GH₵ refund` : ''}`);
 
       return {
         order: order.toObject(),
         orderCreator: order.createdBy,
         canceller: userId,
-        isDraft: false
+        isDraft: false,
+        refundAmount,
+        refundTransaction
       };
     });
 
     // Send notifications outside the transaction to avoid commit/abort issues
     try {
-      const { order, orderCreator, canceller, isDraft } = result;
+      const { order, orderCreator, canceller, isDraft, refundAmount, refundTransaction } = result;
       
       if (isDraft) {
         // Send notification for draft order deletion
@@ -1187,17 +1225,25 @@ class OrderService {
         const orderCreatorUser = await User.findById(orderCreator);
         const cancellerUser = await User.findById(canceller);
         
+        let notificationMessage = `Your order ${order.orderNumber} has been cancelled by ${cancellerUser?.fullName || cancellerUser?.email || 'Admin'}. Reason: ${reason || 'No reason provided'}`;
+        
+        // Add refund information to the notification
+        if (refundAmount > 0) {
+          notificationMessage += `\n\n💰 Refund: GH₵${refundAmount} has been credited back to your wallet.`;
+        }
+        
         if (orderCreatorUser) {
           await notificationService.createInAppNotification(
             orderCreatorUser._id.toString(),
             'Order Cancelled',
-            `Your order ${order.orderNumber} has been cancelled by ${cancellerUser?.fullName || cancellerUser?.email || 'Admin'}. Reason: ${reason || 'No reason provided'}`,
+            notificationMessage,
             'error',
             {
               orderId: order._id.toString(),
               orderNumber: order.orderNumber,
               cancelledBy: cancellerUser?.fullName || cancellerUser?.email,
               reason: reason || 'No reason provided',
+              refundAmount,
               type: 'order_cancelled',
               navigationLink: this.getNavigationLink(orderCreatorUser.userType, 'orders')
             }
@@ -1207,16 +1253,23 @@ class OrderService {
         // Notify super admins about order cancellation
         const superAdmins = await User.find({ userType: 'super_admin' }, 'userType');
         for (const admin of superAdmins) {
+          let adminMessage = `Order ${order.orderNumber} has been cancelled by ${cancellerUser?.fullName || cancellerUser?.email || 'Admin'}. Reason: ${reason || 'No reason provided'}`;
+          
+          if (refundAmount > 0) {
+            adminMessage += `\n\n💰 Refund: GH₵${refundAmount} has been refunded to the user's wallet.`;
+          }
+          
           await notificationService.createInAppNotification(
             admin._id.toString(),
             'Order Cancelled',
-            `Order ${order.orderNumber} has been cancelled by ${cancellerUser?.fullName || cancellerUser?.email || 'Admin'}. Reason: ${reason || 'No reason provided'}`,
+            adminMessage,
             'warning',
             {
               orderId: order._id.toString(),
               orderNumber: order.orderNumber,
               cancelledBy: cancellerUser?.fullName || cancellerUser?.email,
               reason: reason || 'No reason provided',
+              refundAmount,
               type: 'order_cancelled',
               navigationLink: this.getNavigationLink(admin.userType, 'orders')
             }

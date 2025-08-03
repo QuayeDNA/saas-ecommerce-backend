@@ -217,10 +217,13 @@ class WalletController {
           { path: 'relatedOrder', select: 'orderNumber' }
         ]);
       
-      // Emit WebSocket wallet update to the user
-      websocketService.sendWalletUpdateToUser(userId, {
+      // Emit WebSocket wallet update to the user with message
+      websocketService.sendToUser(userId, {
+        type: 'wallet_update',
+        userId: userId,
         balance: user.walletBalance || 0,
-        recentTransactions: recentTransactions
+        recentTransactions: recentTransactions,
+        message: `Your wallet has been credited with GH₵${amount}. New balance: GH₵${user.walletBalance || 0}`
       });
       
       res.json({
@@ -264,10 +267,13 @@ class WalletController {
             { path: 'relatedOrder', select: 'orderNumber' }
           ]);
         
-        // Emit WebSocket wallet update to the user
-        websocketService.sendWalletUpdateToUser(transaction.user.toString(), {
+        // Emit WebSocket wallet update to the user with message
+        websocketService.sendToUser(transaction.user.toString(), {
+          type: 'wallet_update',
+          userId: transaction.user.toString(),
           balance: user.walletBalance || 0,
-          recentTransactions: recentTransactions
+          recentTransactions: recentTransactions,
+          message: `Your top-up request for GH₵${transaction.amount} has been approved. New balance: GH₵${user.walletBalance || 0}`
         });
       }
       

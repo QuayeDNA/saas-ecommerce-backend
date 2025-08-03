@@ -3,6 +3,7 @@ import User from '../models/User.js';
 import WalletTransaction from '../models/WalletTransaction.js';
 import logger from '../utils/logger.js';
 import notificationService from './notificationService.js';
+import websocketService from './websocketService.js';
 
 class WalletService {
   /**
@@ -44,6 +45,27 @@ class WalletService {
       await transaction.save();
       logger.info(`Wallet credited: ${amount} GH₵ for user ${userId}. New balance: ${user.walletBalance} GH₵`);
       
+      // Send WebSocket update
+      try {
+        const recentTransactions = await WalletTransaction.find({ user: userId })
+          .sort({ createdAt: -1 })
+          .limit(10)
+          .populate([
+            { path: 'approvedBy', select: 'fullName' },
+            { path: 'relatedOrder', select: 'orderNumber' }
+          ]);
+        
+        websocketService.sendToUser(userId, {
+          type: 'wallet_update',
+          userId: userId,
+          balance: user.walletBalance,
+          recentTransactions: recentTransactions,
+          message: `Your wallet has been credited with GH₵${amount}. New balance: GH₵${user.walletBalance}`
+        });
+      } catch (wsError) {
+        logger.warn(`Failed to send WebSocket update for credit: ${wsError.message}`);
+      }
+      
       return transaction;
     } catch (error) {
       logger.error(`Wallet credit error: ${error.message}`);
@@ -56,7 +78,7 @@ class WalletService {
    * @param {string} userId - The user ID
    * @param {number} amount - Amount to debit
    * @param {string} description - Transaction description
-   * @param {string|null} relatedOrder - Related order ID if applicable
+   * @param {string|null} relatedOrder - Related order ID
    * @param {object} metadata - Additional transaction metadata
    * @returns {Promise<object>} Transaction object
    */
@@ -93,6 +115,27 @@ class WalletService {
 
       await transaction.save();
       logger.info(`Wallet debited: ${amount} GH₵ for user ${userId}. New balance: ${user.walletBalance} GH₵`);
+      
+      // Send WebSocket update
+      try {
+        const recentTransactions = await WalletTransaction.find({ user: userId })
+          .sort({ createdAt: -1 })
+          .limit(10)
+          .populate([
+            { path: 'approvedBy', select: 'fullName' },
+            { path: 'relatedOrder', select: 'orderNumber' }
+          ]);
+        
+        websocketService.sendToUser(userId, {
+          type: 'wallet_update',
+          userId: userId,
+          balance: user.walletBalance,
+          recentTransactions: recentTransactions,
+          message: `Your wallet has been debited by GH₵${amount}. New balance: GH₵${user.walletBalance}`
+        });
+      } catch (wsError) {
+        logger.warn(`Failed to send WebSocket update for debit: ${wsError.message}`);
+      }
       
       return transaction;
     } catch (error) {
@@ -211,6 +254,30 @@ class WalletService {
       }
 
       await transaction.save();
+      
+      // Send WebSocket update if approved
+      if (approve) {
+        try {
+          const user = await User.findById(transaction.user);
+          const recentTransactions = await WalletTransaction.find({ user: transaction.user })
+            .sort({ createdAt: -1 })
+            .limit(10)
+            .populate([
+              { path: 'approvedBy', select: 'fullName' },
+              { path: 'relatedOrder', select: 'orderNumber' }
+            ]);
+          
+          websocketService.sendToUser(transaction.user.toString(), {
+            type: 'wallet_update',
+            userId: transaction.user.toString(),
+            balance: user.walletBalance,
+            recentTransactions: recentTransactions,
+            message: `Your top-up request for GH₵${transaction.amount} has been approved. New balance: GH₵${user.walletBalance}`
+          });
+        } catch (wsError) {
+          logger.warn(`Failed to send WebSocket update for top-up approval: ${wsError.message}`);
+        }
+      }
       
       // Send notification based on approval status
       if (approve) {

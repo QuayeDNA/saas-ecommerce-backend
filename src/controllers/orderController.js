@@ -209,12 +209,20 @@ class OrderController {
       // For regular users, restrict to their tenant
       const effectiveTenantId = userType === 'super_admin' ? null : tenantId;
       
-      const order = await orderService.cancelOrder(id, effectiveTenantId, userId, reason);
+      const result = await orderService.cancelOrder(id, effectiveTenantId, userId, reason);
+      
+      // Prepare response message based on whether refund was processed
+      let message = 'Order cancelled successfully';
+      if (result.refundAmount && result.refundAmount > 0) {
+        message = `Order cancelled successfully. GH₵${result.refundAmount} has been refunded to the user's wallet.`;
+      }
       
       res.json({
         success: true,
-        message: 'Order cancelled successfully',
-        order
+        message,
+        order: result.order,
+        refundAmount: result.refundAmount || 0,
+        refundTransaction: result.refundTransaction
       });
     } catch (error) {
       logger.error(`Cancel order failed: ${error.message}`);
