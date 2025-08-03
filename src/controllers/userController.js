@@ -512,7 +512,7 @@ class UserController {
       // Revenue Statistics
       const totalRevenue = await Order.aggregate([
         { $match: { status: 'completed' } },
-        { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+        { $group: { _id: null, total: { $sum: '$total' } } }
       ]);
       const revenueThisWeek = await Order.aggregate([
         { 
@@ -521,7 +521,7 @@ class UserController {
             createdAt: { $gte: last7Days }
           }
         },
-        { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+        { $group: { _id: null, total: { $sum: '$total' } } }
       ]);
       const revenueThisMonth = await Order.aggregate([
         { 
@@ -530,7 +530,7 @@ class UserController {
             createdAt: { $gte: last30Days }
           }
         },
-        { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+        { $group: { _id: null, total: { $sum: '$total' } } }
       ]);
 
       // Provider Statistics
@@ -556,7 +556,7 @@ class UserController {
         .limit(10);
 
       const recentOrders = await Order.find()
-        .select('orderNumber totalAmount status createdAt')
+        .select('orderNumber total status createdAt')
         .sort({ createdAt: -1 })
         .limit(10);
 
@@ -721,7 +721,7 @@ class UserController {
               createdAt: { $gte: startDate, $lt: endDate }
             }
           },
-          { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+          { $group: { _id: null, total: { $sum: '$total' } } }
         ]);
         chartData.revenue.push(revenue[0]?.total || 0);
       }
@@ -897,7 +897,7 @@ class UserController {
         message: "AFA registration order created successfully",
         order: {
           orderNumber: order.orderNumber,
-          totalAmount: order.totalAmount,
+          totalAmount: order.total,
           status: order.status,
           customerName: order.customerName,
           customerPhone: order.customerPhone

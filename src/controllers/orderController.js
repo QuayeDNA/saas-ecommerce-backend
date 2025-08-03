@@ -354,12 +354,17 @@ class OrderController {
           startDate = new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
       }
 
+      // Convert string IDs to ObjectIds for MongoDB query
+      const mongoose = (await import('mongoose')).default;
+      const userIdObjectId = new mongoose.Types.ObjectId(userId);
+      const tenantIdObjectId = new mongoose.Types.ObjectId(tenantId);
+
       // Get order statistics for the agent
       const orderStats = await Order.aggregate([
         {
           $match: {
-            createdBy: userId,
-            tenantId: tenantId,
+            createdBy: userIdObjectId,
+            tenantId: tenantIdObjectId,
             createdAt: { $gte: startDate, $lte: endDate }
           }
         },
@@ -370,7 +375,7 @@ class OrderController {
             completedOrders: {
               $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] }
             },
-            totalRevenue: { $sum: '$totalAmount' }
+            totalRevenue: { $sum: '$total' }
           }
         }
       ]);
