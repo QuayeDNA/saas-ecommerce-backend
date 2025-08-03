@@ -61,12 +61,7 @@ class AuthController {
         });
       }
 
-      // Generate verification token (10 minute expiry)
-      const verificationToken = jwt.sign({ email }, process.env.JWTSECRET, {
-        expiresIn: "10m", // 10 minutes instead of 24 hours
-      });
-
-      // Create agent (they are their own tenant)
+      // Create agent (they are their own tenant) - Auto-verified
       const agent = new User({
         fullName,
         email,
@@ -77,7 +72,7 @@ class AuthController {
         businessCategory,
         subscriptionPlan,
         subscriptionStatus: "active",
-        verificationToken,
+        isVerified: true, // Auto-verify
         status: "pending", // Set agent status to pending
       });
 
@@ -86,20 +81,13 @@ class AuthController {
       // Generate agent code for customer registration
       const agentCode = this.generateAgentCode(businessName);
 
-      // Send verification email
-      await emailService.sendAgentVerificationEmail(
-        email,
-        verificationToken,
-        agentCode
-      );
-
       logger.info(
         `Agent registered successfully: ${email} - Business: ${businessName}`
       );
       res.status(201).json({
         success: true,
         message:
-          "Agent account created successfully. Please check your email to verify your account.",
+          "Agent account created successfully. Your account is pending approval by a super admin.",
         agentCode: agentCode,
       });
     } catch (error) {
@@ -149,12 +137,7 @@ class AuthController {
         tenantId = agent._id;
       }
 
-      // Generate verification token (10 minute expiry)
-      const verificationToken = jwt.sign({ email }, process.env.JWTSECRET, {
-        expiresIn: "10m", // 10 minutes instead of 24 hours
-      });
-
-      // Create customer
+      // Create customer - Auto-verified
       const customer = new User({
         fullName,
         email,
@@ -162,13 +145,11 @@ class AuthController {
         password,
         userType: "customer",
         tenantId,
-        verificationToken,
+        isVerified: true, // Auto-verify
+        status: "active", // Customers can be active immediately
       });
 
       await customer.save();
-
-      // Send verification email
-      await emailService.sendVerificationEmail(email, verificationToken);
 
       logger.info(
         `Customer registered successfully: ${email} - Agent: ${
@@ -178,7 +159,7 @@ class AuthController {
       res.status(201).json({
         success: true,
         message:
-          "Customer account created successfully. Please check your email to verify your account.",
+          "Customer account created successfully. You can now log in.",
       });
     } catch (error) {
       logger.error(`Customer registration error: ${error.message}`);
@@ -214,14 +195,8 @@ class AuthController {
         });
       }
 
-      // Check if account is verified
-      if (!user.isVerified) {
-        logger.warn(`Login attempt with unverified account: ${email}`);
-        return res.status(401).json({
-          success: false,
-          message: "Please verify your account before logging in",
-        });
-      }
+      // Email verification is no longer required - all users are auto-verified
+      // The check is removed to allow immediate login after registration
 
       // Block login if user is not active
       if (user.status !== "active" || user.isActive === false) {
