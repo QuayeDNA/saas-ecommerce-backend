@@ -761,26 +761,26 @@ class UserController {
     }
   }
 
-  // AFA Registration endpoint
+  // AFA Registration endpoint - Now creates orders
   async afaRegistration(req, res) {
     try {
       const { fullName, phone, userType } = req.body;
       const userId = req.user.userId;
 
-      // Check if user already has AFA registration
-      const user = await User.findById(userId);
-      if (!user) {
-        return res.status(404).json({
+      // Validate required fields
+      if (!fullName || !phone || !userType) {
+        return res.status(400).json({
           success: false,
-          message: "User not found"
+          message: "Full name, phone number, and user type are required"
         });
       }
 
-      // Check if user already registered for AFA
-      if (user.afaRegistration && user.afaRegistration.status === 'completed') {
+      // Validate phone number (same as order validation)
+      const phoneRegex = /^0\d{9}$/;
+      if (!phoneRegex.test(phone)) {
         return res.status(400).json({
           success: false,
-          message: "AFA registration already completed"
+          message: "Phone number must be 10 digits starting with 0"
         });
       }
 
@@ -792,39 +792,116 @@ class UserController {
 
       const fee = registrationFees[userType] || registrationFees.subscriber;
 
+      // Create AFA order directly in the database
+      const Order = (await import('../models/Order.js')).default;
+      const User = (await import('../models/User.js')).default;
+      const WalletTransaction = (await import('../models/WalletTransaction.js')).default;
+
       // Check wallet balance
-      if (user.walletBalance < fee) {
-        return res.status(400).json({
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({
           success: false,
-          message: `Insufficient wallet balance. Required: GH¢${fee}, Available: GH¢${user.walletBalance}`
+          message: "User not found"
         });
       }
 
-      // Deduct fee from wallet
-      user.walletBalance -= fee;
+      // Determine order status based on wallet balance
+      let orderStatus = 'pending';
+      let walletDeducted = false;
 
-      // Generate AFA registration ID
-      const afaId = `AFA${Date.now()}${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
+      if (user.walletBalance >= fee) {
+        // Sufficient balance - deduct wallet
+        user.walletBalance -= fee;
+        await user.save();
+        
+        // Record wallet transaction
+        const transaction = new WalletTransaction({
+          user: userId,
+          type: 'debit',
+          amount: fee,
+          balanceAfter: user.walletBalance,
+          description: `AFA Registration - ${userType} for ${fullName}`,
+          metadata: { orderType: 'afa_registration' }
+        });
+        await transaction.save();
+        
+        walletDeducted = true;
+      } else {
+        // Insufficient balance - create as draft
+        orderStatus = 'draft';
+      }
 
-      // Update user with AFA registration details
-      user.afaRegistration = {
-        afaId,
-        registrationType: userType,
-        fullName,
-        phone,
-        registrationFee: fee,
-        status: 'completed',
-        registrationDate: new Date()
-      };
+      // Create the AFA order
+      const orderNumber = `AFA${Date.now()}${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
+      
+      // Create a dummy package for AFA orders
+      const Package = (await import('../models/Package.js')).default;
+      let afaPackage = await Package.findOne({ name: 'AFA Registration Package' });
+      
+      if (!afaPackage) {
+        afaPackage = new Package({
+          name: 'AFA Registration Package',
+          description: 'AFA Registration Services',
+          isActive: true,
+          isDeleted: false,
+          createdBy: userId,
+          tenantId: userId,
+          category: 'custom',
+          provider: 'AFA'
+        });
+        await afaPackage.save();
+      }
 
-      await user.save();
+      const order = new Order({
+        orderNumber,
+        orderType: 'single',
+        customerInfo: {
+          name: fullName,
+          phone: phone
+        },
+        items: [{
+          packageGroup: afaPackage._id,
+          packageItem: afaPackage._id, // Use package as item
+          packageDetails: {
+            name: `AFA Registration - ${userType}`,
+            code: 'AFA',
+            price: fee,
+            provider: 'AFA'
+          },
+          quantity: 1,
+          unitPrice: fee,
+          totalPrice: fee,
+          customerPhone: phone,
+          bundleSize: {
+            value: 0,
+            unit: 'GB'
+          }
+        }],
+        subtotal: fee,
+        total: fee,
+        status: orderStatus,
+        paymentStatus: walletDeducted ? 'paid' : 'pending',
+        paymentMethod: 'wallet',
+        tenantId: userId,
+        createdBy: userId,
+        notes: `AFA Registration for ${userType} - ${fullName} (${phone})`
+      });
 
-      logger.info(`AFA registration completed for user: ${user.email} - AFA ID: ${afaId}`);
+      await order.save();
+
+      logger.info(`AFA registration order created: ${order.orderNumber} for user: ${userId}`);
       
       res.json({
         success: true,
-        message: "AFA registration completed successfully",
-        afaRegistration: user.afaRegistration
+        message: "AFA registration order created successfully",
+        order: {
+          orderNumber: order.orderNumber,
+          totalAmount: order.totalAmount,
+          status: order.status,
+          customerName: order.customerName,
+          customerPhone: order.customerPhone
+        }
       });
     } catch (error) {
       logger.error(`AFA registration error: ${error.message}`);
@@ -835,28 +912,38 @@ class UserController {
     }
   }
 
-  // Get AFA registration status
+  // Get AFA orders for the user
   async getAfaRegistration(req, res) {
     try {
       const userId = req.user.userId;
 
-      const user = await User.findById(userId).select('afaRegistration');
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: "User not found"
-        });
-      }
+      // Import Order model
+      const Order = (await import('../models/Order.js')).default;
+
+      // Get AFA orders for this user
+      const afaOrders = await Order.find({
+        tenantId: userId,
+        'items.packageDetails.provider': 'AFA'
+      })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
+
+      const total = await Order.countDocuments({
+        tenantId: userId,
+        'items.packageDetails.provider': 'AFA'
+      });
 
       res.json({
         success: true,
-        afaRegistration: user.afaRegistration || null
+        afaOrders: afaOrders || [],
+        total: total || 0
       });
     } catch (error) {
-      logger.error(`Get AFA registration error: ${error.message}`);
+      logger.error(`Get AFA orders error: ${error.message}`);
       res.status(500).json({
         success: false,
-        message: "Failed to get AFA registration status"
+        message: "Failed to get AFA orders"
       });
     }
   }
