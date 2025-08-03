@@ -35,6 +35,14 @@ router.get(
   orderController.getAnalytics
 );
 
+// Agent analytics for dashboard
+router.get(
+  '/analytics/agent',
+  authenticate,
+  authorize('agent'),
+  orderController.getAgentAnalytics
+);
+
 // Order processing - RESTRICTED TO SUPER ADMIN ONLY
 router.post(
   '/:orderId/items/:itemId/process',

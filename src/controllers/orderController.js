@@ -326,6 +326,85 @@ class OrderController {
     }
   }
 
+  // Get simple agent analytics for dashboard
+  async getAgentAnalytics(req, res) {
+    try {
+      const { tenantId, userId } = req.user;
+      const { timeframe = '30d' } = req.query;
+      
+      // Import required models
+      const Order = (await import('../models/Order.js')).default;
+      const WalletTransaction = (await import('../models/WalletTransaction.js')).default;
+      
+      // Calculate date range
+      const endDate = new Date();
+      let startDate;
+      
+      switch (timeframe) {
+        case '7d':
+          startDate = new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        case '30d':
+          startDate = new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+          break;
+        case '90d':
+          startDate = new Date(endDate.getTime() - 90 * 24 * 60 * 60 * 1000);
+          break;
+        default:
+          startDate = new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+      }
+
+      // Get order statistics for the agent
+      const orderStats = await Order.aggregate([
+        {
+          $match: {
+            createdBy: userId,
+            tenantId: tenantId,
+            createdAt: { $gte: startDate, $lte: endDate }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            totalOrders: { $sum: 1 },
+            completedOrders: {
+              $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] }
+            },
+            totalRevenue: { $sum: '$totalAmount' }
+          }
+        }
+      ]);
+
+      // Get wallet balance
+      const user = await User.findById(userId).select('walletBalance');
+      const walletBalance = user?.walletBalance || 0;
+
+      // Calculate success rate
+      const stats = orderStats[0] || { totalOrders: 0, completedOrders: 0, totalRevenue: 0 };
+      const successRate = stats.totalOrders > 0 ? Math.round((stats.completedOrders / stats.totalOrders) * 100) : 0;
+
+      const analytics = {
+        totalOrders: stats.totalOrders,
+        completedOrders: stats.completedOrders,
+        totalRevenue: stats.totalRevenue,
+        successRate: successRate,
+        walletBalance: walletBalance,
+        timeframe: timeframe
+      };
+      
+      res.json({
+        success: true,
+        analytics
+      });
+    } catch (error) {
+      logger.error(`Get agent analytics failed: ${error.message}`);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch agent analytics'
+      });
+    }
+  }
+
   // Bulk process multiple orders
   async bulkProcessOrders(req, res) {
     try {
