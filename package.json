@@ -33,6 +33,7 @@
     "node-cron": "^4.1.1",
     "node-fetch": "^3.3.2",
     "nodemailer": "^7.0.3",
+    "saas-ecommerce-backend": "file:",
     "winston": "^3.17.0",
     "ws": "^8.18.3"
   }
