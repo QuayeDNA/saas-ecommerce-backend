@@ -334,6 +334,48 @@ class OrderController {
     }
   }
 
+  // Get monthly revenue for user (agent or super admin)
+  async getMonthlyRevenue(req, res) {
+    try {
+      const userId = req.user.userId;
+      const userType = req.user.userType;
+      
+      const monthlyData = await orderService.getMonthlyRevenue(userId, userType);
+      
+      res.json({
+        success: true,
+        data: monthlyData
+      });
+    } catch (error) {
+      logger.error(`Get monthly revenue failed: ${error.message}`);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch monthly revenue'
+      });
+    }
+  }
+
+  // Get daily spending for user (today's completed orders)
+  async getDailySpending(req, res) {
+    try {
+      const userId = req.user.userId;
+      const userType = req.user.userType;
+      
+      const dailyData = await orderService.getDailySpending(userId, userType);
+      
+      res.json({
+        success: true,
+        data: dailyData
+      });
+    } catch (error) {
+      logger.error(`Get daily spending failed: ${error.message}`);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch daily spending'
+      });
+    }
+  }
+
   // Get simple agent analytics for dashboard
   async getAgentAnalytics(req, res) {
     try {

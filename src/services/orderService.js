@@ -878,6 +878,76 @@ class OrderService {
     logger.info(`Bundle processed successfully for ${item.customerPhone}`);
   }
 
+  // Get monthly revenue for user
+  async getMonthlyRevenue(userId, userType = 'agent') {
+    const currentDate = new Date();
+    const startOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+    const endOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    let matchCondition = {
+      status: 'completed',
+      createdAt: { $gte: startOfMonth, $lte: endOfMonth }
+    };
+
+    // For agents, filter by orders they created (createdBy field)
+    if (userType === 'agent') {
+      matchCondition.createdBy = new mongoose.Types.ObjectId(userId);
+    }
+    // For super admin, get all orders (no additional filter needed)
+
+    const result = await Order.aggregate([
+      { $match: matchCondition },
+      {
+        $group: {
+          _id: null,
+          monthlyRevenue: { $sum: '$total' },
+          orderCount: { $sum: 1 }
+        }
+      }
+    ]);
+
+    return {
+      monthlyRevenue: result[0]?.monthlyRevenue || 0,
+      orderCount: result[0]?.orderCount || 0,
+      month: currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })
+    };
+  }
+
+  // Get daily spending for user (today's completed orders)
+  async getDailySpending(userId, userType = 'agent') {
+    const currentDate = new Date();
+    const startOfDay = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate());
+    const endOfDay = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate(), 23, 59, 59, 999);
+
+    let matchCondition = {
+      status: 'completed',
+      createdAt: { $gte: startOfDay, $lte: endOfDay }
+    };
+
+    // For agents, filter by orders they created (createdBy field)
+    if (userType === 'agent') {
+      matchCondition.createdBy = new mongoose.Types.ObjectId(userId);
+    }
+    // For super admin, get all orders (no additional filter needed)
+
+    const result = await Order.aggregate([
+      { $match: matchCondition },
+      {
+        $group: {
+          _id: null,
+          dailySpending: { $sum: '$total' },
+          orderCount: { $sum: 1 }
+        }
+      }
+    ]);
+
+    return {
+      dailySpending: result[0]?.dailySpending || 0,
+      orderCount: result[0]?.orderCount || 0,
+      date: currentDate.toISOString().split('T')[0]
+    };
+  }
+
   // Get order analytics
   async getOrderAnalytics(tenantId, timeframe = '30d') {
     // Convert timeframe to date

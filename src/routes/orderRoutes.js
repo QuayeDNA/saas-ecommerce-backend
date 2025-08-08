@@ -43,6 +43,22 @@ router.get(
   orderController.getAgentAnalytics
 );
 
+// Monthly revenue for user (agent or super admin)
+router.get(
+  '/analytics/monthly-revenue',
+  authenticate,
+  authorize('agent', 'super_admin'),
+  orderController.getMonthlyRevenue
+);
+
+// Daily spending for user (today's completed orders)
+router.get(
+  '/analytics/daily-spending',
+  authenticate,
+  authorize('agent', 'super_admin'),
+  orderController.getDailySpending
+);
+
 // Order processing - RESTRICTED TO SUPER ADMIN ONLY
 router.post(
   '/:orderId/items/:itemId/process',
