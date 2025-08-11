@@ -5,6 +5,7 @@ import User from '../models/User.js';
 import WalletTransaction from '../models/WalletTransaction.js';
 import walletService from './walletService.js';
 import notificationService from './notificationService.js';
+import duplicateOrderPreventionService from './duplicateOrderPreventionService.js';
 import mongoose from 'mongoose';
 import logger from '../utils/logger.js';
 import { parseBulkOrderRow } from '../utils/parseBulkOrderRow.js';
@@ -143,6 +144,22 @@ class OrderService {
 
   // Create single order
   async createSingleOrder(orderData, tenantId, userId) {
+    // Check for duplicate orders first (outside transaction for better performance)
+    const duplicateCheck = await duplicateOrderPreventionService.checkForDuplicates(
+      orderData, 
+      userId, 
+      tenantId, 
+      { forceOverride: orderData.forceOverride }
+    );
+
+    if (duplicateCheck.isDuplicate && !duplicateCheck.canProceed) {
+      // Throw error with duplicate information for frontend handling
+      const error = new Error(duplicateCheck.message);
+      error.code = 'DUPLICATE_ORDER_DETECTED';
+      error.duplicateInfo = duplicateCheck;
+      throw error;
+    }
+
     // Execute the main transaction
     const result = await this.executeWithTransaction(async (session) => {
       const { packageGroupId, packageItemId, customerPhone, bundleSize, quantity = 1 } = orderData;
@@ -369,7 +386,24 @@ class OrderService {
   }
 
   // Create bulk order (new logic)
-  async createBulkOrders({ items, tenantId, userId, packageId }) {
+  async createBulkOrders({ items, tenantId, userId, packageId, forceOverride = false }) {
+    // Check for duplicate orders first (outside transaction for better performance)
+    const bulkOrderData = { items, packageId, forceOverride };
+    const duplicateCheck = await duplicateOrderPreventionService.checkForDuplicates(
+      bulkOrderData, 
+      userId, 
+      tenantId, 
+      { forceOverride }
+    );
+
+    if (duplicateCheck.isDuplicate && !duplicateCheck.canProceed) {
+      // Throw error with duplicate information for frontend handling
+      const error = new Error(duplicateCheck.message);
+      error.code = 'DUPLICATE_ORDER_DETECTED';
+      error.duplicateInfo = duplicateCheck;
+      throw error;
+    }
+
     // Execute the main transaction
     const result = await this.executeWithTransaction(async (session) => {
       const createdOrders = [];

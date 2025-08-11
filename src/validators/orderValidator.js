@@ -10,7 +10,8 @@ const orderValidation = {
       value: Joi.number().min(0.1),
       unit: Joi.string().valid('MB', 'GB')
     }).optional(),
-    quantity: Joi.number().integer().min(1).default(1)
+    quantity: Joi.number().integer().min(1).default(1),
+    forceOverride: Joi.boolean().optional().default(false)
   }),
 
   createBulk: Joi.object({
@@ -19,7 +20,8 @@ const orderValidation = {
     ).min(1).required(),
     packageId: Joi.string().required().hex().length(24),
     tenantId: Joi.string().required().hex().length(24),
-    userId: Joi.string().required().hex().length(24)
+    userId: Joi.string().required().hex().length(24),
+    forceOverride: Joi.boolean().optional().default(false)
   }),
 
   cancel: Joi.object({

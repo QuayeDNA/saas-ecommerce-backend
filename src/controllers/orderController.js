@@ -45,6 +45,17 @@ class OrderController {
       });
     } catch (error) {
       logger.error(`Single order creation failed: ${error.message}`);
+      
+      // Handle duplicate order errors specially
+      if (error.code === 'DUPLICATE_ORDER_DETECTED') {
+        return res.status(400).json({
+          success: false,
+          message: error.message,
+          code: 'DUPLICATE_ORDER_DETECTED',
+          duplicateInfo: error.duplicateInfo
+        });
+      }
+      
       res.status(400).json({
         success: false,
         message: error.message
@@ -68,6 +79,18 @@ class OrderController {
       const result = await orderService.createBulkOrders(value);
       return res.status(201).json({ success: true, ...result });
     } catch (err) {
+      logger.error(`Bulk order creation failed: ${err.message}`);
+      
+      // Handle duplicate order errors specially
+      if (err.code === 'DUPLICATE_ORDER_DETECTED') {
+        return res.status(400).json({
+          success: false,
+          message: err.message,
+          code: 'DUPLICATE_ORDER_DETECTED',
+          duplicateInfo: err.duplicateInfo
+        });
+      }
+      
       return res.status(400).json({ success: false, message: err.message });
     }
   }
