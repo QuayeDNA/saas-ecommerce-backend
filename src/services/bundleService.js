@@ -22,7 +22,10 @@ const bundleService = {
         userType = 'agent' // Add user type for security
       } = options;
 
-      const query = { isActive: true };
+      const query = {};
+
+      // Note: Removed isActive filter to allow all users to see both active and inactive bundles
+      // Frontend will handle role-based filtering and UI restrictions
 
       // Add search filter
       if (search) {
@@ -232,17 +235,21 @@ const bundleService = {
   // Get bundles by package
   getBundlesByPackage: async (packageId, options = {}) => {
     try {
-      const { page = 1, limit = 10 } = options;
+      const { page = 1, limit = 10, userType = 'agent' } = options;
       const skip = (page - 1) * limit;
 
+      // Build query - return all bundles (both active and inactive)
+      // Frontend will handle role-based filtering and UI restrictions
+      const query = { packageId };
+
       const [bundles, total] = await Promise.all([
-        Bundle.find({ packageId, isActive: true })
+        Bundle.find(query)
           .populate('providerId', 'name logo code')
           .sort({ dataVolume: 1 })
           .skip(skip)
           .limit(limit)
           .lean(),
-        Bundle.countDocuments({ packageId, isActive: true })
+        Bundle.countDocuments(query)
       ]);
 
       const totalPages = Math.ceil(total / limit);

@@ -92,10 +92,12 @@ const bundleController = {
     try {
       const { packageId } = req.params;
       const { page = 1, limit = 10 } = req.query;
+      const userType = req.user?.userType || 'agent';
       
       const result = await bundleService.getBundlesByPackage(packageId, {
         page: parseInt(page),
-        limit: parseInt(limit)
+        limit: parseInt(limit),
+        userType
       });
 
       res.json({
