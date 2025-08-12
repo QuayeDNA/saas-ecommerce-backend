@@ -640,7 +640,8 @@ class OrderService {
       startDate,
       endDate,
       search,
-      createdBy
+      createdBy,
+      provider
     } = filters;
     
     // For super admins (tenantId is null), don't filter by tenant
@@ -673,6 +674,11 @@ class OrderService {
       query.createdAt = {};
       if (startDate) query.createdAt.$gte = new Date(startDate);
       if (endDate) query.createdAt.$lte = new Date(endDate);
+    }
+
+    // Add provider filter - filter by package provider
+    if (provider) {
+      query['items.packageDetails.provider'] = provider;
     }
     
     if (search) {

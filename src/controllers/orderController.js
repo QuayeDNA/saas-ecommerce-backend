@@ -106,7 +106,8 @@ class OrderController {
         startDate: req.query.startDate,
         endDate: req.query.endDate,
         search: req.query.search,
-        createdBy: req.query.createdBy
+        createdBy: req.query.createdBy,
+        provider: req.query.provider
       };
       
       const pagination = {
