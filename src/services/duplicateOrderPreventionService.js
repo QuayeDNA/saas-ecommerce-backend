@@ -14,7 +14,7 @@ class DuplicateOrderPreventionService {
     // Default configuration - can be overridden per tenant
     this.config = {
       // Time window to check for duplicates (in minutes)
-      duplicateCheckWindow: 10,
+      duplicateCheckWindow: 5,
       // Enable/disable duplicate prevention
       enabled: true,
       // Whether to allow force override of duplicates
