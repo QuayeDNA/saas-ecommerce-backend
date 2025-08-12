@@ -47,6 +47,14 @@ const userSchema = new mongoose.Schema({
     },
     trim: true
   },
+  agentCode: {
+    type: String,
+    unique: true,
+    sparse: true, // Only enforce uniqueness when the field is present
+    required: function() {
+      return this.userType === 'agent';
+    }
+  },
   businessCategory: {
     type: String,
     enum: ['electronics', 'fashion', 'food', 'services', 'other'],

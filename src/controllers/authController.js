@@ -31,11 +31,32 @@ class AuthController {
     );
   }
 
-  // Generate unique agent code
-  generateAgentCode(businessName) {
-    const prefix = businessName.substring(0, 3).toUpperCase();
-    const timestamp = Date.now().toString().slice(-6);
-    return `${prefix}${timestamp}`;
+  // Generate unique agent code with format ABC-123 (initials-userID)
+  generateAgentCode(fullName, userId) {
+    // Extract initials from full name
+    const names = fullName.trim().split(' ');
+    let initials = '';
+    
+    // Get first letter of each name part, up to 3 letters
+    for (let i = 0; i < Math.min(names.length, 3); i++) {
+      if (names[i] && names[i].length > 0) {
+        initials += names[i][0].toUpperCase();
+      }
+    }
+    
+    // Ensure we have at least 3 characters, pad with 'X' if needed
+    while (initials.length < 3) {
+      initials += 'X';
+    }
+    
+    // Take only first 3 characters
+    initials = initials.substring(0, 3);
+    
+    // Format user ID to 3 digits (001, 002, etc.)
+    const userIdString = userId.toString();
+    const userIdSuffix = userIdString.slice(-3).padStart(3, '0');
+    
+    return `${initials}-${userIdSuffix}`;
   }
 
   // Register new agent (multi-tenant admin)
@@ -78,8 +99,10 @@ class AuthController {
 
       await agent.save();
 
-      // Generate agent code for customer registration
-      const agentCode = this.generateAgentCode(businessName);
+      // Generate and store agent code using user initials and ID
+      const agentCode = this.generateAgentCode(fullName, agent._id);
+      agent.agentCode = agentCode;
+      await agent.save();
 
       logger.info(
         `Agent registered successfully: ${email} - Business: ${businessName}`
@@ -120,11 +143,11 @@ class AuthController {
 
       // If agent code provided, find the agent
       if (agentCode) {
-        // For now, we'll implement agent lookup by business name prefix
-        // In production, you'd store agent codes in a separate collection
+        // Look up agent by the stored agent code
         const agent = await User.findOne({
           userType: "agent",
-          businessName: new RegExp(`^${agentCode.substring(0, 3)}`, "i"),
+          agentCode: agentCode,
+          status: "active" // Only allow registration under active agents
         });
 
         if (!agent) {
@@ -666,8 +689,8 @@ class AuthController {
       
       // Send verification email
       if (user.userType === 'agent') {
-        // Generate agent code again
-        const agentCode = this.generateAgentCode(user.businessName);
+        // Use the stored agent code
+        const agentCode = user.agentCode;
         await emailService.sendAgentVerificationEmail(email, verificationToken, agentCode);
       } else {
         await emailService.sendVerificationEmail(email, verificationToken);
