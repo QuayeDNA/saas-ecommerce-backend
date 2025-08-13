@@ -82,7 +82,7 @@ class AuthController {
         });
       }
 
-      // Create agent (they are their own tenant) - Auto-verified
+      // Create agent document with temporary agent code
       const agent = new User({
         fullName,
         email,
@@ -95,17 +95,19 @@ class AuthController {
         subscriptionStatus: "active",
         isVerified: true, // Auto-verify
         status: "pending", // Set agent status to pending
+        agentCode: "TEMP" // Temporary code to pass validation
       });
 
+      // Save to get the _id
       await agent.save();
-
-      // Generate and store agent code using user initials and ID
+      
+      // Generate and set the real agent code using the saved user's ID
       const agentCode = this.generateAgentCode(fullName, agent._id);
       agent.agentCode = agentCode;
       await agent.save();
 
       logger.info(
-        `Agent registered successfully: ${email} - Business: ${businessName}`
+        `Agent registered successfully: ${email} - Business: ${businessName} - Agent Code: ${agentCode}`
       );
       res.status(201).json({
         success: true,
