@@ -31,32 +31,11 @@ class AuthController {
     );
   }
 
-  // Generate unique agent code with format ABC-123 (initials-userID)
-  generateAgentCode(fullName, userId) {
-    // Extract initials from full name
-    const names = fullName.trim().split(' ');
-    let initials = '';
-    
-    // Get first letter of each name part, up to 3 letters
-    for (let i = 0; i < Math.min(names.length, 3); i++) {
-      if (names[i] && names[i].length > 0) {
-        initials += names[i][0].toUpperCase();
-      }
-    }
-    
-    // Ensure we have at least 3 characters, pad with 'X' if needed
-    while (initials.length < 3) {
-      initials += 'X';
-    }
-    
-    // Take only first 3 characters
-    initials = initials.substring(0, 3);
-    
-    // Format user ID to 3 digits (001, 002, etc.)
-    const userIdString = userId.toString();
-    const userIdSuffix = userIdString.slice(-3).padStart(3, '0');
-    
-    return `${initials}-${userIdSuffix}`;
+  // Generate unique agent code using randomized format: BLA-XXXX
+  async generateAgentCode() {
+    // Import the agent code generator
+    const { generateUniqueAgentCode } = await import('../utils/agentCodeGenerator.js');
+    return await generateUniqueAgentCode();
   }
 
   // Register new agent (multi-tenant admin)
@@ -101,8 +80,8 @@ class AuthController {
       // Save to get the _id
       await agent.save();
       
-      // Generate and set the real agent code using the saved user's ID
-      const agentCode = this.generateAgentCode(fullName, agent._id);
+      // Generate and set the real agent code using the new randomized format
+      const agentCode = await this.generateAgentCode();
       agent.agentCode = agentCode;
       await agent.save();
 
