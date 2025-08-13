@@ -3,7 +3,6 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
 import connectDB from './src/config/db.js';
 import logger from './src/utils/logger.js';
 import websocketService from './src/services/websocketService.js';
@@ -48,38 +47,6 @@ app.use(cors({
   credentials: true
 }));
 
-// Rate limiting - Production optimized
-// General rate limiting with higher limits for production
-const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 500, // limit each IP to 500 requests per 15 minutes
-  message: {
-    error: 'Too many requests from this IP',
-    retryAfter: '15 minutes'
-  },
-  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-  skip: (req) => {
-    // Skip rate limiting for certain conditions
-    return req.ip === '127.0.0.1' || req.ip === '::1'; // Skip for localhost
-  }
-});
-
-// More restrictive rate limiting for auth endpoints
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 20, // limit each IP to 20 authentication attempts per 15 minutes
-  message: {
-    error: 'Too many authentication attempts from this IP',
-    retryAfter: '15 minutes'
-  },
-  standardHeaders: true,
-  legacyHeaders: false
-});
-
-// Apply general rate limiting
-app.use(generalLimiter);
-
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -91,7 +58,7 @@ app.use((req, res, next) => {
 });
 
 // Routes
-app.use('/api/auth', authLimiter, authRoutes); // Apply stricter rate limiting to auth endpoints
+app.use('/api/auth', authRoutes);
 app.use('/api/orders', orderRouter);
 app.use('/api/storefront', storefrontRoutes);
 app.use('/api/users', userRoutes);
