@@ -9,6 +9,7 @@ import duplicateOrderPreventionService from './duplicateOrderPreventionService.j
 import mongoose from 'mongoose';
 import logger from '../utils/logger.js';
 import { parseBulkOrderRow } from '../utils/parseBulkOrderRow.js';
+import { saveOrderWithRetry, isDuplicateKeyError } from '../utils/orderSaveHelper.js';
 
 class OrderService {
   /**
@@ -285,11 +286,7 @@ class OrderService {
       });
       
       try {
-        if (session) {
-          await order.save({ session });
-        } else {
-          await order.save();
-        }
+        await saveOrderWithRetry(order, session);
       } catch (error) {
         // If order creation fails and wallet was deducted, refund the amount
         if (walletDeducted) {
@@ -551,9 +548,9 @@ class OrderService {
           });
 
           if (session) {
-            await order.save({ session });
+            await saveOrderWithRetry(order, session);
           } else {
-            await order.save();
+            await saveOrderWithRetry(order);
           }
           
           createdOrders.push(order);

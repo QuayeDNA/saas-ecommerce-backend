@@ -1,5 +1,6 @@
 // src/models/Order.js
 import mongoose from 'mongoose';
+import { generateUniqueOrderNumber } from '../utils/orderNumberGenerator.js';
 
 const orderItemSchema = new mongoose.Schema({
   packageGroup: {
@@ -199,11 +200,12 @@ orderSchema.virtual('completionPercentage').get(function() {
 orderSchema.pre('save', async function(next) {
   // Generate order number if not provided
   if (!this.orderNumber) {
-    // Get the count of existing orders to generate a sequential number
-    const count = await mongoose.model('Order').countDocuments();
-    // Generate a 5-digit number, starting from 10000
-    const orderNumber = (10000 + count + 1).toString();
-    this.orderNumber = orderNumber;
+    try {
+      this.orderNumber = await generateUniqueOrderNumber();
+    } catch (error) {
+      console.error('Failed to generate order number:', error);
+      return next(error);
+    }
   }
   
   // Calculate totals

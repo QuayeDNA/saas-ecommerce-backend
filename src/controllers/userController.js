@@ -1,5 +1,6 @@
 // src/controllers/userController.js
-import User from "../models/User.js";
+import { generateSpecialOrderNumber } from '../utils/orderNumberGenerator.js';
+import User from '../models/User.js';
 import logger from "../utils/logger.js";
 import crypto from "crypto";
 
@@ -833,7 +834,7 @@ class UserController {
       }
 
       // Create the AFA order
-      const orderNumber = `AFA${Date.now()}${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
+      const orderNumber = await generateSpecialOrderNumber('AFA');
       
       // Create a dummy package for AFA orders
       const Package = (await import('../models/Package.js')).default;
