@@ -5,12 +5,14 @@ import { authenticate, authorize } from '../middlewares/auth.js';
 import validate from '../middlewares/validate.js';
 import { orderValidation } from '../validators/orderValidator.js';
 import { checkSiteStatusForOrders } from '../middlewares/siteStatus.js';
+import { apiEndpointLimits } from '../middlewares/advancedRateLimit.js';
 
 const router = express.Router();
 
 // Order CRUD operations - SPECIFIC ROUTES FIRST
 router.post(
   '/single',
+  apiEndpointLimits.highFrequency, // Apply rate limiting for order creation
   authenticate,
   authorize('agent'),
   checkSiteStatusForOrders,
@@ -20,6 +22,7 @@ router.post(
 
 router.post(
   '/bulk',
+  apiEndpointLimits.highFrequency, // Apply rate limiting for bulk order creation
   authenticate,
   authorize('agent'),
   checkSiteStatusForOrders,
