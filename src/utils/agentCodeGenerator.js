@@ -1,22 +1,22 @@
 import mongoose from 'mongoose';
 
 /**
- * Generate a unique agent code using randomized format: BLA-XXXX
- * @returns {Promise<string>} - Unique agent code (8 characters max)
+ * Generate a unique agent code using randomized format: BLA-XXX
+ * @returns {Promise<string>} - Unique agent code (7 characters max)
  */
 export const generateUniqueAgentCode = async () => {
   const maxAttempts = 5;
   
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      // Generate random 4-character alphanumeric suffix
-      const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      // Generate random 3-digit numeric suffix (000-999)
+      const numbers = '0123456789';
       let randomSuffix = '';
-      for (let i = 0; i < 4; i++) {
-        randomSuffix += chars.charAt(Math.floor(Math.random() * chars.length));
+      for (let i = 0; i < 3; i++) {
+        randomSuffix += numbers.charAt(Math.floor(Math.random() * numbers.length));
       }
       
-      // Format: BLA-XXXX (8 characters total)
+      // Format: BLA-XXX (7 characters total)
       const agentCode = `BLA-${randomSuffix}`;
       
       // Check if this agent code already exists
@@ -35,8 +35,8 @@ export const generateUniqueAgentCode = async () => {
       console.error(`Attempt ${attempt + 1} failed to generate agent code:`, error.message);
       
       if (attempt === maxAttempts - 1) {
-        // Final fallback: timestamp-based with different format
-        const timestamp = Date.now().toString().slice(-4);
+        // Final fallback: timestamp-based with numeric only
+        const timestamp = Date.now().toString().slice(-3);
         return `BLA-${timestamp}`;
       }
       
@@ -51,7 +51,7 @@ export const generateUniqueAgentCode = async () => {
 /**
  * Generate agent code for special cases with custom prefix
  * @param {string} prefix - Prefix for the agent code (max 3 chars)
- * @returns {Promise<string>} - Unique agent code with prefix (8 chars max)
+ * @returns {Promise<string>} - Unique agent code with prefix (7 chars max)
  */
 export const generateSpecialAgentCode = async (prefix = 'BLA') => {
   const maxAttempts = 5;
@@ -61,14 +61,14 @@ export const generateSpecialAgentCode = async (prefix = 'BLA') => {
   
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      // Generate random 4-character alphanumeric suffix
-      const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      // Generate random 3-digit numeric suffix (000-999)
+      const numbers = '0123456789';
       let randomSuffix = '';
-      for (let i = 0; i < 4; i++) {
-        randomSuffix += chars.charAt(Math.floor(Math.random() * chars.length));
+      for (let i = 0; i < 3; i++) {
+        randomSuffix += numbers.charAt(Math.floor(Math.random() * numbers.length));
       }
       
-      // Format: PREFIX-XXXX (8 characters total)
+      // Format: PREFIX-XXX (7 characters total)
       const agentCode = `${shortPrefix}-${randomSuffix}`;
       
       // Check if this agent code already exists
@@ -87,8 +87,8 @@ export const generateSpecialAgentCode = async (prefix = 'BLA') => {
       console.error(`Attempt ${attempt + 1} failed to generate special agent code:`, error.message);
       
       if (attempt === maxAttempts - 1) {
-        // Final fallback with timestamp
-        const timestamp = Date.now().toString().slice(-4);
+        // Final fallback with timestamp (numeric only)
+        const timestamp = Date.now().toString().slice(-3);
         return `${shortPrefix}-${timestamp}`;
       }
     }
