@@ -347,13 +347,13 @@ class OrderService {
         await notificationService.createInAppNotification(
           admin._id.toString(),
           'New Order Created',
-          `Order ${order.orderNumber} has been created by ${user.email || user.name || 'User'}. Amount: GH₵${orderTotal.toFixed(2)}`,
+          `Order ${order.orderNumber} has been created by ${user.agentCode || user.name || 'User'}. Amount: GH₵${orderTotal.toFixed(2)}`,
           'info',
           {
             orderId: order._id.toString(),
             orderNumber: order.orderNumber,
             amount: orderTotal,
-            customerEmail: user.email,
+            agentCode: user.agentCode || user.email,
             type: 'new_order_created',
             navigationLink: this.getNavigationLink(admin.userType, 'orders')
           }
@@ -587,12 +587,12 @@ class OrderService {
         await notificationService.createInAppNotification(
           admin._id.toString(),
           'Bulk Order Created',
-          `Bulk order with ${orderCount} items has been created by ${user.email || user.name || 'User'}. Total amount: GH₵${totalAmount.toFixed(2)}`,
+          `Bulk order with ${orderCount} items has been created by ${user.agentCode || user.name || 'User'}. Total amount: GH₵${totalAmount.toFixed(2)}`,
           'info',
           {
             orderCount: orderCount,
             totalAmount: totalAmount,
-            customerEmail: user.email,
+            agentCode: user.agentCode || user.email,
             type: 'bulk_order_created',
             navigationLink: this.getNavigationLink(admin.userType, 'orders')
           }

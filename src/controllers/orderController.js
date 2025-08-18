@@ -4,7 +4,6 @@ import Order from '../models/Order.js';
 import logger from '../utils/logger.js';
 import { orderValidation } from '../validators/orderValidator.js';
 import User from '../models/User.js'; // Added import for User
-import walletService from '../services/walletService.js'; // Added import for walletService
 import notificationService from '../services/notificationService.js'; // Added import for notificationService
 
 class OrderController {
