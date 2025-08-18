@@ -5,7 +5,7 @@ export const providerValidation = {
   create: [
     body('name').trim().notEmpty().withMessage('Provider name is required'),
       body('code')
-    .isIn(['MTN', 'TELECEL', 'AT'])
+    .isIn(['MTN', 'TELECEL', 'AT', 'AFA'])
     .withMessage('Invalid provider code. Must be one of: MTN, TELECEL, AT'),
     body('country').optional().trim().notEmpty().withMessage('Country cannot be empty'),
     body('description').optional().trim(),
@@ -25,8 +25,8 @@ export const providerValidation = {
     param('id').isMongoId().withMessage('Invalid provider ID'),
     body('name').optional().trim().notEmpty().withMessage('Provider name cannot be empty'),
     body('code').optional()
-      .isIn(['MTN', 'TELECEL', 'AT'])
-      .withMessage('Invalid provider code. Must be one of: MTN, TELECEL, AT'),
+      .isIn(['MTN', 'TELECEL', 'AT', 'AFA'])
+      .withMessage('Invalid provider code. Must be one of: MTN, TELECEL, AT, AFA'),
     body('country').optional().trim().notEmpty().withMessage('Country cannot be empty'),
     body('description').optional().trim(),
     body('logo').optional().isObject().withMessage('Logo must be an object'),
