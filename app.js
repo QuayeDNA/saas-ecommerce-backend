@@ -17,7 +17,6 @@ import providerRoutes from './src/routes/providerRoutes.js';
 import walletRoutes from './src/routes/walletRoutes.js';
 import settingsRoutes from './src/routes/settingsRoutes.js';
 import notificationRoutes from './src/routes/notificationRoutes.js';
-import deleteUnverifiedUsersJob from './src/jobs/deleteUnverifiedUsers.js';
 import { scheduleNotificationCleanup } from './src/jobs/clearOldNotifications.js';
 
 const app = express();
@@ -25,11 +24,6 @@ const PORT = process.env.PORT || 5050;
 
 // Database connection
 connectDB();
-
-// Start job to delete unverified users
-if (process.env.NODE_ENV === 'development') {
-  deleteUnverifiedUsersJob();
-}
 
 // Start notification cleanup job
 scheduleNotificationCleanup();
