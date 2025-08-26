@@ -464,11 +464,75 @@ class OrderController {
       const analytics = {
         totalOrders: stats.totalOrders,
         completedOrders: stats.completedOrders,
-        totalRevenue: stats.totalRevenue,
+  // totalRevenue: revenue for the requested timeframe (e.g., last 30 days)
+  totalRevenue: stats.totalRevenue,
         successRate: successRate,
         walletBalance: walletBalance,
-        timeframe: timeframe
+        timeframe: timeframe,
+        overallTotalSales: 0,
+  monthlyRevenue: 0,
+  monthlyOrderCount: 0,
+  month: "",
+  // commission for the current month (0.1% of completed monthly sales)
+  monthlyCommission: 0
       };
+      
+      // Compute overall total sales (completed orders total) for this user (agent) across all time
+      try {
+        // overallTotalSales: sum of completed orders for this agent across all time
+        const overallMatch = {
+          createdBy: userIdObjectId,
+          tenantId: tenantIdObjectId,
+          status: 'completed'
+        };
+
+        const overallAgg = await Order.aggregate([
+          { $match: overallMatch },
+          { $group: { _id: null, overallTotalSales: { $sum: '$total' } } }
+        ]);
+
+        analytics.overallTotalSales = overallAgg[0]?.overallTotalSales || 0;
+      } catch (err) {
+        logger.error(`Failed to compute overall total sales for agent: ${err.message}`);
+        analytics.overallTotalSales = 0;
+      }
+      
+      // Compute monthly revenue for current month (completed orders only)
+      try {
+        const now = new Date();
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+        const monthlyMatch = {
+          createdBy: userIdObjectId,
+          tenantId: tenantIdObjectId,
+          status: 'completed',
+          createdAt: { $gte: startOfMonth, $lte: endOfMonth }
+        };
+
+        const monthlyAgg = await Order.aggregate([
+          { $match: monthlyMatch },
+          { $group: { _id: null, monthlyRevenue: { $sum: '$total' }, monthlyOrderCount: { $sum: 1 } } }
+        ]);
+
+        analytics.monthlyRevenue = monthlyAgg[0]?.monthlyRevenue || 0;
+        analytics.monthlyOrderCount = monthlyAgg[0]?.monthlyOrderCount || 0;
+        analytics.month = now.toLocaleString('default', { month: 'long', year: 'numeric' });
+        // Commission is 0.1% (0.001) of total completed sales for the month
+        try {
+          const commission = (analytics.monthlyRevenue || 0) * 0.001;
+          // Round to 2 decimal places for currency formatting
+          analytics.monthlyCommission = Math.round((commission + Number.EPSILON) * 100) / 100;
+        } catch (err) {
+          logger.error(`Failed to compute monthly commission for agent: ${err.message}`);
+          analytics.monthlyCommission = 0;
+        }
+      } catch (err) {
+        logger.error(`Failed to compute monthly revenue for agent: ${err.message}`);
+        analytics.monthlyRevenue = 0;
+        analytics.monthlyOrderCount = 0;
+        analytics.month = '';
+      }
       
       res.json({
         success: true,
