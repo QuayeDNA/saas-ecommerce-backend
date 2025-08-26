@@ -533,6 +533,27 @@ class OrderController {
         analytics.monthlyOrderCount = 0;
         analytics.month = '';
       }
+
+      // Compute counts by status for this agent across all orders (so the frontend can display counts)
+      try {
+        const statusAgg = await Order.aggregate([
+          { $match: { createdBy: userIdObjectId, tenantId: tenantIdObjectId } },
+          { $group: { _id: '$status', count: { $sum: 1 } } }
+        ]);
+
+        const counts = { completed: 0, processing: 0, pending: 0, cancelled: 0 };
+        for (const s of statusAgg) {
+          if (s._id === 'completed') counts.completed = s.count;
+          else if (s._id === 'processing') counts.processing = s.count;
+          else if (s._id === 'pending') counts.pending = s.count;
+          else if (s._id === 'cancelled') counts.cancelled = s.count;
+        }
+
+        analytics.statusCounts = counts;
+      } catch (err) {
+        logger.error(`Failed to compute status counts for agent: ${err.message}`);
+        analytics.statusCounts = { completed: 0, processing: 0, pending: 0, cancelled: 0 };
+      }
       
       res.json({
         success: true,
