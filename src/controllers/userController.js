@@ -502,6 +502,8 @@ class UserController {
       const totalOrders = await Order.countDocuments();
       const completedOrders = await Order.countDocuments({ status: 'completed' });
       const pendingOrders = await Order.countDocuments({ status: 'pending' });
+      const processingOrders = await Order.countDocuments({ status: 'processing' });
+      const cancelledOrders = await Order.countDocuments({ status: 'cancelled' });
       const failedOrders = await Order.countDocuments({ status: 'failed' });
       const ordersThisWeek = await Order.countDocuments({
         createdAt: { $gte: last7Days }
@@ -509,6 +511,21 @@ class UserController {
       const ordersThisMonth = await Order.countDocuments({
         createdAt: { $gte: last30Days }
       });
+
+      // Today's range
+      const startOfToday = new Date();
+      startOfToday.setHours(0,0,0,0);
+      const endOfToday = new Date(startOfToday);
+      endOfToday.setDate(endOfToday.getDate() + 1);
+
+      const todaysOrders = await Order.countDocuments({ createdAt: { $gte: startOfToday, $lt: endOfToday } });
+
+      // Today's revenue (only count completed orders)
+      const revenueTodayAgg = await Order.aggregate([
+        { $match: { status: 'completed', createdAt: { $gte: startOfToday, $lt: endOfToday } } },
+        { $group: { _id: null, total: { $sum: '$total' } } }
+      ]);
+      const revenueToday = revenueTodayAgg[0]?.total || 0;
 
       // Revenue Statistics
       const totalRevenue = await Order.aggregate([
@@ -589,13 +606,18 @@ class UserController {
           total: totalOrders,
           completed: completedOrders,
           pending: pendingOrders,
+          processing: processingOrders,
+          cancelled: cancelledOrders,
+          draft: 0,
           failed: failedOrders,
+          today: todaysOrders,
           thisWeek: ordersThisWeek,
           thisMonth: ordersThisMonth,
           successRate: orderSuccessRate
         },
         revenue: {
           total: totalRevenue[0]?.total || 0,
+          today: revenueToday,
           thisWeek: revenueThisWeek[0]?.total || 0,
           thisMonth: revenueThisMonth[0]?.total || 0
         },
