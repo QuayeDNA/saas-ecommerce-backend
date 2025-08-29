@@ -259,93 +259,166 @@ class CommissionService {
   }
 
   /**
+   * Send commission notification to agent
+   * @param {Object} agent - Agent object
+   * @param {Object} commissionRecord - Commission record
+   * @param {Date} periodStart - Period start date
+   * @returns {Promise<void>}
+   */
+  async sendCommissionNotification(agent, commissionRecord, periodStart) {
+    try {
+      // Send in-app notification
+      await notificationService.createInAppNotification(
+        agent._id.toString(),
+        'New Commission Generated',
+        `Your commission of GH₵${commissionRecord.amount} for ${periodStart.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })} has been generated.`,
+        'info',
+        {
+          commissionId: commissionRecord._id.toString(),
+          amount: commissionRecord.amount,
+          period: commissionRecord.period,
+          totalOrders: commissionRecord.totalOrders,
+          totalRevenue: commissionRecord.totalRevenue,
+          type: 'commission_generated',
+          navigationLink: '/agent/dashboard/commissions'
+        }
+      );
+
+      // Send WebSocket notification
+      websocketService.sendToUser(agent._id.toString(), {
+        type: 'commission_generated',
+        commissionId: commissionRecord._id.toString(),
+        amount: commissionRecord.amount,
+        period: commissionRecord.period,
+        totalOrders: commissionRecord.totalOrders,
+        totalRevenue: commissionRecord.totalRevenue,
+        message: `New commission of GH₵${commissionRecord.amount} generated for ${periodStart.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}!`,
+        timestamp: new Date().toISOString()
+      });
+
+    } catch (error) {
+      logger.error(`Failed to send commission notification for agent ${agent._id}: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
    * Generate monthly commission records for all agents
    * @param {Date} month - Month to generate commissions for (defaults to current month)
    * @returns {Promise<Array>} Generated commission records
    */
   async generateMonthlyCommissions(month = new Date()) {
     try {
+      const startTime = Date.now();
       const startOfMonth = new Date(month.getFullYear(), month.getMonth(), 1);
       const endOfMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0, 23, 59, 59, 999);
 
-      // Get all agents
-      const agents = await User.find({ userType: 'agent', isActive: true });
+      logger.info(`Starting commission generation for ${startOfMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`);
+
+      // Get all active agents in a single optimized query
+      const agents = await User.find({
+        userType: 'agent',
+        isActive: true
+      }).select('_id fullName email tenantId').lean();
+
+      if (agents.length === 0) {
+        logger.info('No active agents found for commission generation');
+        return [];
+      }
+
+      logger.info(`Processing ${agents.length} agents for commission generation`);
 
       const results = [];
+      const batchSize = 10; // Process in batches to avoid memory issues
 
-      for (const agent of agents) {
-        try {
-          // Check if commission record already exists for this period
-          const existingRecord = await CommissionRecord.findOne({
-            agentId: agent._id,
-            period: 'monthly',
-            periodStart: startOfMonth,
-            periodEnd: endOfMonth
-          });
+      // Process agents in batches for better performance
+      for (let i = 0; i < agents.length; i += batchSize) {
+        const batch = agents.slice(i, i + batchSize);
+        logger.info(`Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(agents.length / batchSize)} (${batch.length} agents)`);
 
-          if (existingRecord) {
-            results.push({ agentId: agent._id, status: 'exists', record: existingRecord });
-            continue;
-          }
-
-          // Calculate commission
-          const calculation = await this.calculateCommission(
-            agent._id,
-            agent.tenantId,
-            startOfMonth,
-            endOfMonth
-          );
-
-          // Create commission record
-          const commissionRecord = await this.createCommissionRecord({
-            ...calculation,
-            period: 'monthly'
-          });
-
-          // Send notification to agent about new commission
+        const batchPromises = batch.map(async (agent) => {
           try {
-            await notificationService.createInAppNotification(
-              agent._id.toString(),
-              'New Commission Generated',
-              `Your commission of GH₵${commissionRecord.amount} for ${startOfMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })} has been generated.`,
-              'info',
-              {
-                commissionId: commissionRecord._id.toString(),
-                amount: commissionRecord.amount,
-                period: commissionRecord.period,
-                totalOrders: commissionRecord.totalOrders,
-                totalRevenue: commissionRecord.totalRevenue,
-                type: 'commission_generated',
-                navigationLink: '/agent/dashboard/commissions'
-              }
+            // Check if commission record already exists for this period (optimized query)
+            const existingRecord = await CommissionRecord.findOne({
+              agentId: agent._id,
+              period: 'monthly',
+              periodStart: startOfMonth,
+              periodEnd: endOfMonth
+            }).select('_id').lean();
+
+            if (existingRecord) {
+              return { agentId: agent._id, status: 'exists', record: existingRecord };
+            }
+
+            // For agents, use their userId as tenantId since they don't have a separate tenantId
+            const agentTenantId = agent.tenantId || agent._id;
+
+            // Calculate commission with optimized query
+            const calculation = await this.calculateCommission(
+              agent._id,
+              agentTenantId,
+              startOfMonth,
+              endOfMonth
             );
 
-            // Send WebSocket notification
-            websocketService.sendToUser(agent._id.toString(), {
-              type: 'commission_generated',
-              commissionId: commissionRecord._id.toString(),
-              amount: commissionRecord.amount,
-              period: commissionRecord.period,
-              totalOrders: commissionRecord.totalOrders,
-              totalRevenue: commissionRecord.totalRevenue,
-              message: `New commission of GH₵${commissionRecord.amount} generated for ${startOfMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}!`,
-              timestamp: new Date().toISOString()
-            });
+            // Only create record if there's actual commission to pay
+            if (calculation.amount > 0) {
+              const commissionRecord = await this.createCommissionRecord({
+                ...calculation,
+                period: 'monthly'
+              });
 
-          } catch (notificationError) {
-            logger.error(`Failed to send commission generation notification: ${notificationError.message}`);
+              // Send notification asynchronously (don't block batch processing)
+              setImmediate(async () => {
+                try {
+                  await this.sendCommissionNotification(agent, commissionRecord, startOfMonth);
+                } catch (notificationError) {
+                  logger.error(`Failed to send commission notification for agent ${agent._id}: ${notificationError.message}`);
+                }
+              });
+
+              return { agentId: agent._id, status: 'created', record: commissionRecord };
+            } else {
+              // No commission to generate
+              return { agentId: agent._id, status: 'no_commission', message: 'No orders/commission for this period' };
+            }
+
+          } catch (error) {
+            logger.error(`Error processing agent ${agent._id}: ${error.message}`);
+            return { agentId: agent._id, status: 'error', error: error.message };
           }
+        });
 
-          results.push({ agentId: agent._id, status: 'created', record: commissionRecord });
-        } catch (error) {
-          results.push({ agentId: agent._id, status: 'error', error: error.message });
+        // Wait for current batch to complete before starting next batch
+        const batchResults = await Promise.all(batchPromises);
+        results.push(...batchResults);
+
+        // Small delay between batches to prevent overwhelming the database
+        if (i + batchSize < agents.length) {
+          await new Promise(resolve => setTimeout(resolve, 100));
         }
       }
 
-      logger.info(`Generated monthly commissions for ${agents.length} agents`);
+      const endTime = Date.now();
+      const duration = (endTime - startTime) / 1000;
+
+      const successful = results.filter(r => r.status === 'created').length;
+      const existing = results.filter(r => r.status === 'exists').length;
+      const noCommission = results.filter(r => r.status === 'no_commission').length;
+      const errors = results.filter(r => r.status === 'error').length;
+
+      logger.info(`Commission generation completed in ${duration.toFixed(2)}s:`, {
+        totalAgents: agents.length,
+        successful,
+        existing,
+        noCommission,
+        errors,
+        successRate: `${((successful / agents.length) * 100).toFixed(1)}%`
+      });
+
       return results;
     } catch (error) {
-      logger.error(`Generate monthly commissions error: ${error.message}`);
+      logger.error(`Commission generation error: ${error.message}`);
       throw new Error('Failed to generate monthly commissions');
     }
   }

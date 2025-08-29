@@ -305,8 +305,10 @@ class CommissionController {
       const targetDate = targetMonth ? new Date(targetMonth) : new Date();
       const results = await commissionService.generateMonthlyCommissions(targetDate);
 
-      const successCount = results.filter(r => r.status === 'created').length;
-      const errorCount = results.filter(r => r.status === 'error').length;
+      const successful = results.filter(r => r.status === 'created').length;
+      const existing = results.filter(r => r.status === 'exists').length;
+      const noCommission = results.filter(r => r.status === 'no_commission').length;
+      const errors = results.filter(r => r.status === 'error').length;
 
       res.json({
         success: true,
@@ -314,11 +316,13 @@ class CommissionController {
           results,
           summary: {
             total: results.length,
-            success: successCount,
-            errors: errorCount
+            successful,
+            existing,
+            noCommission,
+            errors
           }
         },
-        message: `Generated ${successCount} commission records with ${errorCount} errors`
+        message: `Generated ${successful} commission records with ${errors} errors`
       });
     } catch (error) {
       logger.error("Generate monthly commissions error:", error);

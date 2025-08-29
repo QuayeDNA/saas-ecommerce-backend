@@ -7,7 +7,7 @@ import connectDB from './src/config/db.js';
 import logger from './src/utils/logger.js';
 import websocketService from './src/services/websocketService.js';
 import { scheduleNotificationCleanup } from './src/jobs/clearOldNotifications.js';
-import { scheduleCommissionReset } from './src/jobs/commissionReset.js';
+import { scheduleCommissionGeneration } from './src/jobs/commissionGeneration.js';
 import authRoutes from './src/routes/authRoutes.js';
 import orderRouter from './src/routes/orderRoutes.js';
 import packageRoutes from './src/routes/packageRoutes.js';
@@ -31,8 +31,8 @@ connectDB();
 // Start notification cleanup job
 scheduleNotificationCleanup();
 
-// Start commission reset job
-scheduleCommissionReset();
+// Start commission generation job
+scheduleCommissionGeneration();
 
 // Security middleware
 app.use(helmet());
