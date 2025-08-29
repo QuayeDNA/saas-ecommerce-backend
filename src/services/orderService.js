@@ -6,6 +6,7 @@ import WalletTransaction from '../models/WalletTransaction.js';
 import walletService from './walletService.js';
 import notificationService from './notificationService.js';
 import duplicateOrderPreventionService from './duplicateOrderPreventionService.js';
+import commissionService from './commissionService.js';
 import mongoose from 'mongoose';
 import logger from '../utils/logger.js';
 import { parseBulkOrderRow } from '../utils/parseBulkOrderRow.js';
@@ -776,6 +777,51 @@ class OrderService {
         await order.save({ session });
       } else {
         await order.save();
+      }
+
+      // Calculate commission if order is completed and created by an agent
+      if (processedSuccessfully && order.status === 'completed' && order.createdBy) {
+        try {
+          const agent = await User.findById(order.createdBy);
+          if (agent && agent.userType === 'agent') {
+            // Calculate commission for the current month
+            const currentDate = new Date();
+            const startOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+            const endOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0, 23, 59, 59, 999);
+
+            // Check if commission record already exists for this agent and month
+            const existingCommission = await mongoose.connection.db.collection('commissionrecords').findOne({
+              agentId: order.createdBy,
+              tenantId: order.tenantId,
+              period: 'monthly',
+              periodStart: startOfMonth,
+              periodEnd: endOfMonth
+            });
+
+            if (!existingCommission) {
+              // Calculate commission for this order's month
+              const calculation = await commissionService.calculateCommission(
+                order.createdBy,
+                order.tenantId,
+                startOfMonth,
+                endOfMonth
+              );
+
+              // Create commission record
+              await commissionService.createCommissionRecord({
+                ...calculation,
+                period: 'monthly',
+                periodStart: startOfMonth,
+                periodEnd: endOfMonth
+              });
+
+              logger.info(`Commission record created for agent ${agent.fullName} for ${currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}`);
+            }
+          }
+        } catch (commissionError) {
+          logger.error(`Failed to calculate commission for order ${order._id}: ${commissionError.message}`);
+          // Don't fail the order processing if commission calculation fails
+        }
       }
 
       // Send notification for order processing

@@ -6,6 +6,8 @@ import helmet from 'helmet';
 import connectDB from './src/config/db.js';
 import logger from './src/utils/logger.js';
 import websocketService from './src/services/websocketService.js';
+import { scheduleNotificationCleanup } from './src/jobs/clearOldNotifications.js';
+import { scheduleCommissionReset } from './src/jobs/commissionReset.js';
 import authRoutes from './src/routes/authRoutes.js';
 import orderRouter from './src/routes/orderRoutes.js';
 import packageRoutes from './src/routes/packageRoutes.js';
@@ -17,7 +19,8 @@ import providerRoutes from './src/routes/providerRoutes.js';
 import walletRoutes from './src/routes/walletRoutes.js';
 import settingsRoutes from './src/routes/settingsRoutes.js';
 import notificationRoutes from './src/routes/notificationRoutes.js';
-import { scheduleNotificationCleanup } from './src/jobs/clearOldNotifications.js';
+import analyticsRoutes from './src/routes/analyticsRoutes.js';
+import commissionRoutes from './src/routes/commissionRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT || 5050;
@@ -27,6 +30,9 @@ connectDB();
 
 // Start notification cleanup job
 scheduleNotificationCleanup();
+
+// Start commission reset job
+scheduleCommissionReset();
 
 // Security middleware
 app.use(helmet());
@@ -60,6 +66,8 @@ app.use('/api/providers', providerRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/commissions', commissionRoutes);
 app.use('/api', publicRoutes);
 app.use('/api/packages', packageRoutes);
 app.use('/api/bundles', bundleRoutes);
