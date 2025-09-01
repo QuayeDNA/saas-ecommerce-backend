@@ -193,40 +193,110 @@ class AnalyticsService {
   async getOrderStatistics(dateRange) {
     const { startDate, endDate } = dateRange;
 
-    const orderStats = await Order.aggregate([
-      { $match: { createdAt: { $gte: startDate, $lte: endDate } } },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: 1 },
-          completed: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
-          pending: { $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] } },
-          processing: { $sum: { $cond: [{ $eq: ['$status', 'processing'] }, 1, 0] } },
-          failed: { $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] } },
-          cancelled: { $sum: { $cond: [{ $eq: ['$status', 'cancelled'] }, 1, 0] } },
-          bulk: { $sum: { $cond: [{ $eq: ['$orderType', 'bulk'] }, 1, 0] } },
-          single: { $sum: { $cond: [{ $eq: ['$orderType', 'single'] }, 1, 0] } }
+    // Calculate today's range
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+
+    // Calculate this month's range
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const thisMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+    const [
+      periodStats,
+      todayStats,
+      thisMonthStats
+    ] = await Promise.all([
+      // Period stats (existing logic)
+      Order.aggregate([
+        { $match: { createdAt: { $gte: startDate, $lte: endDate } } },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            completed: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
+            pending: { $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] } },
+            processing: { $sum: { $cond: [{ $eq: ['$status', 'processing'] }, 1, 0] } },
+            failed: { $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] } },
+            cancelled: { $sum: { $cond: [{ $eq: ['$status', 'cancelled'] }, 1, 0] } },
+            bulk: { $sum: { $cond: [{ $eq: ['$orderType', 'bulk'] }, 1, 0] } },
+            single: { $sum: { $cond: [{ $eq: ['$orderType', 'single'] }, 1, 0] } }
+          }
         }
-      }
+      ]),
+      // Today's stats
+      Order.aggregate([
+        { $match: { createdAt: { $gte: todayStart, $lte: todayEnd } } },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            completed: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
+            pending: { $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] } },
+            processing: { $sum: { $cond: [{ $eq: ['$status', 'processing'] }, 1, 0] } },
+            failed: { $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] } },
+            cancelled: { $sum: { $cond: [{ $eq: ['$status', 'cancelled'] }, 1, 0] } }
+          }
+        }
+      ]),
+      // This month's stats
+      Order.aggregate([
+        { $match: { createdAt: { $gte: thisMonthStart, $lte: thisMonthEnd } } },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            completed: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
+            pending: { $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] } },
+            processing: { $sum: { $cond: [{ $eq: ['$status', 'processing'] }, 1, 0] } },
+            failed: { $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] } },
+            cancelled: { $sum: { $cond: [{ $eq: ['$status', 'cancelled'] }, 1, 0] } }
+          }
+        }
+      ])
     ]);
 
-    const stats = orderStats[0] || {
+    const periodData = periodStats[0] || {
       total: 0, completed: 0, pending: 0, processing: 0, failed: 0, cancelled: 0, bulk: 0, single: 0
     };
 
-    const successRate = stats.total > 0 ? (stats.completed / stats.total) * 100 : 0;
+    const todayData = todayStats[0] || {
+      total: 0, completed: 0, pending: 0, processing: 0, failed: 0, cancelled: 0
+    };
+
+    const monthData = thisMonthStats[0] || {
+      total: 0, completed: 0, pending: 0, processing: 0, failed: 0, cancelled: 0
+    };
+
+    const successRate = periodData.total > 0 ? (periodData.completed / periodData.total) * 100 : 0;
 
     return {
-      total: stats.total,
-      completed: stats.completed,
-      pending: stats.pending,
-      processing: stats.processing,
-      failed: stats.failed,
-      cancelled: stats.cancelled,
+      total: periodData.total,
+      completed: periodData.completed,
+      pending: periodData.pending,
+      processing: periodData.processing,
+      failed: periodData.failed,
+      cancelled: periodData.cancelled,
       successRate: Math.round(successRate * 100) / 100,
+      today: {
+        total: todayData.total,
+        completed: todayData.completed,
+        pending: todayData.pending,
+        processing: todayData.processing,
+        failed: todayData.failed,
+        cancelled: todayData.cancelled
+      },
+      thisMonth: {
+        total: monthData.total,
+        completed: monthData.completed,
+        pending: monthData.pending,
+        processing: monthData.processing,
+        failed: monthData.failed,
+        cancelled: monthData.cancelled
+      },
       byType: {
-        bulk: stats.bulk,
-        single: stats.single
+        bulk: periodData.bulk,
+        single: periodData.single
       }
     };
   }
@@ -239,13 +309,14 @@ class AnalyticsService {
   async getRevenueStatistics(dateRange) {
     const { startDate, endDate } = dateRange;
 
-    // Calculate this week range
+    // Calculate this month range
     const now = new Date();
-    const thisWeekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const thisMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
     const [
       totalRevenueStats,
-      thisWeekRevenueStats
+      thisMonthRevenueStats
     ] = await Promise.all([
       Order.aggregate([
         {
@@ -266,7 +337,7 @@ class AnalyticsService {
         {
           $match: {
             status: 'completed',
-            createdAt: { $gte: thisWeekStart, $lte: now }
+            createdAt: { $gte: thisMonthStart, $lte: thisMonthEnd }
           }
         },
         {
@@ -280,12 +351,12 @@ class AnalyticsService {
     ]);
 
     const totalStats = totalRevenueStats[0] || { total: 0, count: 0 };
-    const weekStats = thisWeekRevenueStats[0] || { total: 0, count: 0 };
+    const monthStats = thisMonthRevenueStats[0] || { total: 0, count: 0 };
     const averageOrderValue = totalStats.count > 0 ? totalStats.total / totalStats.count : 0;
 
     return {
       total: totalStats.total,
-      thisWeek: weekStats.total,
+      thisMonth: monthStats.total,
       orderCount: totalStats.count,
       averageOrderValue: Math.round(averageOrderValue * 100) / 100
     };
