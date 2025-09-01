@@ -314,9 +314,14 @@ class AnalyticsService {
     const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const thisMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
+    // Calculate today's range
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+
     const [
       totalRevenueStats,
-      thisMonthRevenueStats
+      thisMonthRevenueStats,
+      todayRevenueStats
     ] = await Promise.all([
       Order.aggregate([
         {
@@ -347,16 +352,33 @@ class AnalyticsService {
             count: { $sum: 1 }
           }
         }
+      ]),
+      Order.aggregate([
+        {
+          $match: {
+            status: 'completed',
+            createdAt: { $gte: todayStart, $lte: todayEnd }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$total' },
+            count: { $sum: 1 }
+          }
+        }
       ])
     ]);
 
     const totalStats = totalRevenueStats[0] || { total: 0, count: 0 };
     const monthStats = thisMonthRevenueStats[0] || { total: 0, count: 0 };
+    const todayStats = todayRevenueStats[0] || { total: 0, count: 0 };
     const averageOrderValue = totalStats.count > 0 ? totalStats.total / totalStats.count : 0;
 
     return {
       total: totalStats.total,
       thisMonth: monthStats.total,
+      today: todayStats.total,
       orderCount: totalStats.count,
       averageOrderValue: Math.round(averageOrderValue * 100) / 100
     };
@@ -739,30 +761,56 @@ class AnalyticsService {
   async getAgentRevenueStatistics(agentId, tenantId, dateRange) {
     const { startDate, endDate } = dateRange;
 
-    const revenueStats = await Order.aggregate([
-      {
-        $match: {
-          createdBy: new mongoose.Types.ObjectId(agentId),
-          tenantId: new mongoose.Types.ObjectId(tenantId),
-          status: 'completed',
-          createdAt: { $gte: startDate, $lte: endDate }
+    // Calculate today's range
+    const today = new Date();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+
+    const [periodStats, todayStats] = await Promise.all([
+      Order.aggregate([
+        {
+          $match: {
+            createdBy: new mongoose.Types.ObjectId(agentId),
+            tenantId: new mongoose.Types.ObjectId(tenantId),
+            status: 'completed',
+            createdAt: { $gte: startDate, $lte: endDate }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$total' },
+            count: { $sum: 1 }
+          }
         }
-      },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: '$total' },
-          count: { $sum: 1 }
+      ]),
+      Order.aggregate([
+        {
+          $match: {
+            createdBy: new mongoose.Types.ObjectId(agentId),
+            tenantId: new mongoose.Types.ObjectId(tenantId),
+            status: 'completed',
+            createdAt: { $gte: todayStart, $lte: todayEnd }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$total' },
+            count: { $sum: 1 }
+          }
         }
-      }
+      ])
     ]);
 
-    const stats = revenueStats[0] || { total: 0, count: 0 };
-    const averageOrderValue = stats.count > 0 ? stats.total / stats.count : 0;
+    const periodData = periodStats[0] || { total: 0, count: 0 };
+    const todayData = todayStats[0] || { total: 0, count: 0 };
+    const averageOrderValue = periodData.count > 0 ? periodData.total / periodData.count : 0;
 
     return {
-      total: stats.total,
-      orderCount: stats.count,
+      total: periodData.total,
+      today: todayData.total,
+      orderCount: periodData.count,
       averageOrderValue: Math.round(averageOrderValue * 100) / 100
     };
   }
