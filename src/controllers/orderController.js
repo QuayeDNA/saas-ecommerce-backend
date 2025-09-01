@@ -554,6 +554,37 @@ class OrderController {
         logger.error(`Failed to compute status counts for agent: ${err.message}`);
         analytics.statusCounts = { completed: 0, processing: 0, pending: 0, cancelled: 0 };
       }
+
+      // Compute today's counts by status for this agent
+      try {
+        const today = new Date();
+        const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+
+        const todayStatusAgg = await Order.aggregate([
+          {
+            $match: {
+              createdBy: userIdObjectId,
+              tenantId: tenantIdObjectId,
+              createdAt: { $gte: startOfDay, $lte: endOfDay }
+            }
+          },
+          { $group: { _id: '$status', count: { $sum: 1 } } }
+        ]);
+
+        const todayCounts = { completed: 0, processing: 0, pending: 0, cancelled: 0 };
+        for (const s of todayStatusAgg) {
+          if (s._id === 'completed') todayCounts.completed = s.count;
+          else if (s._id === 'processing') todayCounts.processing = s.count;
+          else if (s._id === 'pending') todayCounts.pending = s.count;
+          else if (s._id === 'cancelled') todayCounts.cancelled = s.count;
+        }
+
+        analytics.todayCounts = todayCounts;
+      } catch (err) {
+        logger.error(`Failed to compute today's status counts for agent: ${err.message}`);
+        analytics.todayCounts = { completed: 0, processing: 0, pending: 0, cancelled: 0 };
+      }
       
       res.json({
         success: true,

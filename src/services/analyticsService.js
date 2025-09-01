@@ -650,41 +650,82 @@ class AnalyticsService {
   async getAgentOrderStatistics(agentId, tenantId, dateRange) {
     const { startDate, endDate } = dateRange;
 
-    const orderStats = await Order.aggregate([
-      {
-        $match: {
-          createdBy: new mongoose.Types.ObjectId(agentId),
-          tenantId: new mongoose.Types.ObjectId(tenantId),
-          createdAt: { $gte: startDate, $lte: endDate }
+    // Calculate today's range
+    const today = new Date();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+
+    const [periodStats, todayStats] = await Promise.all([
+      // Period stats
+      Order.aggregate([
+        {
+          $match: {
+            createdBy: new mongoose.Types.ObjectId(agentId),
+            tenantId: new mongoose.Types.ObjectId(tenantId),
+            createdAt: { $gte: startDate, $lte: endDate }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            completed: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
+            pending: { $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] } },
+            processing: { $sum: { $cond: [{ $eq: ['$status', 'processing'] }, 1, 0] } },
+            failed: { $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] } },
+            cancelled: { $sum: { $cond: [{ $eq: ['$status', 'cancelled'] }, 1, 0] } }
+          }
         }
-      },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: 1 },
-          completed: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
-          pending: { $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] } },
-          processing: { $sum: { $cond: [{ $eq: ['$status', 'processing'] }, 1, 0] } },
-          failed: { $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] } },
-          cancelled: { $sum: { $cond: [{ $eq: ['$status', 'cancelled'] }, 1, 0] } }
+      ]),
+      // Today's stats
+      Order.aggregate([
+        {
+          $match: {
+            createdBy: new mongoose.Types.ObjectId(agentId),
+            tenantId: new mongoose.Types.ObjectId(tenantId),
+            createdAt: { $gte: todayStart, $lte: todayEnd }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            completed: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
+            pending: { $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] } },
+            processing: { $sum: { $cond: [{ $eq: ['$status', 'processing'] }, 1, 0] } },
+            failed: { $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] } },
+            cancelled: { $sum: { $cond: [{ $eq: ['$status', 'cancelled'] }, 1, 0] } }
+          }
         }
-      }
+      ])
     ]);
 
-    const stats = orderStats[0] || {
+    const periodData = periodStats[0] || {
       total: 0, completed: 0, pending: 0, processing: 0, failed: 0, cancelled: 0
     };
 
-    const successRate = stats.total > 0 ? (stats.completed / stats.total) * 100 : 0;
+    const todayData = todayStats[0] || {
+      total: 0, completed: 0, pending: 0, processing: 0, failed: 0, cancelled: 0
+    };
+
+    const successRate = periodData.total > 0 ? (periodData.completed / periodData.total) * 100 : 0;
 
     return {
-      total: stats.total,
-      completed: stats.completed,
-      pending: stats.pending,
-      processing: stats.processing,
-      failed: stats.failed,
-      cancelled: stats.cancelled,
-      successRate: Math.round(successRate * 100) / 100
+      total: periodData.total,
+      completed: periodData.completed,
+      pending: periodData.pending,
+      processing: periodData.processing,
+      failed: periodData.failed,
+      cancelled: periodData.cancelled,
+      successRate: Math.round(successRate * 100) / 100,
+      todayCounts: {
+        total: todayData.total,
+        completed: todayData.completed,
+        pending: todayData.pending,
+        processing: todayData.processing,
+        failed: todayData.failed,
+        cancelled: todayData.cancelled
+      }
     };
   }
 
