@@ -232,6 +232,116 @@ class CommissionService {
   }
 
   /**
+   * Reject a commission
+   * @param {string} commissionId - Commission ID
+   * @param {string} rejectedBy - User ID who is rejecting
+   * @param {string} rejectionReason - Reason for rejection
+   * @returns {Promise<Object>} Updated commission record
+   */
+  async rejectCommission(commissionId, rejectedBy, rejectionReason = null) {
+    try {
+      const commission = await CommissionRecord.findById(commissionId);
+
+      if (!commission) {
+        throw new Error('Commission record not found');
+      }
+
+      if (commission.status === 'paid') {
+        throw new Error('Cannot reject a paid commission');
+      }
+
+      if (commission.status === 'rejected') {
+        throw new Error('Commission already rejected');
+      }
+
+      // Get agent details
+      const agent = await User.findById(commission.agentId);
+
+      if (!agent) {
+        throw new Error('Agent not found');
+      }
+
+      // Get admin who is rejecting
+      const admin = await User.findById(rejectedBy);
+
+      // Update commission record
+      commission.status = 'rejected';
+      commission.rejectedAt = new Date();
+      commission.rejectedBy = rejectedBy;
+      commission.rejectionReason = rejectionReason;
+      await commission.save();
+
+      // Send notification to agent
+      try {
+        await notificationService.createInAppNotification(
+          commission.agentId.toString(),
+          'Commission Rejected',
+          `Your commission of GH₵${commission.amount} for ${commission.period} period has been rejected.`,
+          'error',
+          {
+            commissionId: commission._id.toString(),
+            amount: commission.amount,
+            period: commission.period,
+            rejectedBy: admin?.fullName || admin?.email || 'Admin',
+            rejectionReason: rejectionReason,
+            type: 'commission_rejected',
+            navigationLink: '/agent/dashboard/commissions'
+          }
+        );
+
+        // Send WebSocket notification
+        websocketService.sendToUser(commission.agentId.toString(), {
+          type: 'commission_rejected',
+          commissionId: commission._id.toString(),
+          amount: commission.amount,
+          period: commission.period,
+          rejectedBy: admin?.fullName || admin?.email || 'Admin',
+          rejectionReason: rejectionReason,
+          message: `Your commission of GH₵${commission.amount} has been rejected.`,
+          timestamp: new Date().toISOString()
+        });
+
+      } catch (notificationError) {
+        logger.error(`Failed to send commission rejection notification: ${notificationError.message}`);
+      }
+
+      logger.info(`Commission rejected for agent ${agent.fullName}: GH₵${commission.amount}`);
+
+      return commission;
+    } catch (error) {
+      logger.error(`Reject commission error: ${error.message}`);
+      throw new Error('Failed to reject commission');
+    }
+  }
+
+  /**
+   * Reject multiple commissions
+   * @param {Array} commissionIds - Array of commission IDs
+   * @param {string} rejectedBy - User ID who is rejecting
+   * @param {string} rejectionReason - Reason for rejection
+   * @returns {Promise<Array>} Array of results
+   */
+  async rejectMultipleCommissions(commissionIds, rejectedBy, rejectionReason = null) {
+    try {
+      const results = [];
+
+      for (const commissionId of commissionIds) {
+        try {
+          const commission = await this.rejectCommission(commissionId, rejectedBy, rejectionReason);
+          results.push({ success: true, commissionId, commission });
+        } catch (error) {
+          results.push({ success: false, commissionId, error: error.message });
+        }
+      }
+
+      return results;
+    } catch (error) {
+      logger.error(`Reject multiple commissions error: ${error.message}`);
+      throw new Error('Failed to reject multiple commissions');
+    }
+  }
+
+  /**
    * Pay multiple commissions
    * @param {Array} commissionIds - Array of commission IDs
    * @param {string} paidBy - User ID who is paying

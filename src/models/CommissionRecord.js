@@ -49,7 +49,7 @@ const commissionRecordSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'paid', 'cancelled'],
+    enum: ['pending', 'paid', 'rejected', 'cancelled'],
     default: 'pending'
   },
   paidAt: {
@@ -60,6 +60,16 @@ const commissionRecordSchema = new mongoose.Schema({
     ref: 'User'
   },
   paymentReference: {
+    type: String
+  },
+  rejectedAt: {
+    type: Date
+  },
+  rejectedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  rejectionReason: {
     type: String
   },
   notes: {
@@ -89,6 +99,17 @@ commissionRecordSchema.methods.markAsPaid = function(paidBy, paymentReference = 
   this.paidBy = paidBy;
   if (paymentReference) {
     this.paymentReference = paymentReference;
+  }
+  return this.save();
+};
+
+// Method to mark as rejected
+commissionRecordSchema.methods.markAsRejected = function(rejectedBy, rejectionReason = null) {
+  this.status = 'rejected';
+  this.rejectedAt = new Date();
+  this.rejectedBy = rejectedBy;
+  if (rejectionReason) {
+    this.rejectionReason = rejectionReason;
   }
   return this.save();
 };

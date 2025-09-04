@@ -61,6 +61,20 @@ router.put('/pay-multiple',
   commissionController.payMultipleCommissions
 );
 
+// Reject commission
+router.put('/:commissionId/reject',
+  authenticate,
+  authorize('super_admin'),
+  commissionController.rejectCommission
+);
+
+// Reject multiple commissions
+router.put('/reject-multiple',
+  authenticate,
+  authorize('super_admin'),
+  commissionController.rejectMultipleCommissions
+);
+
 // Generate monthly commissions
 router.post('/generate-monthly',
   authenticate,

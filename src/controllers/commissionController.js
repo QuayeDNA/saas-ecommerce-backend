@@ -261,6 +261,73 @@ class CommissionController {
   }
 
   /**
+   * Reject commission
+   */
+  async rejectCommission(req, res) {
+    try {
+      const { commissionId } = req.params;
+      const { rejectionReason } = req.body || {};
+      const { userId } = req.user;
+
+      const commission = await commissionService.rejectCommission(
+        commissionId,
+        userId,
+        rejectionReason
+      );
+
+      res.json({
+        success: true,
+        data: commission,
+        message: 'Commission rejected successfully'
+      });
+    } catch (error) {
+      logger.error("Reject commission error:", error);
+      res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * Reject multiple commissions
+   */
+  async rejectMultipleCommissions(req, res) {
+    try {
+      const { commissionIds, rejectionReason } = req.body;
+      const { userId } = req.user;
+
+      if (!commissionIds || !Array.isArray(commissionIds) || commissionIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Commission IDs array is required'
+        });
+      }
+
+      const results = await commissionService.rejectMultipleCommissions(
+        commissionIds,
+        userId,
+        rejectionReason
+      );
+
+      const successful = results.filter(r => r.success).length;
+      const failed = results.filter(r => !r.success).length;
+
+      res.json({
+        success: true,
+        data: results,
+        message: `${successful} commissions rejected successfully, ${failed} failed`
+      });
+    } catch (error) {
+      logger.error("Reject multiple commissions error:", error);
+      res.status(400).json({
+        success: false,
+        message: 'Failed to reject multiple commissions'
+      });
+    }
+  }
+
+  /**
    * Pay multiple commissions
    */
   async payMultipleCommissions(req, res) {
