@@ -1,9 +1,10 @@
 // src/controllers/walletController.js
-import User from '../models/User.js';
-import WalletTransaction from '../models/WalletTransaction.js';
-import walletService from '../services/walletService.js';
-import websocketService from '../services/websocketService.js';
-import logger from '../utils/logger.js';
+import User from "../models/User.js";
+import WalletTransaction from "../models/WalletTransaction.js";
+import walletService from "../services/walletService.js";
+import websocketService from "../services/websocketService.js";
+import logger from "../utils/logger.js";
+import { isBusinessUser, getTenantId } from "../utils/userTypeHelpers.js";
 
 class WalletController {
   /**
@@ -14,13 +15,13 @@ class WalletController {
       const userId = req.user.userId;
       logger.debug(`[getWalletInfo] userId: ${userId}`);
       // Get user with wallet balance
-      const user = await User.findById(userId).select('walletBalance');
+      const user = await User.findById(userId).select("walletBalance");
       logger.debug(`[getWalletInfo] user: ${JSON.stringify(user)}`);
       if (!user) {
         logger.debug(`[getWalletInfo] User not found for id: ${userId}`);
         return res.status(404).json({
           success: false,
-          message: "User not found"
+          message: "User not found",
         });
       }
 
@@ -31,50 +32,64 @@ class WalletController {
         let basicTransactions = await WalletTransaction.find({ user: userId })
           .sort({ createdAt: -1 })
           .limit(10);
-        
-        logger.debug(`[getWalletInfo] Basic recent transactions found: ${basicTransactions.length}`);
-        
+
+        logger.debug(
+          `[getWalletInfo] Basic recent transactions found: ${basicTransactions.length}`
+        );
+
         // Now try to populate each transaction individually to handle any population errors
         recentTransactions = [];
         for (const tx of basicTransactions) {
           try {
             const populatedTx = await tx.populate([
-              { path: 'approvedBy', select: 'fullName' },
-              { path: 'relatedOrder', select: 'orderNumber' }
+              { path: "approvedBy", select: "fullName" },
+              { path: "relatedOrder", select: "orderNumber" },
             ]);
             recentTransactions.push(populatedTx);
           } catch (populateError) {
-            logger.warn(`[getWalletInfo] Failed to populate recent transaction ${tx._id}: ${populateError.message}`);
+            logger.warn(
+              `[getWalletInfo] Failed to populate recent transaction ${tx._id}: ${populateError.message}`
+            );
             // Add the transaction without population
             recentTransactions.push(tx);
           }
         }
-        
-        logger.debug(`[getWalletInfo] Final recent transactions count: ${recentTransactions.length}`);
+
+        logger.debug(
+          `[getWalletInfo] Final recent transactions count: ${recentTransactions.length}`
+        );
         if (!Array.isArray(recentTransactions)) {
-          logger.debug(`[getWalletInfo] recentTransactions is not an array, setting to []`);
+          logger.debug(
+            `[getWalletInfo] recentTransactions is not an array, setting to []`
+          );
           recentTransactions = [];
         }
       } catch (txError) {
-        logger.warn(`[getWalletInfo] Failed to get recent transactions: ${txError.message}`);
+        logger.warn(
+          `[getWalletInfo] Failed to get recent transactions: ${txError.message}`
+        );
         logger.error(txError.stack);
         recentTransactions = [];
       }
 
-      logger.debug(`[getWalletInfo] Sending response: balance=${user.walletBalance || 0}, recentTransactions.length=${recentTransactions.length}`);
+      logger.debug(
+        `[getWalletInfo] Sending response: balance=${
+          user.walletBalance || 0
+        }, recentTransactions.length=${recentTransactions.length}`
+      );
       res.json({
         success: true,
         wallet: {
           balance: user.walletBalance || 0,
-          recentTransactions: recentTransactions
-        }
+          recentTransactions: recentTransactions,
+        },
       });
     } catch (error) {
       logger.error(`Get wallet info error: ${error.message}`);
       logger.error(error.stack);
       res.status(500).json({
         success: false,
-        message: "Failed to get wallet information"
+        message: "Failed to get wallet information",
       });
     }
   }
@@ -86,10 +101,12 @@ class WalletController {
     try {
       const userId = req.user.userId;
       const { page = 1, limit = 20, type, startDate, endDate } = req.query;
-      logger.debug(`[getTransactionHistory] userId: ${userId}, page: ${page}, limit: ${limit}, type: ${type}, startDate: ${startDate}, endDate: ${endDate}`);
+      logger.debug(
+        `[getTransactionHistory] userId: ${userId}, page: ${page}, limit: ${limit}, type: ${type}, startDate: ${startDate}, endDate: ${endDate}`
+      );
       // Build filter
       const filter = {};
-      if (type && ['credit', 'debit'].includes(type)) {
+      if (type && ["credit", "debit"].includes(type)) {
         filter.type = type;
       }
       if (startDate || endDate) {
@@ -106,41 +123,59 @@ class WalletController {
       let transactions = [];
       try {
         // First try without population to see if the basic query works
-        let basicTransactions = await WalletTransaction.find({ user: userId, ...filter })
+        let basicTransactions = await WalletTransaction.find({
+          user: userId,
+          ...filter,
+        })
           .sort({ createdAt: -1 })
           .skip(skip)
           .limit(parseInt(limit));
-        
-        logger.debug(`[getTransactionHistory] Basic transactions found: ${basicTransactions.length}`);
-        
+
+        logger.debug(
+          `[getTransactionHistory] Basic transactions found: ${basicTransactions.length}`
+        );
+
         // Now try to populate each transaction individually to handle any population errors
         transactions = [];
         for (const tx of basicTransactions) {
           try {
             const populatedTx = await tx.populate([
-              { path: 'approvedBy', select: 'fullName email' },
-              { path: 'relatedOrder', select: 'orderNumber' }
+              { path: "approvedBy", select: "fullName email" },
+              { path: "relatedOrder", select: "orderNumber" },
             ]);
             transactions.push(populatedTx);
           } catch (populateError) {
-            logger.warn(`[getTransactionHistory] Failed to populate transaction ${tx._id}: ${populateError.message}`);
+            logger.warn(
+              `[getTransactionHistory] Failed to populate transaction ${tx._id}: ${populateError.message}`
+            );
             // Add the transaction without population
             transactions.push(tx);
           }
         }
-        
-        logger.debug(`[getTransactionHistory] Final transactions count: ${transactions.length}`);
+
+        logger.debug(
+          `[getTransactionHistory] Final transactions count: ${transactions.length}`
+        );
         if (!Array.isArray(transactions)) {
-          logger.debug(`[getTransactionHistory] transactions is not an array, setting to []`);
+          logger.debug(
+            `[getTransactionHistory] transactions is not an array, setting to []`
+          );
           transactions = [];
         }
       } catch (txError) {
-        logger.warn(`[getTransactionHistory] Failed to get transaction history: ${txError.message}`);
+        logger.warn(
+          `[getTransactionHistory] Failed to get transaction history: ${txError.message}`
+        );
         logger.error(txError.stack);
         transactions = [];
       }
-      const totalCount = await WalletTransaction.countDocuments({ user: userId, ...filter }).catch(err => 0);
-      logger.debug(`[getTransactionHistory] Sending response: transactions.length=${transactions.length}, totalCount=${totalCount}`);
+      const totalCount = await WalletTransaction.countDocuments({
+        user: userId,
+        ...filter,
+      }).catch((err) => 0);
+      logger.debug(
+        `[getTransactionHistory] Sending response: transactions.length=${transactions.length}, totalCount=${totalCount}`
+      );
       res.json({
         success: true,
         transactions: transactions,
@@ -148,15 +183,15 @@ class WalletController {
           total: totalCount,
           page: parseInt(page),
           limit: parseInt(limit),
-          pages: Math.ceil(totalCount / parseInt(limit))
-        }
+          pages: Math.ceil(totalCount / parseInt(limit)),
+        },
       });
     } catch (error) {
       logger.error(`Get transaction history error: ${error.message}`);
       logger.error(error.stack);
       res.status(500).json({
         success: false,
-        message: "Failed to get transaction history"
+        message: "Failed to get transaction history",
       });
     }
   }
@@ -168,24 +203,24 @@ class WalletController {
     try {
       const userId = req.user.userId;
       const { amount, description } = req.body;
-      
+
       // Create top-up request
       const transaction = await walletService.createTopUpRequest(
         userId,
         parseFloat(amount),
         description
       );
-      
+
       res.status(201).json({
         success: true,
         message: "Top-up request created successfully",
-        transaction
+        transaction,
       });
     } catch (error) {
       logger.error(`Request wallet top-up error: ${error.message}`);
-      res.status(error.message.includes('not found') ? 404 : 400).json({
+      res.status(error.message.includes("not found") ? 404 : 400).json({
         success: false,
-        message: error.message || "Failed to create top-up request"
+        message: error.message || "Failed to create top-up request",
       });
     }
   }
@@ -197,7 +232,7 @@ class WalletController {
     try {
       const adminId = req.user.userId;
       const { userId, amount, description } = req.body;
-      
+
       // Credit the user's wallet
       const transaction = await walletService.creditWallet(
         userId,
@@ -206,36 +241,38 @@ class WalletController {
         adminId,
         { adminAction: true }
       );
-      
+
       // Get updated wallet info for WebSocket update
-      const user = await User.findById(userId).select('walletBalance');
+      const user = await User.findById(userId).select("walletBalance");
       const recentTransactions = await WalletTransaction.find({ user: userId })
         .sort({ createdAt: -1 })
         .limit(10)
         .populate([
-          { path: 'approvedBy', select: 'fullName' },
-          { path: 'relatedOrder', select: 'orderNumber' }
+          { path: "approvedBy", select: "fullName" },
+          { path: "relatedOrder", select: "orderNumber" },
         ]);
-      
+
       // Emit WebSocket wallet update to the user with message
       websocketService.sendToUser(userId, {
-        type: 'wallet_update',
+        type: "wallet_update",
         userId: userId,
         balance: user.walletBalance || 0,
         recentTransactions: recentTransactions,
-        message: `Your wallet has been credited with GH₵${amount}. New balance: GH₵${user.walletBalance || 0}`
+        message: `Your wallet has been credited with GH₵${amount}. New balance: GH₵${
+          user.walletBalance || 0
+        }`,
       });
-      
+
       res.json({
         success: true,
         message: "Wallet topped up successfully",
-        transaction
+        transaction,
       });
     } catch (error) {
       logger.error(`Top up wallet error: ${error.message}`);
-      res.status(error.message.includes('not found') ? 404 : 400).json({
+      res.status(error.message.includes("not found") ? 404 : 400).json({
         success: false,
-        message: error.message || "Failed to top up wallet"
+        message: error.message || "Failed to top up wallet",
       });
     }
   }
@@ -248,45 +285,53 @@ class WalletController {
       const adminId = req.user.userId;
       const { transactionId } = req.params;
       const { approve } = req.body;
-      
+
       // Process the request
       const transaction = await walletService.processTopUpRequest(
         transactionId,
         !!approve,
         adminId
       );
-      
+
       // If approved, send WebSocket update to the user
       if (approve && transaction.user) {
-        const user = await User.findById(transaction.user).select('walletBalance');
-        const recentTransactions = await WalletTransaction.find({ user: transaction.user })
+        const user = await User.findById(transaction.user).select(
+          "walletBalance"
+        );
+        const recentTransactions = await WalletTransaction.find({
+          user: transaction.user,
+        })
           .sort({ createdAt: -1 })
           .limit(10)
           .populate([
-            { path: 'approvedBy', select: 'fullName' },
-            { path: 'relatedOrder', select: 'orderNumber' }
+            { path: "approvedBy", select: "fullName" },
+            { path: "relatedOrder", select: "orderNumber" },
           ]);
-        
+
         // Emit WebSocket wallet update to the user with message
         websocketService.sendToUser(transaction.user.toString(), {
-          type: 'wallet_update',
+          type: "wallet_update",
           userId: transaction.user.toString(),
           balance: user.walletBalance || 0,
           recentTransactions: recentTransactions,
-          message: `Your top-up request for GH₵${transaction.amount} has been approved. New balance: GH₵${user.walletBalance || 0}`
+          message: `Your top-up request for GH₵${
+            transaction.amount
+          } has been approved. New balance: GH₵${user.walletBalance || 0}`,
         });
       }
-      
+
       res.json({
         success: true,
-        message: approve ? "Top-up request approved" : "Top-up request rejected",
-        transaction
+        message: approve
+          ? "Top-up request approved"
+          : "Top-up request rejected",
+        transaction,
       });
     } catch (error) {
       logger.error(`Process top-up request error: ${error.message}`);
-      res.status(error.message.includes('not found') ? 404 : 400).json({
+      res.status(error.message.includes("not found") ? 404 : 400).json({
         success: false,
-        message: error.message || "Failed to process top-up request"
+        message: error.message || "Failed to process top-up request",
       });
     }
   }
@@ -298,32 +343,32 @@ class WalletController {
     try {
       const { page = 1, limit = 20 } = req.query;
       const userType = req.user.userType;
-      
+
       // Build filter based on user type
-      let filter = { status: 'pending' };
-      
-      // If agent (admin), only show requests from their customers
-      if (userType === 'agent') {
+      let filter = { status: "pending" };
+
+      // If business user (admin), only show requests from their customers
+      if (isBusinessUser(userType)) {
         const tenantId = req.user.userId;
-        
+
         // Get all users belonging to this tenant
-        const tenantUsers = await User.find({ tenantId }).select('_id');
-        const userIds = tenantUsers.map(user => user._id);
-        
+        const tenantUsers = await User.find({ tenantId }).select("_id");
+        const userIds = tenantUsers.map((user) => user._id);
+
         filter.user = { $in: userIds };
       }
-      
+
       // Get pending requests with pagination
       const skip = (parseInt(page) - 1) * parseInt(limit);
-      
+
       const requests = await WalletTransaction.find(filter)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit))
-        .populate('user', 'fullName email phone userType');
-      
+        .populate("user", "fullName email phone userType");
+
       const totalCount = await WalletTransaction.countDocuments(filter);
-      
+
       res.json({
         success: true,
         requests,
@@ -331,14 +376,14 @@ class WalletController {
           total: totalCount,
           page: parseInt(page),
           limit: parseInt(limit),
-          pages: Math.ceil(totalCount / parseInt(limit))
-        }
+          pages: Math.ceil(totalCount / parseInt(limit)),
+        },
       });
     } catch (error) {
       logger.error(`Get pending top-up requests error: ${error.message}`);
       res.status(500).json({
         success: false,
-        message: "Failed to get pending top-up requests"
+        message: "Failed to get pending top-up requests",
       });
     }
   }
@@ -350,10 +395,10 @@ class WalletController {
     try {
       const userType = req.user.userType;
       const userId = req.user.userId;
-      
-      // For agents, only get analytics for their customers
-      const tenantId = userType === 'agent' ? userId : null;
-      
+
+      // For business users, only get analytics for their customers
+      const tenantId = isBusinessUser(userType) ? userId : null;
+
       // Build filter
       const filter = {};
       const { startDate, endDate } = req.query;
@@ -366,18 +411,21 @@ class WalletController {
           filter.createdAt.$lte = new Date(endDate);
         }
       }
-      
-      const analytics = await walletService.getWalletAnalytics(tenantId, filter);
-      
+
+      const analytics = await walletService.getWalletAnalytics(
+        tenantId,
+        filter
+      );
+
       res.json({
         success: true,
-        analytics
+        analytics,
       });
     } catch (error) {
       logger.error(`Get wallet analytics error: ${error.message}`);
       res.status(500).json({
         success: false,
-        message: "Failed to get wallet analytics"
+        message: "Failed to get wallet analytics",
       });
     }
   }
@@ -389,13 +437,15 @@ class WalletController {
     try {
       const { userId, amount, description } = req.body;
       const adminId = req.user.userId;
-      
-      logger.debug(`[adminDebitWallet] Admin ${adminId} debiting ${amount} from user ${userId}`);
-      
+
+      logger.debug(
+        `[adminDebitWallet] Admin ${adminId} debiting ${amount} from user ${userId}`
+      );
+
       if (!userId || !amount || amount <= 0) {
         return res.status(400).json({
           success: false,
-          message: "Invalid request. User ID and positive amount are required."
+          message: "Invalid request. User ID and positive amount are required.",
         });
       }
 
@@ -404,7 +454,7 @@ class WalletController {
       if (!user) {
         return res.status(404).json({
           success: false,
-          message: "User not found"
+          message: "User not found",
         });
       }
 
@@ -412,47 +462,53 @@ class WalletController {
       if (user.walletBalance < amount) {
         return res.status(400).json({
           success: false,
-          message: `Insufficient wallet balance. Required: GH₵${amount}, Available: GH₵${user.walletBalance}`
+          message: `Insufficient wallet balance. Required: GH₵${amount}, Available: GH₵${user.walletBalance}`,
         });
       }
 
       // Perform debit operation
       const transaction = await walletService.debitWallet(
-        userId, 
-        amount, 
-        description || `Wallet debit by admin`, 
-        null, 
+        userId,
+        amount,
+        description || `Wallet debit by admin`,
+        null,
         { debitedBy: adminId }
       );
 
       // Get updated user info
-      const updatedUser = await User.findById(userId).select('walletBalance fullName email');
-      
+      const updatedUser = await User.findById(userId).select(
+        "walletBalance fullName email"
+      );
+
       // Send WebSocket notification to the user
       try {
         websocketService.sendToUser(userId, {
-          type: 'wallet_update',
+          type: "wallet_update",
           userId: userId,
           balance: updatedUser.walletBalance,
-          message: `Your wallet has been debited by GH₵${amount}. New balance: GH₵${updatedUser.walletBalance}`
+          message: `Your wallet has been debited by GH₵${amount}. New balance: GH₵${updatedUser.walletBalance}`,
         });
       } catch (wsError) {
-        logger.warn(`[adminDebitWallet] Failed to send WebSocket notification: ${wsError.message}`);
+        logger.warn(
+          `[adminDebitWallet] Failed to send WebSocket notification: ${wsError.message}`
+        );
       }
 
-      logger.info(`[adminDebitWallet] Successfully debited ${amount} from user ${userId}. New balance: ${updatedUser.walletBalance}`);
-      
+      logger.info(
+        `[adminDebitWallet] Successfully debited ${amount} from user ${userId}. New balance: ${updatedUser.walletBalance}`
+      );
+
       res.json({
         success: true,
         message: `Successfully debited GH₵${amount} from ${updatedUser.fullName}'s wallet`,
         transaction: transaction,
-        user: updatedUser
+        user: updatedUser,
       });
     } catch (error) {
       logger.error(`[adminDebitWallet] Error: ${error.message}`);
       res.status(500).json({
         success: false,
-        message: error.message || "Failed to debit wallet"
+        message: error.message || "Failed to debit wallet",
       });
     }
   }

@@ -1,105 +1,123 @@
 // src/routes/commissionRoutes.js
-import express from 'express';
-import commissionController from '../controllers/commissionController.js';
-import { authenticate, authorize } from '../middlewares/auth.js';
+import express from "express";
+import commissionController from "../controllers/commissionController.js";
+import {
+  authenticate,
+  authorize,
+  authorizeBusinessUser,
+} from "../middlewares/auth.js";
 
 const router = express.Router();
 
 // Get commission settings (super admin only)
-router.get('/settings',
+router.get(
+  "/settings",
   authenticate,
-  authorize('super_admin'),
+  authorize("super_admin"),
   commissionController.getCommissionSettings
 );
 
 // Update commission settings (super admin only)
-router.put('/settings',
+router.put(
+  "/settings",
   authenticate,
-  authorize('super_admin'),
+  authorize("super_admin"),
   commissionController.updateCommissionSettings
 );
 
-// Get agent commissions
-router.get('/agent',
+// Get business user commissions
+router.get(
+  "/agent",
   authenticate,
-  authorize('agent'),
+  authorizeBusinessUser,
   commissionController.getAgentCommissions
 );
 
 // Get all commissions (super admin only)
-router.get('/',
+router.get(
+  "/",
   authenticate,
-  authorize('super_admin'),
+  authorize("super_admin"),
   commissionController.getAllCommissions
 );
 
 // Calculate commission
-router.post('/calculate',
+router.post(
+  "/calculate",
   authenticate,
-  authorize('super_admin'),
+  authorize("super_admin"),
   commissionController.calculateCommission
 );
 
 // Create commission record
-router.post('/records',
+router.post(
+  "/records",
   authenticate,
-  authorize('super_admin'),
+  authorize("super_admin"),
   commissionController.createCommissionRecord
 );
 
 // Pay commission
-router.put('/:commissionId/pay',
+router.put(
+  "/:commissionId/pay",
   authenticate,
-  authorize('super_admin'),
+  authorize("super_admin"),
   commissionController.payCommission
 );
 
 // Pay multiple commissions
-router.put('/pay-multiple',
+router.put(
+  "/pay-multiple",
   authenticate,
-  authorize('super_admin'),
+  authorize("super_admin"),
   commissionController.payMultipleCommissions
 );
 
 // Reject commission
-router.put('/:commissionId/reject',
+router.put(
+  "/:commissionId/reject",
   authenticate,
-  authorize('super_admin'),
+  authorize("super_admin"),
   commissionController.rejectCommission
 );
 
 // Reject multiple commissions
-router.put('/reject-multiple',
+router.put(
+  "/reject-multiple",
   authenticate,
-  authorize('super_admin'),
+  authorize("super_admin"),
   commissionController.rejectMultipleCommissions
 );
 
 // Generate monthly commissions
-router.post('/generate-monthly',
+router.post(
+  "/generate-monthly",
   authenticate,
-  authorize('super_admin'),
+  authorize("super_admin"),
   commissionController.generateMonthlyCommissions
 );
 
 // Reset monthly commissions
-router.post('/reset-monthly',
+router.post(
+  "/reset-monthly",
   authenticate,
-  authorize('super_admin'),
+  authorize("super_admin"),
   commissionController.resetMonthlyCommissions
 );
 
 // Manual commission reset (for testing/admin)
-router.post('/manual-reset',
+router.post(
+  "/manual-reset",
   authenticate,
-  authorize('super_admin'),
+  authorize("super_admin"),
   commissionController.manualCommissionReset
 );
 
 // Get commission statistics
-router.get('/statistics',
+router.get(
+  "/statistics",
   authenticate,
-  authorize('super_admin'),
+  authorizeBusinessUser,
   commissionController.getCommissionStatistics
 );
 

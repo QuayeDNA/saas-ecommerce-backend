@@ -1,105 +1,107 @@
 // src/routes/packageRoutes.js
-import express from 'express';
-import packageController from '../controllers/packageController.js';
-import bundleController from '../controllers/bundleController.js';
-import { authenticate, authorize } from '../middlewares/auth.js';
-import validate from '../middlewares/validate.js';
-import { packageValidation, bundleValidation } from '../validators/packageValidator.js';
+import express from "express";
+import packageController from "../controllers/packageController.js";
+import bundleController from "../controllers/bundleController.js";
+import { authenticate, authorize } from "../middlewares/auth.js";
+import validate from "../middlewares/validate.js";
+import {
+  packageValidation,
+  bundleValidation,
+} from "../validators/packageValidator.js";
 
 const router = express.Router();
 
 // Package routes
 router.post(
-  '/',
+  "/",
   authenticate,
-  authorize('admin', 'super_admin'),
+  authorize("admin", "super_admin"),
   validate(packageValidation.create),
   packageController.createPackage
 );
 
-router.get(
-  '/',
-  packageController.getPackages
-);
+router.get("/", packageController.getPackages);
 
-router.get(
-  '/:id',
-  packageController.getPackage
-);
+router.get("/:id", packageController.getPackage);
 
 router.put(
-  '/:id',
+  "/:id",
   authenticate,
-  authorize('admin', 'super_admin'),
+  authorize("admin", "super_admin"),
   validate(packageValidation.update),
   packageController.updatePackage
 );
 
 router.delete(
-  '/:id',
+  "/:id",
   authenticate,
-  authorize('admin', 'super_admin'),
+  authorize("admin", "super_admin"),
   packageController.deletePackage
 );
 
 router.post(
-  '/:id/restore',
+  "/:id/restore",
   authenticate,
-  authorize('admin', 'super_admin'),
+  authorize("admin", "super_admin"),
   packageController.restorePackage
 );
 
 // Package-specific routes
-router.get(
-  '/provider/:provider',
-  packageController.getPackagesByProvider
-);
+router.get("/provider/:provider", packageController.getPackagesByProvider);
 
-router.get(
-  '/category/:category',
-  packageController.getPackagesByCategory
-);
+router.get("/category/:category", packageController.getPackagesByCategory);
 
-router.get(
-  '/stats/summary',
-  packageController.getPackageStats
-);
+router.get("/stats/summary", packageController.getPackageStats);
 
 // Bundle routes
 router.post(
-  '/bundles',
+  "/bundles",
   authenticate,
-  authorize('admin', 'super_admin'),
+  authorize("admin", "super_admin"),
   validate(bundleValidation.create),
   bundleController.createBundle
 );
 
 router.get(
-  '/bundles',
+  "/bundles",
   authenticate,
-  authorize('agent', 'admin', 'super_admin'),
+  authorize(
+    "agent",
+    "super_agent",
+    "dealer",
+    "super_dealer",
+    "admin",
+    "super_admin"
+  ),
   bundleController.getAllBundles
 );
 
 router.get(
-  '/bundles/:id',
+  "/bundles/:id",
   authenticate,
-  authorize('agent', 'admin', 'super_admin'),
+  authorize(
+    "agent",
+    "super_agent",
+    "dealer",
+    "super_dealer",
+    "admin",
+    "super_admin"
+  ),
   bundleController.getBundleById
 );
 
 router.put(
-  '/bundles/:id',
+  "/bundles/:id",
   authenticate,
-  authorize('admin', 'super_admin'),
+  authorize("admin", "super_admin"),
   validate(bundleValidation.update),
   bundleController.updateBundle
 );
 
 router.delete(
-  '/bundles/:id',
+  "/bundles/:id",
   authenticate,
-  authorize('admin', 'super_admin'),
+  authorize("admin", "super_admin"),
   bundleController.deleteBundle
 );
 
@@ -119,16 +121,30 @@ router.delete(
 // );
 
 router.get(
-  '/bundles/provider/:providerId',
+  "/bundles/provider/:providerId",
   authenticate,
-  authorize('agent', 'admin', 'super_admin'),
+  authorize(
+    "agent",
+    "super_agent",
+    "dealer",
+    "super_dealer",
+    "admin",
+    "super_admin"
+  ),
   bundleController.getBundlesByProvider
 );
 
 router.get(
-  '/bundles/package/:packageId',
+  "/bundles/package/:packageId",
   authenticate,
-  authorize('agent', 'admin', 'super_admin'),
+  authorize(
+    "agent",
+    "super_agent",
+    "dealer",
+    "super_dealer",
+    "admin",
+    "super_admin"
+  ),
   bundleController.getBundlesByPackage
 );
 
@@ -142,50 +158,38 @@ router.get(
 // );
 
 router.get(
-  '/bundles/analytics/summary',
+  "/bundles/analytics/summary",
   authenticate,
-  authorize('admin', 'super_admin'),
+  authorize("admin", "super_admin"),
   bundleController.getBundleAnalytics
 );
 
 // Public routes (for storefront and general access)
-router.get(
-  '/public',
-  packageController.getPackages
-);
+router.get("/public", packageController.getPackages);
+
+router.get("/public/:id", packageController.getPackage);
 
 router.get(
-  '/public/:id',
-  packageController.getPackage
-);
-
-router.get(
-  '/public/provider/:provider',
+  "/public/provider/:provider",
   packageController.getPackagesByProvider
 );
 
 router.get(
-  '/public/category/:category',
+  "/public/category/:category",
   packageController.getPackagesByCategory
 );
 
-router.get(
-  '/public/bundles',
-  bundleController.getAllBundles
-);
+router.get("/public/bundles", bundleController.getAllBundles);
+
+router.get("/public/bundles/:id", bundleController.getBundleById);
 
 router.get(
-  '/public/bundles/:id',
-  bundleController.getBundleById
-);
-
-router.get(
-  '/public/bundles/provider/:providerId',
+  "/public/bundles/provider/:providerId",
   bundleController.getBundlesByProvider
 );
 
 router.get(
-  '/public/bundles/package/:packageId',
+  "/public/bundles/package/:packageId",
   bundleController.getBundlesByPackage
 );
 

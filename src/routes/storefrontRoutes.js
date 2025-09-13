@@ -1,70 +1,71 @@
-    // src/routes/storefrontRoutes.js
-import express from 'express';
-import storefrontController from '../controllers/storefrontController.js';
-import { authenticate, authorize } from '../middlewares/auth.js';
-import validate from '../middlewares/validate.js';
-import { storefrontValidation } from '../validators/storefrontValidator.js';
+// src/routes/storefrontRoutes.js
+import express from "express";
+import storefrontController from "../controllers/storefrontController.js";
+import {
+  authenticate,
+  authorize,
+  authorizeBusinessUser,
+} from "../middlewares/auth.js";
+import validate from "../middlewares/validate.js";
+import { storefrontValidation } from "../validators/storefrontValidator.js";
 
 const router = express.Router();
 
-// Agent routes (protected)
+// Business user routes (protected)
 router.post(
-  '/',
+  "/",
   authenticate,
-  authorize('agent'),
+  authorizeBusinessUser,
   validate(storefrontValidation.create),
   storefrontController.createStorefront
 );
 
 router.put(
-  '/',
+  "/",
   authenticate,
-  authorize('agent'),
+  authorizeBusinessUser,
   validate(storefrontValidation.update),
   storefrontController.updateStorefront
 );
 
 router.get(
-  '/my-storefront',
+  "/my-storefront",
   authenticate,
-  authorize('agent'),
+  authorizeBusinessUser,
   storefrontController.getStorefront
 );
 
 router.get(
-  '/analytics',
+  "/analytics",
   authenticate,
-  authorize('agent'),
+  authorizeBusinessUser,
   storefrontController.getStorefrontAnalytics
 );
 
 router.get(
-  '/check-slug/:slug',
+  "/check-slug/:slug",
   authenticate,
-  authorize('agent'),
+  authorizeBusinessUser,
   storefrontController.checkSlugAvailability
 );
 
 router.patch(
-  '/toggle-status',
+  "/toggle-status",
   authenticate,
-  authorize('agent'),
+  authorizeBusinessUser,
   storefrontController.toggleStorefrontStatus
 );
 
 // Public routes (no authentication required)
-router.get(
-  '/public/:slug',
-  storefrontController.getPublicStorefront
-);
+router.get("/public/:slug", storefrontController.getPublicStorefront);
 
 router.get(
-  '/public/:slug/products',
+  "/public/:slug/products",
   storefrontController.getStorefrontProducts
 );
 
 router.post(
-  '/public/:slug/orders',
+  "/public/:slug/orders",
   validate(storefrontValidation.createOrder),
   storefrontController.createStorefrontOrder
 );

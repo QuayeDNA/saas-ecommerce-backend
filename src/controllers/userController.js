@@ -3,6 +3,10 @@ import { generateSpecialOrderNumber } from "../utils/orderNumberGenerator.js";
 import User from "../models/User.js";
 import logger from "../utils/logger.js";
 import crypto from "crypto";
+import {
+  isBusinessUser,
+  getBusinessUserTypes,
+} from "../utils/userTypeHelpers.js";
 
 class UserController {
   // Get current user profile
@@ -116,8 +120,8 @@ class UserController {
 
       let query = {};
 
-      // If agent, only show their customers
-      if (requestUserType === "agent") {
+      // If business user, only show their customers
+      if (isBusinessUser(requestUserType)) {
         query.tenantId = userId;
         if (userType) {
           query.userType = userType;
@@ -250,8 +254,8 @@ class UserController {
 
       let user;
 
-      if (requestUserType === "agent") {
-        // Agent can only view their customers or themselves
+      if (isBusinessUser(requestUserType)) {
+        // Business user can only view their customers or themselves
         user = await User.findOne({
           _id: id,
           $or: [{ tenantId: requestUserId }, { _id: requestUserId }],
@@ -418,26 +422,22 @@ class UserController {
 
       let stats = {};
 
-      if (
-        ["agent", "super_agent", "dealer", "super_dealer"].includes(
-          requestUserType
-        )
-      ) {
-        // Agent stats - their subordinates (other agent roles under them)
+      if (isBusinessUser(requestUserType)) {
+        // Business user stats - their subordinates (other business roles under them)
         const totalSubordinates = await User.countDocuments({
           tenantId: userId,
-          userType: { $in: ["agent", "super_agent", "dealer", "super_dealer"] },
+          userType: { $in: getBusinessUserTypes() },
         });
 
         const verifiedSubordinates = await User.countDocuments({
           tenantId: userId,
-          userType: { $in: ["agent", "super_agent", "dealer", "super_dealer"] },
+          userType: { $in: getBusinessUserTypes() },
           isVerified: true,
         });
 
         const recentSubordinates = await User.countDocuments({
           tenantId: userId,
-          userType: { $in: ["agent", "super_agent", "dealer", "super_dealer"] },
+          userType: { $in: getBusinessUserTypes() },
           createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
         });
 
@@ -451,23 +451,23 @@ class UserController {
         // Admin stats - all users
         const totalUsers = await User.countDocuments();
         const totalAgents = await User.countDocuments({ userType: "agent" });
-        const totalAgentRoles = await User.countDocuments({
-          userType: { $in: ["agent", "super_agent", "dealer", "super_dealer"] },
+        const totalBusinessUsers = await User.countDocuments({
+          userType: { $in: getBusinessUserTypes() },
         });
         const verifiedUsers = await User.countDocuments({ isVerified: true });
-        const activeAgents = await User.countDocuments({
-          userType: "agent",
+        const activeBusinessUsers = await User.countDocuments({
+          userType: { $in: getBusinessUserTypes() },
           subscriptionStatus: "active",
         });
 
         stats = {
           totalUsers,
           totalAgents,
-          totalAgentRoles,
+          totalBusinessUsers,
           verifiedUsers,
           unverifiedUsers: totalUsers - verifiedUsers,
-          activeAgents,
-          inactiveAgents: totalAgents - activeAgents,
+          activeBusinessUsers,
+          inactiveBusinessUsers: totalBusinessUsers - activeBusinessUsers,
         };
       } else {
         return res.status(403).json({

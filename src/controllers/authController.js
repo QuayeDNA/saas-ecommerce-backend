@@ -4,6 +4,12 @@ import crypto from "crypto";
 import User from "../models/User.js";
 import emailService from "../services/emailService.js";
 import logger from "../utils/logger.js";
+import {
+  isBusinessUser,
+  getTenantId,
+  getBusinessUserTypes,
+  needsAgentCode,
+} from "../utils/userTypeHelpers.js";
 
 class AuthController {
   // Generate JWT token with tenant info
@@ -66,9 +72,7 @@ class AuthController {
       }
 
       // Validate userType
-      if (
-        !["agent", "super_agent", "dealer", "super_dealer"].includes(userType)
-      ) {
+      if (!isBusinessUser(userType)) {
         return res.status(400).json({
           success: false,
           message:
@@ -164,7 +168,7 @@ class AuthController {
       }
 
       // Generate tokens
-      const tenantId = user.userType === "agent" ? user._id : user.tenantId;
+      const tenantId = getTenantId(user);
       const accessToken = this.generateAccessToken(
         user._id,
         user.userType,
@@ -202,8 +206,8 @@ class AuthController {
         `User logged in successfully: ${email} - Type: ${user.userType}`
       );
 
-      // Check for first-time login for agents
-      if (user.userType === "agent" && user.isFirstTime) {
+      // Check for first-time login for business users
+      if (isBusinessUser(user.userType) && user.isFirstTime) {
         // Import wallet service dynamically to avoid circular dependency
         const walletService = (await import("../services/walletService.js"))
           .default;
@@ -252,13 +256,13 @@ class AuthController {
       // Get agent's subordinates count
       const subordinateCount = await User.countDocuments({
         tenantId: agentId,
-        userType: { $in: ["agent", "super_agent", "dealer", "super_dealer"] },
+        userType: { $in: getBusinessUserTypes() },
       });
 
       // Get recent subordinates (last 10)
       const recentSubordinates = await User.find({
         tenantId: agentId,
-        userType: { $in: ["agent", "super_agent", "dealer", "super_dealer"] },
+        userType: { $in: getBusinessUserTypes() },
       })
         .select("fullName email phone createdAt isVerified userType")
         .sort({ createdAt: -1 })
@@ -340,12 +344,12 @@ class AuthController {
       user.isVerified = true;
       user.verificationToken = undefined;
 
-      // For agents, keep status as pending until super admin approval
+      // For business users, keep status as pending until super admin approval
       // For customers, set status to active
-      if (user.userType === "agent") {
-        user.status = "pending"; // Ensure agent remains pending
+      if (isBusinessUser(user.userType)) {
+        user.status = "pending"; // Ensure business user remains pending
         logger.info(
-          `Agent account verified but pending approval: ${user.email}`
+          `Business user account verified but pending approval: ${user.email}`
         );
       } else {
         user.status = "active"; // Customers can be active immediately
@@ -358,10 +362,9 @@ class AuthController {
       );
 
       // Return appropriate message based on user type
-      const message =
-        user.userType === "agent"
-          ? "Account verified successfully. Your account is pending approval by a super admin. You will be notified once approved."
-          : "Account verified successfully. You can now log in.";
+      const message = isBusinessUser(user.userType)
+        ? "Account verified successfully. Your account is pending approval by a super admin. You will be notified once approved."
+        : "Account verified successfully. You can now log in.";
 
       res.json({
         success: true,
@@ -506,7 +509,7 @@ class AuthController {
       }
 
       // Generate new tokens
-      const tenantId = user.userType === "agent" ? user._id : user.tenantId;
+      const tenantId = getTenantId(user);
       const newAccessToken = this.generateAccessToken(
         user._id,
         user.userType,
@@ -664,7 +667,7 @@ class AuthController {
       await user.save();
 
       // Send verification email
-      if (user.userType === "agent") {
+      if (isBusinessUser(user.userType)) {
         // Use the stored agent code
         const agentCode = user.agentCode;
         await emailService.sendAgentVerificationEmail(

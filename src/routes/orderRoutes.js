@@ -1,27 +1,31 @@
 // src/routes/orderRoutes.js
-import express from 'express';
-import orderController from '../controllers/orderController.js';
-import { authenticate, authorize } from '../middlewares/auth.js';
-import validate from '../middlewares/validate.js';
-import { orderValidation } from '../validators/orderValidator.js';
-import { checkSiteStatusForOrders } from '../middlewares/siteStatus.js';
+import express from "express";
+import orderController from "../controllers/orderController.js";
+import {
+  authenticate,
+  authorize,
+  authorizeBusinessUser,
+} from "../middlewares/auth.js";
+import validate from "../middlewares/validate.js";
+import { orderValidation } from "../validators/orderValidator.js";
+import { checkSiteStatusForOrders } from "../middlewares/siteStatus.js";
 
 const router = express.Router();
 
 // Order CRUD operations - SPECIFIC ROUTES FIRST
 router.post(
-  '/single',
+  "/single",
   authenticate,
-  authorize('agent'),
+  authorizeBusinessUser,
   checkSiteStatusForOrders,
   validate(orderValidation.createSingle),
   orderController.createSingleOrder
 );
 
 router.post(
-  '/bulk',
+  "/bulk",
   authenticate,
-  authorize('agent'),
+  authorizeBusinessUser,
   checkSiteStatusForOrders,
   validate(orderValidation.createBulk),
   orderController.createBulkOrder
@@ -29,94 +33,94 @@ router.post(
 
 // Analytics - SPECIFIC ROUTES FIRST
 router.get(
-  '/analytics/summary',
+  "/analytics/summary",
   authenticate,
-  authorize('agent', 'super_admin'),
+  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
   orderController.getAnalytics
 );
 
-// Agent analytics for dashboard
+// Business user analytics for dashboard
 router.get(
-  '/analytics/agent',
+  "/analytics/agent",
   authenticate,
-  authorize('agent'),
+  authorizeBusinessUser,
   orderController.getAgentAnalytics
 );
 
-// Monthly revenue for user (agent or super admin)
+// Monthly revenue for business users and super admin
 router.get(
-  '/analytics/monthly-revenue',
+  "/analytics/monthly-revenue",
   authenticate,
-  authorize('agent', 'super_admin'),
+  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
   orderController.getMonthlyRevenue
 );
 
-// Daily spending for user (today's completed orders)
+// Daily spending for business users (today's completed orders)
 router.get(
-  '/analytics/daily-spending',
+  "/analytics/daily-spending",
   authenticate,
-  authorize('agent', 'super_admin'),
+  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
   orderController.getDailySpending
 );
 
 // Order processing - RESTRICTED TO SUPER ADMIN ONLY
 router.post(
-  '/:orderId/items/:itemId/process',
+  "/:orderId/items/:itemId/process",
   authenticate,
-  authorize('super_admin'),
+  authorize("super_admin"),
   orderController.processOrderItem
 );
 
 router.post(
-  '/:id/process-bulk',
+  "/:id/process-bulk",
   authenticate,
-  authorize('super_admin'),
+  authorize("super_admin"),
   orderController.processBulkOrder
 );
 
 // Bulk order processing - NEW ENDPOINT FOR SUPER ADMIN
 router.post(
-  '/bulk-process',
+  "/bulk-process",
   authenticate,
-  authorize('super_admin'),
+  authorize("super_admin"),
   orderController.bulkProcessOrders
 );
 
 router.post(
-  '/:id/cancel',
+  "/:id/cancel",
   authenticate,
-  authorize('agent', 'super_admin'),
+  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
   validate(orderValidation.cancel),
   orderController.cancelOrder
 );
 
 router.patch(
-  '/:id/status',
+  "/:id/status",
   authenticate,
-  authorize('super_admin'),
+  authorize("super_admin"),
   orderController.updateOrderStatus
 );
 
 // Process draft orders when wallet is topped up
 router.post(
-  '/process-drafts',
+  "/process-drafts",
   authenticate,
-  authorize('agent', 'super_admin'),
+  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
   orderController.processDraftOrders
 );
 
 // GENERIC ROUTES LAST
 router.get(
-  '/',
+  "/",
   authenticate,
-  authorize('agent', 'super_admin'),
+  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
   orderController.getOrders
 );
 
 router.get(
-  '/:id',
+  "/:id",
   authenticate,
-  authorize('agent', 'super_admin'),
+  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
   orderController.getOrder
 );
 
