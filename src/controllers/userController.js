@@ -1,6 +1,6 @@
 // src/controllers/userController.js
-import { generateSpecialOrderNumber } from '../utils/orderNumberGenerator.js';
-import User from '../models/User.js';
+import { generateSpecialOrderNumber } from "../utils/orderNumberGenerator.js";
+import User from "../models/User.js";
 import logger from "../utils/logger.js";
 import crypto from "crypto";
 
@@ -8,24 +8,26 @@ class UserController {
   // Get current user profile
   async getProfile(req, res) {
     try {
-      const user = await User.findById(req.user.userId).select('-password -refreshToken');
-      
+      const user = await User.findById(req.user.userId).select(
+        "-password -refreshToken"
+      );
+
       if (!user) {
         return res.status(404).json({
           success: false,
-          message: "User not found"
+          message: "User not found",
         });
       }
 
       res.json({
         success: true,
-        user: user.toJSON()
+        user: user.toJSON(),
       });
     } catch (error) {
       logger.error(`Get profile error: ${error.message}`);
       res.status(500).json({
         success: false,
-        message: "Failed to get user profile"
+        message: "Failed to get user profile",
       });
     }
   }
@@ -40,7 +42,7 @@ class UserController {
       if (!user) {
         return res.status(404).json({
           success: false,
-          message: "User not found"
+          message: "User not found",
         });
       }
 
@@ -54,13 +56,13 @@ class UserController {
       res.json({
         success: true,
         message: "Profile updated successfully",
-        user: user.toJSON()
+        user: user.toJSON(),
       });
     } catch (error) {
       logger.error(`Update profile error: ${error.message}`);
       res.status(500).json({
         success: false,
-        message: "Failed to update profile"
+        message: "Failed to update profile",
       });
     }
   }
@@ -75,7 +77,7 @@ class UserController {
       if (!user) {
         return res.status(404).json({
           success: false,
-          message: "User not found"
+          message: "User not found",
         });
       }
 
@@ -84,7 +86,7 @@ class UserController {
       if (!isMatch) {
         return res.status(400).json({
           success: false,
-          message: "Current password is incorrect"
+          message: "Current password is incorrect",
         });
       }
 
@@ -95,13 +97,13 @@ class UserController {
       logger.info(`Password changed for user: ${user.email}`);
       res.json({
         success: true,
-        message: "Password changed successfully"
+        message: "Password changed successfully",
       });
     } catch (error) {
       logger.error(`Change password error: ${error.message}`);
       res.status(500).json({
         success: false,
-        message: "Failed to change password"
+        message: "Failed to change password",
       });
     }
   }
@@ -115,12 +117,12 @@ class UserController {
       let query = {};
 
       // If agent, only show their customers
-      if (requestUserType === 'agent') {
+      if (requestUserType === "agent") {
         query.tenantId = userId;
         if (userType) {
           query.userType = userType;
         }
-      } else if (requestUserType === 'super_admin') {
+      } else if (requestUserType === "super_admin") {
         // Super admin can see all users
         if (userType) {
           query.userType = userType;
@@ -132,21 +134,23 @@ class UserController {
       } else {
         return res.status(403).json({
           success: false,
-          message: "Access denied"
+          message: "Access denied",
         });
       }
 
       // Add search functionality
       if (search) {
         query.$or = [
-          { fullName: { $regex: search, $options: 'i' } },
-          { email: { $regex: search, $options: 'i' } },
-          { phone: { $regex: search, $options: 'i' } }
+          { fullName: { $regex: search, $options: "i" } },
+          { email: { $regex: search, $options: "i" } },
+          { phone: { $regex: search, $options: "i" } },
         ];
       }
 
       const users = await User.find(query)
-        .select('-password -refreshToken -verificationToken -resetPasswordToken')
+        .select(
+          "-password -refreshToken -verificationToken -resetPasswordToken"
+        )
         .sort({ createdAt: -1 })
         .limit(limit * 1)
         .skip((page - 1) * limit);
@@ -160,14 +164,14 @@ class UserController {
           page: parseInt(page),
           limit: parseInt(limit),
           total,
-          pages: Math.ceil(total / limit)
-        }
+          pages: Math.ceil(total / limit),
+        },
       });
     } catch (error) {
       logger.error(`Get users error: ${error.message}`);
       res.status(500).json({
         success: false,
-        message: "Failed to get users"
+        message: "Failed to get users",
       });
     }
   }
@@ -175,14 +179,20 @@ class UserController {
   // Get users with wallet information (super admin only)
   async getUsersWithWallet(req, res) {
     try {
-      const { page = 1, limit = 20, search, userType, includeWallet = 'true' } = req.query;
+      const {
+        page = 1,
+        limit = 20,
+        search,
+        userType,
+        includeWallet = "true",
+      } = req.query;
       const { userType: requestUserType } = req.user;
 
       // Only super admin can access this endpoint
-      if (requestUserType !== 'super_admin') {
+      if (requestUserType !== "super_admin") {
         return res.status(403).json({
           success: false,
-          message: "Access denied. Super admin only."
+          message: "Access denied. Super admin only.",
         });
       }
 
@@ -196,14 +206,15 @@ class UserController {
       // Add search functionality
       if (search) {
         query.$or = [
-          { fullName: { $regex: search, $options: 'i' } },
-          { email: { $regex: search, $options: 'i' } },
-          { phone: { $regex: search, $options: 'i' } }
+          { fullName: { $regex: search, $options: "i" } },
+          { email: { $regex: search, $options: "i" } },
+          { phone: { $regex: search, $options: "i" } },
         ];
       }
 
       // Select fields including wallet balance
-      const selectFields = '-password -refreshToken -verificationToken -resetPasswordToken';
+      const selectFields =
+        "-password -refreshToken -verificationToken -resetPasswordToken";
       const users = await User.find(query)
         .select(selectFields)
         .sort({ createdAt: -1 })
@@ -219,14 +230,14 @@ class UserController {
           page: parseInt(page),
           limit: parseInt(limit),
           total,
-          pages: Math.ceil(total / limit)
-        }
+          pages: Math.ceil(total / limit),
+        },
       });
     } catch (error) {
       logger.error(`Get users with wallet error: ${error.message}`);
       res.status(500).json({
         success: false,
-        message: "Failed to get users"
+        message: "Failed to get users",
       });
     }
   }
@@ -238,45 +249,48 @@ class UserController {
       const { userType: requestUserType, userId: requestUserId } = req.user;
 
       let user;
-      
-      if (requestUserType === 'agent') {
+
+      if (requestUserType === "agent") {
         // Agent can only view their customers or themselves
         user = await User.findOne({
           _id: id,
-          $or: [
-            { tenantId: requestUserId },
-            { _id: requestUserId }
-          ]
-        }).select('-password -refreshToken -verificationToken -resetPasswordToken');
-      } else if (requestUserType === 'super_admin') {
-        user = await User.findById(id).select('-password -refreshToken -verificationToken -resetPasswordToken');
+          $or: [{ tenantId: requestUserId }, { _id: requestUserId }],
+        }).select(
+          "-password -refreshToken -verificationToken -resetPasswordToken"
+        );
+      } else if (requestUserType === "super_admin") {
+        user = await User.findById(id).select(
+          "-password -refreshToken -verificationToken -resetPasswordToken"
+        );
       } else {
         // Regular users can only view their own profile
         if (id !== requestUserId.toString()) {
           return res.status(403).json({
             success: false,
-            message: "Access denied"
+            message: "Access denied",
           });
         }
-        user = await User.findById(id).select('-password -refreshToken -verificationToken -resetPasswordToken');
+        user = await User.findById(id).select(
+          "-password -refreshToken -verificationToken -resetPasswordToken"
+        );
       }
 
       if (!user) {
         return res.status(404).json({
           success: false,
-          message: "User not found"
+          message: "User not found",
         });
       }
 
       res.json({
         success: true,
-        user: user.toJSON()
+        user: user.toJSON(),
       });
     } catch (error) {
       logger.error(`Get user by ID error: ${error.message}`);
       res.status(500).json({
         success: false,
-        message: "Failed to get user"
+        message: "Failed to get user",
       });
     }
   }
@@ -288,10 +302,10 @@ class UserController {
       const { isVerified, subscriptionStatus, userType } = req.body;
       const { userType: requestUserType } = req.user;
 
-      if (requestUserType !== 'super_admin') {
+      if (requestUserType !== "super_admin") {
         return res.status(403).json({
           success: false,
-          message: "Access denied. Admin privileges required."
+          message: "Access denied. Admin privileges required.",
         });
       }
 
@@ -299,21 +313,35 @@ class UserController {
       if (!user) {
         return res.status(404).json({
           success: false,
-          message: "User not found"
+          message: "User not found",
         });
       }
 
       // Update allowed status fields
-      if (typeof isVerified === 'boolean') {
+      if (typeof isVerified === "boolean") {
         user.isVerified = isVerified;
       }
-      
-      if (subscriptionStatus && user.userType === 'agent') {
+
+      if (
+        subscriptionStatus &&
+        ["agent", "super_agent", "dealer", "super_dealer"].includes(
+          user.userType
+        )
+      ) {
         user.subscriptionStatus = subscriptionStatus;
       }
 
       // Allow super admins to change user types
-      if (userType && ['customer', 'agent', 'super_admin'].includes(userType)) {
+      if (
+        userType &&
+        [
+          "agent",
+          "super_agent",
+          "dealer",
+          "super_dealer",
+          "super_admin",
+        ].includes(userType)
+      ) {
         user.userType = userType;
       }
 
@@ -323,13 +351,13 @@ class UserController {
       res.json({
         success: true,
         message: "User status updated successfully",
-        user: user.toJSON()
+        user: user.toJSON(),
       });
     } catch (error) {
       logger.error(`Update user status error: ${error.message}`);
       res.status(500).json({
         success: false,
-        message: "Failed to update user status"
+        message: "Failed to update user status",
       });
     }
   }
@@ -340,10 +368,10 @@ class UserController {
       const { id } = req.params;
       const { userType: requestUserType, userId: requestUserId } = req.user;
 
-      if (requestUserType !== 'super_admin') {
+      if (requestUserType !== "super_admin") {
         return res.status(403).json({
           success: false,
-          message: "Access denied. Admin privileges required."
+          message: "Access denied. Admin privileges required.",
         });
       }
 
@@ -351,7 +379,7 @@ class UserController {
       if (id === requestUserId.toString()) {
         return res.status(400).json({
           success: false,
-          message: "You cannot delete your own account"
+          message: "You cannot delete your own account",
         });
       }
 
@@ -359,26 +387,26 @@ class UserController {
       if (!user) {
         return res.status(404).json({
           success: false,
-          message: "User not found"
+          message: "User not found",
         });
       }
 
       // For now, we'll just mark the user as inactive
       // In a real app, you might want to implement soft delete
-      user.subscriptionStatus = 'suspended';
+      user.subscriptionStatus = "suspended";
       user.isVerified = false;
       await user.save();
 
       logger.info(`User deleted: ${user.email} by ${req.user.email}`);
       res.json({
         success: true,
-        message: "User deleted successfully"
+        message: "User deleted successfully",
       });
     } catch (error) {
       logger.error(`Delete user error: ${error.message}`);
       res.status(500).json({
         success: false,
-        message: "Failed to delete user"
+        message: "Failed to delete user",
       });
     }
   }
@@ -390,67 +418,73 @@ class UserController {
 
       let stats = {};
 
-      if (requestUserType === 'agent') {
-        // Agent stats - their customers
-        const totalCustomers = await User.countDocuments({
+      if (
+        ["agent", "super_agent", "dealer", "super_dealer"].includes(
+          requestUserType
+        )
+      ) {
+        // Agent stats - their subordinates (other agent roles under them)
+        const totalSubordinates = await User.countDocuments({
           tenantId: userId,
-          userType: 'customer'
+          userType: { $in: ["agent", "super_agent", "dealer", "super_dealer"] },
         });
 
-        const verifiedCustomers = await User.countDocuments({
+        const verifiedSubordinates = await User.countDocuments({
           tenantId: userId,
-          userType: 'customer',
-          isVerified: true
+          userType: { $in: ["agent", "super_agent", "dealer", "super_dealer"] },
+          isVerified: true,
         });
 
-        const recentCustomers = await User.countDocuments({
+        const recentSubordinates = await User.countDocuments({
           tenantId: userId,
-          userType: 'customer',
-          createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
+          userType: { $in: ["agent", "super_agent", "dealer", "super_dealer"] },
+          createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
         });
 
         stats = {
-          totalCustomers,
-          verifiedCustomers,
-          unverifiedCustomers: totalCustomers - verifiedCustomers,
-          recentCustomers
+          totalSubordinates,
+          verifiedSubordinates,
+          unverifiedSubordinates: totalSubordinates - verifiedSubordinates,
+          recentSubordinates,
         };
-      } else if (requestUserType === 'super_admin') {
+      } else if (requestUserType === "super_admin") {
         // Admin stats - all users
         const totalUsers = await User.countDocuments();
-        const totalAgents = await User.countDocuments({ userType: 'agent' });
-        const totalCustomers = await User.countDocuments({ userType: 'customer' });
+        const totalAgents = await User.countDocuments({ userType: "agent" });
+        const totalAgentRoles = await User.countDocuments({
+          userType: { $in: ["agent", "super_agent", "dealer", "super_dealer"] },
+        });
         const verifiedUsers = await User.countDocuments({ isVerified: true });
         const activeAgents = await User.countDocuments({
-          userType: 'agent',
-          subscriptionStatus: 'active'
+          userType: "agent",
+          subscriptionStatus: "active",
         });
 
         stats = {
           totalUsers,
           totalAgents,
-          totalCustomers,
+          totalAgentRoles,
           verifiedUsers,
           unverifiedUsers: totalUsers - verifiedUsers,
           activeAgents,
-          inactiveAgents: totalAgents - activeAgents
+          inactiveAgents: totalAgents - activeAgents,
         };
       } else {
         return res.status(403).json({
           success: false,
-          message: "Access denied"
+          message: "Access denied",
         });
       }
 
       res.json({
         success: true,
-        stats
+        stats,
       });
     } catch (error) {
       logger.error(`Get user stats error: ${error.message}`);
       res.status(500).json({
         success: false,
-        message: "Failed to get user statistics"
+        message: "Failed to get user statistics",
       });
     }
   }
@@ -460,17 +494,18 @@ class UserController {
     try {
       const { userType: requestUserType } = req.user;
 
-      if (requestUserType !== 'super_admin') {
+      if (requestUserType !== "super_admin") {
         return res.status(403).json({
           success: false,
-          message: "Access denied. Super admin privileges required."
+          message: "Access denied. Super admin privileges required.",
         });
       }
 
       // Import Order model for statistics
-      const Order = (await import('../models/Order.js')).default;
-      const WalletTransaction = (await import('../models/WalletTransaction.js')).default;
-      const Provider = (await import('../models/Provider.js')).default;
+      const Order = (await import("../models/Order.js")).default;
+      const WalletTransaction = (await import("../models/WalletTransaction.js"))
+        .default;
+      const Provider = (await import("../models/Provider.js")).default;
 
       // Calculate date ranges
       const now = new Date();
@@ -480,113 +515,133 @@ class UserController {
 
       // User Statistics
       const totalUsers = await User.countDocuments();
-      const totalAgents = await User.countDocuments({ userType: 'agent' });
-      const totalCustomers = await User.countDocuments({ userType: 'customer' });
+      const totalAgents = await User.countDocuments({ userType: "agent" });
+      const totalCustomers = await User.countDocuments({
+        userType: "customer",
+      });
       const verifiedUsers = await User.countDocuments({ isVerified: true });
       const activeAgents = await User.countDocuments({
-        userType: 'agent',
-        subscriptionStatus: 'active'
+        userType: "agent",
+        subscriptionStatus: "active",
       });
       const pendingAgents = await User.countDocuments({
-        userType: 'agent',
-        status: 'pending'
+        userType: "agent",
+        status: "pending",
       });
       const newUsersThisWeek = await User.countDocuments({
-        createdAt: { $gte: last7Days }
+        createdAt: { $gte: last7Days },
       });
       const newUsersThisMonth = await User.countDocuments({
-        createdAt: { $gte: last30Days }
+        createdAt: { $gte: last30Days },
       });
 
       // Order Statistics
       const totalOrders = await Order.countDocuments();
-      const completedOrders = await Order.countDocuments({ status: 'completed' });
-      const pendingOrders = await Order.countDocuments({ status: 'pending' });
-      const processingOrders = await Order.countDocuments({ status: 'processing' });
-      const cancelledOrders = await Order.countDocuments({ status: 'cancelled' });
-      const failedOrders = await Order.countDocuments({ status: 'failed' });
+      const completedOrders = await Order.countDocuments({
+        status: "completed",
+      });
+      const pendingOrders = await Order.countDocuments({ status: "pending" });
+      const processingOrders = await Order.countDocuments({
+        status: "processing",
+      });
+      const cancelledOrders = await Order.countDocuments({
+        status: "cancelled",
+      });
+      const failedOrders = await Order.countDocuments({ status: "failed" });
       const ordersThisWeek = await Order.countDocuments({
-        createdAt: { $gte: last7Days }
+        createdAt: { $gte: last7Days },
       });
       const ordersThisMonth = await Order.countDocuments({
-        createdAt: { $gte: last30Days }
+        createdAt: { $gte: last30Days },
       });
 
       // Today's range
       const startOfToday = new Date();
-      startOfToday.setHours(0,0,0,0);
+      startOfToday.setHours(0, 0, 0, 0);
       const endOfToday = new Date(startOfToday);
       endOfToday.setDate(endOfToday.getDate() + 1);
 
-      const todaysOrders = await Order.countDocuments({ createdAt: { $gte: startOfToday, $lt: endOfToday } });
+      const todaysOrders = await Order.countDocuments({
+        createdAt: { $gte: startOfToday, $lt: endOfToday },
+      });
 
       // Today's revenue (only count completed orders)
       const revenueTodayAgg = await Order.aggregate([
-        { $match: { status: 'completed', createdAt: { $gte: startOfToday, $lt: endOfToday } } },
-        { $group: { _id: null, total: { $sum: '$total' } } }
+        {
+          $match: {
+            status: "completed",
+            createdAt: { $gte: startOfToday, $lt: endOfToday },
+          },
+        },
+        { $group: { _id: null, total: { $sum: "$total" } } },
       ]);
       const revenueToday = revenueTodayAgg[0]?.total || 0;
 
       // Revenue Statistics
       const totalRevenue = await Order.aggregate([
-        { $match: { status: 'completed' } },
-        { $group: { _id: null, total: { $sum: '$total' } } }
+        { $match: { status: "completed" } },
+        { $group: { _id: null, total: { $sum: "$total" } } },
       ]);
       const revenueThisWeek = await Order.aggregate([
-        { 
-          $match: { 
-            status: 'completed',
-            createdAt: { $gte: last7Days }
-          }
+        {
+          $match: {
+            status: "completed",
+            createdAt: { $gte: last7Days },
+          },
         },
-        { $group: { _id: null, total: { $sum: '$total' } } }
+        { $group: { _id: null, total: { $sum: "$total" } } },
       ]);
       const revenueThisMonth = await Order.aggregate([
-        { 
-          $match: { 
-            status: 'completed',
-            createdAt: { $gte: last30Days }
-          }
+        {
+          $match: {
+            status: "completed",
+            createdAt: { $gte: last30Days },
+          },
         },
-        { $group: { _id: null, total: { $sum: '$total' } } }
+        { $group: { _id: null, total: { $sum: "$total" } } },
       ]);
 
       // Provider Statistics
       const totalProviders = await Provider.countDocuments();
-      const activeProviders = await Provider.countDocuments({ status: 'active' });
+      const activeProviders = await Provider.countDocuments({
+        status: "active",
+      });
       const newProvidersThisMonth = await Provider.countDocuments({
-        createdAt: { $gte: last30Days }
+        createdAt: { $gte: last30Days },
       });
 
       // Wallet Statistics
       const totalTransactions = await WalletTransaction.countDocuments();
       const transactionsThisWeek = await WalletTransaction.countDocuments({
-        createdAt: { $gte: last7Days }
+        createdAt: { $gte: last7Days },
       });
       const totalWalletBalance = await WalletTransaction.aggregate([
-        { $group: { _id: null, total: { $sum: '$amount' } } }
+        { $group: { _id: null, total: { $sum: "$amount" } } },
       ]);
 
       // Recent Activity (last 10 items)
       const recentUsers = await User.find()
-        .select('fullName email userType createdAt status')
+        .select("fullName email userType createdAt status")
         .sort({ createdAt: -1 })
         .limit(10);
 
       const recentOrders = await Order.find()
-        .select('orderNumber total status createdAt')
+        .select("orderNumber total status createdAt")
         .sort({ createdAt: -1 })
         .limit(10);
 
       const recentTransactions = await WalletTransaction.find()
-        .select('amount type description createdAt')
+        .select("amount type description createdAt")
         .sort({ createdAt: -1 })
         .limit(10);
 
       // Calculate percentages and rates
-      const userVerificationRate = totalUsers > 0 ? Math.round((verifiedUsers / totalUsers) * 100) : 0;
-      const orderSuccessRate = totalOrders > 0 ? Math.round((completedOrders / totalOrders) * 100) : 0;
-      const agentActivationRate = totalAgents > 0 ? Math.round((activeAgents / totalAgents) * 100) : 0;
+      const userVerificationRate =
+        totalUsers > 0 ? Math.round((verifiedUsers / totalUsers) * 100) : 0;
+      const orderSuccessRate =
+        totalOrders > 0 ? Math.round((completedOrders / totalOrders) * 100) : 0;
+      const agentActivationRate =
+        totalAgents > 0 ? Math.round((activeAgents / totalAgents) * 100) : 0;
 
       const stats = {
         users: {
@@ -600,7 +655,7 @@ class UserController {
           pendingAgents,
           newThisWeek: newUsersThisWeek,
           newThisMonth: newUsersThisMonth,
-          verificationRate: userVerificationRate
+          verificationRate: userVerificationRate,
         },
         orders: {
           total: totalOrders,
@@ -613,45 +668,45 @@ class UserController {
           today: todaysOrders,
           thisWeek: ordersThisWeek,
           thisMonth: ordersThisMonth,
-          successRate: orderSuccessRate
+          successRate: orderSuccessRate,
         },
         revenue: {
           total: totalRevenue[0]?.total || 0,
           today: revenueToday,
           thisWeek: revenueThisWeek[0]?.total || 0,
-          thisMonth: revenueThisMonth[0]?.total || 0
+          thisMonth: revenueThisMonth[0]?.total || 0,
         },
         providers: {
           total: totalProviders,
           active: activeProviders,
-          newThisMonth: newProvidersThisMonth
+          newThisMonth: newProvidersThisMonth,
         },
         wallet: {
           totalTransactions,
           thisWeek: transactionsThisWeek,
-          totalBalance: totalWalletBalance[0]?.total || 0
+          totalBalance: totalWalletBalance[0]?.total || 0,
         },
         rates: {
           userVerification: userVerificationRate,
           orderSuccess: orderSuccessRate,
-          agentActivation: agentActivationRate
+          agentActivation: agentActivationRate,
         },
         recentActivity: {
           users: recentUsers,
           orders: recentOrders,
-          transactions: recentTransactions
-        }
+          transactions: recentTransactions,
+        },
       };
 
       res.json({
         success: true,
-        stats
+        stats,
       });
     } catch (error) {
       logger.error(`Get dashboard stats error: ${error.message}`);
       res.status(500).json({
         success: false,
-        message: "Failed to get dashboard statistics"
+        message: "Failed to get dashboard statistics",
       });
     }
   }
@@ -661,16 +716,17 @@ class UserController {
     try {
       const { userType: requestUserType } = req.user;
 
-      if (requestUserType !== 'super_admin') {
+      if (requestUserType !== "super_admin") {
         return res.status(403).json({
           success: false,
-          message: "Access denied. Super admin privileges required."
+          message: "Access denied. Super admin privileges required.",
         });
       }
 
       // Import Order model for statistics
-      const Order = (await import('../models/Order.js')).default;
-      const WalletTransaction = (await import('../models/WalletTransaction.js')).default;
+      const Order = (await import("../models/Order.js")).default;
+      const WalletTransaction = (await import("../models/WalletTransaction.js"))
+        .default;
 
       // Generate last 30 days data
       const days = 30;
@@ -682,20 +738,22 @@ class UserController {
         orderStatus: {
           completed: 0,
           pending: 0,
-          failed: 0
+          failed: 0,
         },
         userTypes: {
           agents: 0,
           customers: 0,
-          super_admins: 0
-        }
+          super_admins: 0,
+        },
       };
 
       // Generate labels for last 30 days
       for (let i = days - 1; i >= 0; i--) {
         const date = new Date();
         date.setDate(date.getDate() - i);
-        chartData.labels.push(date.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' }));
+        chartData.labels.push(
+          date.toLocaleDateString("en-GB", { month: "short", day: "numeric" })
+        );
       }
 
       // Get user registrations per day
@@ -703,12 +761,12 @@ class UserController {
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - i);
         startDate.setHours(0, 0, 0, 0);
-        
+
         const endDate = new Date(startDate);
         endDate.setDate(endDate.getDate() + 1);
 
         const userCount = await User.countDocuments({
-          createdAt: { $gte: startDate, $lt: endDate }
+          createdAt: { $gte: startDate, $lt: endDate },
         });
         chartData.userRegistrations.push(userCount);
       }
@@ -718,12 +776,12 @@ class UserController {
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - i);
         startDate.setHours(0, 0, 0, 0);
-        
+
         const endDate = new Date(startDate);
         endDate.setDate(endDate.getDate() + 1);
 
         const orderCount = await Order.countDocuments({
-          createdAt: { $gte: startDate, $lt: endDate }
+          createdAt: { $gte: startDate, $lt: endDate },
         });
         chartData.orders.push(orderCount);
       }
@@ -733,53 +791,58 @@ class UserController {
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - i);
         startDate.setHours(0, 0, 0, 0);
-        
+
         const endDate = new Date(startDate);
         endDate.setDate(endDate.getDate() + 1);
 
         const revenue = await Order.aggregate([
-          { 
-            $match: { 
-              status: 'completed',
-              createdAt: { $gte: startDate, $lt: endDate }
-            }
+          {
+            $match: {
+              status: "completed",
+              createdAt: { $gte: startDate, $lt: endDate },
+            },
           },
-          { $group: { _id: null, total: { $sum: '$total' } } }
+          { $group: { _id: null, total: { $sum: "$total" } } },
         ]);
         chartData.revenue.push(revenue[0]?.total || 0);
       }
 
       // Get order status distribution
       const orderStatusData = await Order.aggregate([
-        { $group: { _id: '$status', count: { $sum: 1 } } }
+        { $group: { _id: "$status", count: { $sum: 1 } } },
       ]);
-      
-      orderStatusData.forEach(item => {
-        if (item._id === 'completed') chartData.orderStatus.completed = item.count;
-        else if (item._id === 'pending') chartData.orderStatus.pending = item.count;
-        else if (item._id === 'failed') chartData.orderStatus.failed = item.count;
+
+      orderStatusData.forEach((item) => {
+        if (item._id === "completed")
+          chartData.orderStatus.completed = item.count;
+        else if (item._id === "pending")
+          chartData.orderStatus.pending = item.count;
+        else if (item._id === "failed")
+          chartData.orderStatus.failed = item.count;
       });
 
       // Get user type distribution
       const userTypeData = await User.aggregate([
-        { $group: { _id: '$userType', count: { $sum: 1 } } }
+        { $group: { _id: "$userType", count: { $sum: 1 } } },
       ]);
-      
-      userTypeData.forEach(item => {
-        if (item._id === 'agent') chartData.userTypes.agents = item.count;
-        else if (item._id === 'customer') chartData.userTypes.customers = item.count;
-        else if (item._id === 'super_admin') chartData.userTypes.super_admins = item.count;
+
+      userTypeData.forEach((item) => {
+        if (item._id === "agent") chartData.userTypes.agents = item.count;
+        else if (item._id === "customer")
+          chartData.userTypes.customers = item.count;
+        else if (item._id === "super_admin")
+          chartData.userTypes.super_admins = item.count;
       });
 
       res.json({
         success: true,
-        chartData
+        chartData,
       });
     } catch (error) {
       logger.error(`Get chart data error: ${error.message}`);
       res.status(500).json({
         success: false,
-        message: "Failed to get chart data"
+        message: "Failed to get chart data",
       });
     }
   }
@@ -794,7 +857,7 @@ class UserController {
       if (!fullName || !phone || !userType) {
         return res.status(400).json({
           success: false,
-          message: "Full name, phone number, and user type are required"
+          message: "Full name, phone number, and user type are required",
         });
       }
 
@@ -803,118 +866,125 @@ class UserController {
       if (!phoneRegex.test(phone)) {
         return res.status(400).json({
           success: false,
-          message: "Phone number must be 10 digits starting with 0"
+          message: "Phone number must be 10 digits starting with 0",
         });
       }
 
       // Set registration fees
       const registrationFees = {
-        agent: 3.00,      // GH¢3
-        subscriber: 5.50  // GH¢5.5
+        agent: 3.0, // GH¢3
+        subscriber: 5.5, // GH¢5.5
       };
 
       const fee = registrationFees[userType] || registrationFees.subscriber;
 
       // Create AFA order directly in the database
-      const Order = (await import('../models/Order.js')).default;
-      const User = (await import('../models/User.js')).default;
-      const WalletTransaction = (await import('../models/WalletTransaction.js')).default;
+      const Order = (await import("../models/Order.js")).default;
+      const User = (await import("../models/User.js")).default;
+      const WalletTransaction = (await import("../models/WalletTransaction.js"))
+        .default;
 
       // Check wallet balance
       const user = await User.findById(userId);
       if (!user) {
         return res.status(404).json({
           success: false,
-          message: "User not found"
+          message: "User not found",
         });
       }
 
       // Determine order status based on wallet balance
-      let orderStatus = 'pending';
+      let orderStatus = "pending";
       let walletDeducted = false;
 
       if (user.walletBalance >= fee) {
         // Sufficient balance - deduct wallet
         user.walletBalance -= fee;
         await user.save();
-        
+
         // Record wallet transaction
         const transaction = new WalletTransaction({
           user: userId,
-          type: 'debit',
+          type: "debit",
           amount: fee,
           balanceAfter: user.walletBalance,
           description: `AFA Registration - ${userType} for ${fullName}`,
-          metadata: { orderType: 'afa_registration' }
+          metadata: { orderType: "afa_registration" },
         });
         await transaction.save();
-        
+
         walletDeducted = true;
       } else {
         // Insufficient balance - create as draft
-        orderStatus = 'draft';
+        orderStatus = "draft";
       }
 
       // Create the AFA order
-      const orderNumber = await generateSpecialOrderNumber('AFA');
-      
+      const orderNumber = await generateSpecialOrderNumber("AFA");
+
       // Create a dummy package for AFA orders
-      const Package = (await import('../models/Package.js')).default;
-      let afaPackage = await Package.findOne({ name: 'AFA Registration Package' });
-      
+      const Package = (await import("../models/Package.js")).default;
+      let afaPackage = await Package.findOne({
+        name: "AFA Registration Package",
+      });
+
       if (!afaPackage) {
         afaPackage = new Package({
-          name: 'AFA Registration Package',
-          description: 'AFA Registration Services',
+          name: "AFA Registration Package",
+          description: "AFA Registration Services",
           isActive: true,
           isDeleted: false,
           createdBy: userId,
           tenantId: userId,
-          category: 'custom',
-          provider: 'AFA'
+          category: "custom",
+          provider: "AFA",
         });
         await afaPackage.save();
       }
 
       const order = new Order({
         orderNumber,
-        orderType: 'single',
+        orderType: "single",
         customerInfo: {
           name: fullName,
-          phone: phone
+          phone: phone,
         },
-        items: [{
-          packageGroup: afaPackage._id,
-          packageItem: afaPackage._id, // Use package as item
-          packageDetails: {
-            name: `AFA Registration - ${userType}`,
-            code: 'AFA',
-            price: fee,
-            provider: 'AFA'
+        items: [
+          {
+            packageGroup: afaPackage._id,
+            packageItem: afaPackage._id, // Use package as item
+            packageDetails: {
+              name: `AFA Registration - ${userType}`,
+              code: "AFA",
+              price: fee,
+              provider: "AFA",
+            },
+            quantity: 1,
+            unitPrice: fee,
+            totalPrice: fee,
+            customerPhone: phone,
+            bundleSize: {
+              value: 0,
+              unit: "GB",
+            },
           },
-          quantity: 1,
-          unitPrice: fee,
-          totalPrice: fee,
-          customerPhone: phone,
-          bundleSize: {
-            value: 0,
-            unit: 'GB'
-          }
-        }],
+        ],
         subtotal: fee,
         total: fee,
         status: orderStatus,
-        paymentStatus: walletDeducted ? 'paid' : 'pending',
-        paymentMethod: 'wallet',
+        paymentStatus: walletDeducted ? "paid" : "pending",
+        paymentMethod: "wallet",
         tenantId: userId,
         createdBy: userId,
-        notes: `AFA Registration for ${userType} - ${fullName} (${phone})`
+        notes: `AFA Registration for ${userType} - ${fullName} (${phone})`,
       });
 
       await order.save();
 
-      logger.info(`AFA registration order created: ${order.orderNumber} for user: ${userId}`);
-      
+      logger.info(
+        `AFA registration order created: ${order.orderNumber} for user: ${userId}`
+      );
+
       res.json({
         success: true,
         message: "AFA registration order created successfully",
@@ -923,14 +993,14 @@ class UserController {
           totalAmount: order.total,
           status: order.status,
           customerName: order.customerName,
-          customerPhone: order.customerPhone
-        }
+          customerPhone: order.customerPhone,
+        },
       });
     } catch (error) {
       logger.error(`AFA registration error: ${error.message}`);
       res.status(500).json({
         success: false,
-        message: "AFA registration failed. Please try again."
+        message: "AFA registration failed. Please try again.",
       });
     }
   }
@@ -941,32 +1011,32 @@ class UserController {
       const userId = req.user.userId;
 
       // Import Order model
-      const Order = (await import('../models/Order.js')).default;
+      const Order = (await import("../models/Order.js")).default;
 
       // Get AFA orders for this user
       const afaOrders = await Order.find({
         tenantId: userId,
-        'items.packageDetails.provider': 'AFA'
+        "items.packageDetails.provider": "AFA",
       })
-      .sort({ createdAt: -1 })
-      .limit(50)
-      .lean();
+        .sort({ createdAt: -1 })
+        .limit(50)
+        .lean();
 
       const total = await Order.countDocuments({
         tenantId: userId,
-        'items.packageDetails.provider': 'AFA'
+        "items.packageDetails.provider": "AFA",
       });
 
       res.json({
         success: true,
         afaOrders: afaOrders || [],
-        total: total || 0
+        total: total || 0,
       });
     } catch (error) {
       logger.error(`Get AFA orders error: ${error.message}`);
       res.status(500).json({
         success: false,
-        message: "Failed to get AFA orders"
+        message: "Failed to get AFA orders",
       });
     }
   }
