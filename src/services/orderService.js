@@ -15,6 +15,7 @@ import {
   isDuplicateKeyError,
 } from "../utils/orderSaveHelper.js";
 import { isBusinessUser } from "../utils/userTypeHelpers.js";
+import { getPriceForUserType } from "../utils/pricingHelpers.js";
 
 class OrderService {
   /**
@@ -228,10 +229,7 @@ class OrderService {
         throw new Error("Bundle not found or inactive");
       }
 
-      // Calculate order total
-      const orderTotal = bundle.price * quantity;
-
-      // Check wallet balance
+      // Get user to determine pricing
       const user = session
         ? await User.findById(userId).session(session)
         : await User.findById(userId);
@@ -239,6 +237,10 @@ class OrderService {
       if (!user) {
         throw new Error("User not found");
       }
+
+      // Calculate order total using user-specific pricing
+      const userPrice = getPriceForUserType(bundle, user.userType);
+      const orderTotal = userPrice * quantity;
 
       // Determine order status based on wallet balance and user type
       let orderStatus = "pending"; // Default to pending for agents
@@ -295,13 +297,13 @@ class OrderService {
             packageDetails: {
               name: bundle.name,
               code: bundle._id.toString(),
-              price: bundle.price,
+              price: userPrice, // Use user-specific price
               dataVolume: bundle.dataVolume,
               validity: bundle.validity,
               provider: bundle.providerId?.code || bundle.providerId?.name,
             },
             quantity,
-            unitPrice: bundle.price,
+            unitPrice: userPrice, // Use user-specific price
             totalPrice: orderTotal,
             customerPhone,
             bundleSize: bundleSize
@@ -519,16 +521,22 @@ class OrderService {
           bundle,
           parsed: parsed.value,
         });
-        totalOrderAmount += bundle.price;
       }
 
-      // Check wallet balance
+      // Check wallet balance and get user info first to determine pricing
       const user = session
         ? await User.findById(userId).session(session)
         : await User.findById(userId);
 
       if (!user) {
         throw new Error("User not found");
+      }
+
+      // Calculate total order amount using user-specific pricing
+      totalOrderAmount = 0; // Reset the total amount
+      for (const item of orderItems) {
+        const userPrice = getPriceForUserType(item.bundle, user.userType);
+        totalOrderAmount += userPrice;
       }
 
       // Determine if we can process all orders or need to create as drafts
@@ -569,6 +577,9 @@ class OrderService {
         const packageGroup = bundle.packageId;
 
         try {
+          // Get user-specific price for this bundle
+          const userPrice = getPriceForUserType(bundle, user.userType);
+
           // Determine order status based on user type and wallet balance
           let orderStatus = "pending"; // Default to pending for agents
           const paymentStatus = canProcessAll ? "paid" : "pending";
@@ -593,15 +604,15 @@ class OrderService {
                 packageDetails: {
                   name: bundle.name,
                   code: bundle._id.toString(),
-                  price: bundle.price,
+                  price: userPrice, // Use user-specific price
                   dataVolume: bundle.dataVolume,
                   validity: bundle.validity,
                   validityUnit: bundle.validityUnit,
                   provider: bundle.providerId?.code || bundle.providerId?.name,
                 },
                 quantity: 1,
-                unitPrice: bundle.price,
-                totalPrice: bundle.price,
+                unitPrice: userPrice, // Use user-specific price
+                totalPrice: userPrice, // Use user-specific price
                 customerPhone: parsed.customerPhone,
                 bundleSize: parsed.bundleSize,
                 processingStatus: "pending",
