@@ -854,6 +854,7 @@ class AuthController {
         "fullName",
         "email",
         "phone",
+        "userType",
         "businessName",
         "businessCategory",
         "subscriptionPlan",
