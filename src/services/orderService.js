@@ -5,6 +5,7 @@ import User from "../models/User.js";
 import WalletTransaction from "../models/WalletTransaction.js";
 import walletService from "./walletService.js";
 import notificationService from "./notificationService.js";
+import pushNotificationService from "./pushNotificationService.js";
 import duplicateOrderPreventionService from "./duplicateOrderPreventionService.js";
 import commissionService from "./commissionService.js";
 import mongoose from "mongoose";
@@ -443,6 +444,19 @@ class OrderService {
           navigationLink: this.getNavigationLink(user.userType, "orders"),
         }
       );
+
+      // Send push notification to user
+      try {
+        await pushNotificationService.sendOrderStatusUpdate(
+          userId.toString(),
+          order,
+          order.status
+        );
+      } catch (pushError) {
+        logger.error(
+          `Failed to send push notification for order creation: ${pushError.message}`
+        );
+      }
     } catch (error) {
       logger.error(
         `Failed to send order creation notification: ${error.message}`
