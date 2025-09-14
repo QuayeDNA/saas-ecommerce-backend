@@ -1721,6 +1721,90 @@ class OrderService {
 
     return result.order || result;
   }
+
+  // Report data delivery issue
+  async reportOrder(orderId, tenantId, userId, description) {
+    // Find the order
+    const query = tenantId ? { _id: orderId, tenantId } : { _id: orderId };
+    const order = await Order.findOne(query);
+
+    if (!order) {
+      throw new Error("Order not found");
+    }
+
+    // Only allow reporting on completed orders
+    if (order.status !== "completed") {
+      throw new Error("Can only report issues on completed orders");
+    }
+
+    // Check if order is older than 3 days
+    const orderDate = new Date(order.createdAt);
+    const threeDaysAgo = new Date();
+    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+
+    if (orderDate < threeDaysAgo) {
+      throw new Error("Cannot report issues on orders older than 3 days");
+    }
+
+    // Get the reporter user info
+    const reporter = await User.findById(userId);
+    if (!reporter) {
+      throw new Error("Reporter not found");
+    }
+
+    // Create a report record (you might want to create a separate Report model for this)
+    const reportId = new mongoose.Types.ObjectId();
+
+    // Log the report
+    logger.info(
+      `Data delivery issue reported: Order ${order.orderNumber} by user ${
+        reporter.fullName || reporter.email
+      }`
+    );
+
+    // Send notification to super admin
+    try {
+      // Find super admin users
+      const superAdmins = await User.find({ userType: "super_admin" });
+
+      for (const admin of superAdmins) {
+        await notificationService.createNotification(
+          admin._id.toString(),
+          "Data Delivery Issue Reported",
+          `User ${
+            reporter.fullName || reporter.email
+          } reported that data was not delivered for order ${
+            order.orderNumber
+          } (${order.items[0]?.customerPhone || "N/A"}). Issue: ${description}`,
+          "warning",
+          {
+            orderId: order._id.toString(),
+            orderNumber: order.orderNumber,
+            phoneNumber: order.items[0]?.customerPhone || "N/A",
+            reporterName: reporter.fullName || reporter.email,
+            reporterId: userId,
+            description,
+            reportId: reportId.toString(),
+            type: "data_delivery_report",
+            navigationLink: this.getNavigationLink(admin.userType, "orders"),
+          }
+        );
+      }
+    } catch (error) {
+      logger.error(
+        `Failed to send data delivery report notification: ${error.message}`
+      );
+    }
+
+    return {
+      order: order.toObject(),
+      reportId: reportId.toString(),
+      reporter: {
+        id: userId,
+        name: reporter.fullName || reporter.email,
+      },
+    };
+  }
 }
 
 export default new OrderService();

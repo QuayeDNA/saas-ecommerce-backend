@@ -94,6 +94,14 @@ router.post(
   orderController.cancelOrder
 );
 
+router.post(
+  "/:id/report",
+  authenticate,
+  authorize("agent", "super_agent", "dealer", "super_dealer"),
+  validate(orderValidation.report),
+  orderController.reportOrder
+);
+
 router.patch(
   "/:id/status",
   authenticate,
