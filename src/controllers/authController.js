@@ -783,12 +783,31 @@ class AuthController {
   // List all users (super admin only)
   async listUsers(req, res) {
     try {
-      const { status, userType } = req.query;
+      const { status, userType, search } = req.query;
       const filter = {};
+
+      // Add status filter
       if (status) filter.status = status;
+
+      // Add userType filter
       if (userType) filter.userType = userType;
+
+      // Add search filter for fullName, email, or phone
+      if (search) {
+        const searchRegex = new RegExp(search, "i"); // Case-insensitive search
+        filter.$or = [
+          { fullName: searchRegex },
+          { email: searchRegex },
+          { phone: searchRegex },
+          { agentCode: searchRegex },
+        ];
+      }
+
       // No tenantId filtering; super admin sees all users
-      const users = await User.find(filter).select("-password -refreshToken");
+      const users = await User.find(filter)
+        .select("-password -refreshToken")
+        .sort({ createdAt: -1 }); // Sort by newest first
+
       res.json({ success: true, users });
     } catch (error) {
       logger.error(`List users failed: ${error.message}`);
