@@ -1,6 +1,7 @@
 // src/controllers/authController.js
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
+import mongoose from "mongoose";
 import User from "../models/User.js";
 import emailService from "../services/emailService.js";
 import logger from "../utils/logger.js";
@@ -80,7 +81,7 @@ class AuthController {
         });
       }
 
-      // Create agent document with temporary agent code
+      // Create agent document with temporary agent code and temporary tenantId
       const agent = new User({
         fullName,
         email,
@@ -94,11 +95,14 @@ class AuthController {
         isVerified: true, // Auto-verify
         status: "pending", // Set agent status to pending
         agentCode: "TEMP", // Temporary code to pass validation
-        tenantId: tenantId || null, // Set tenant if provided
+        tenantId: new mongoose.Types.ObjectId(), // Temporary ID to pass validation
       });
 
       // Save to get the _id
       await agent.save();
+
+      // Set tenantId to provided value or self-reference for standalone agents
+      agent.tenantId = tenantId || agent._id;
 
       // Generate and set the real agent code using the new randomized format
       const agentCode = await this.generateAgentCode();

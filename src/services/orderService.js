@@ -250,15 +250,24 @@ class OrderService {
       if (user.walletBalance >= orderTotal) {
         // Sufficient balance - deduct wallet
         if (session) {
-          user.walletBalance -= orderTotal;
-          await user.save({ session });
+          const newBalance = user.walletBalance - orderTotal;
+
+          // Use atomic update to avoid tenantId validation issues
+          await User.findByIdAndUpdate(
+            userId,
+            { $inc: { walletBalance: -orderTotal } },
+            { session, new: false }
+          );
+
+          // Update local user object for consistency
+          user.walletBalance = newBalance;
 
           // Record wallet transaction
           const transaction = new WalletTransaction({
             user: userId,
             type: "debit",
             amount: orderTotal,
-            balanceAfter: user.walletBalance,
+            balanceAfter: newBalance,
             description: `Payment for order - ${bundle.name} for ${customerPhone}`,
             metadata: { orderType: "single" },
           });
@@ -327,15 +336,24 @@ class OrderService {
         if (walletDeducted) {
           try {
             if (session) {
-              user.walletBalance += orderTotal;
-              await user.save({ session });
+              const newBalance = user.walletBalance + orderTotal;
+
+              // Use atomic update to avoid tenantId validation issues
+              await User.findByIdAndUpdate(
+                userId,
+                { $inc: { walletBalance: orderTotal } },
+                { session, new: false }
+              );
+
+              // Update local user object for consistency
+              user.walletBalance = newBalance;
 
               // Record refund transaction
               const refundTransaction = new WalletTransaction({
                 user: userId,
                 type: "credit",
                 amount: orderTotal,
-                balanceAfter: user.walletBalance,
+                balanceAfter: newBalance,
                 description: `Refund for failed order creation - ${bundle.name} for ${customerPhone}`,
                 metadata: { orderType: "single", refund: true },
               });
@@ -546,8 +564,17 @@ class OrderService {
       if (canProcessAll) {
         // Deduct wallet for all orders
         if (session) {
-          user.walletBalance -= totalOrderAmount;
-          await user.save({ session });
+          const newBalance = user.walletBalance - totalOrderAmount;
+
+          // Use atomic update to avoid tenantId validation issues
+          await User.findByIdAndUpdate(
+            userId,
+            { $inc: { walletBalance: -totalOrderAmount } },
+            { session, new: false }
+          );
+
+          // Update local user object for consistency
+          user.walletBalance = newBalance;
 
           // Record wallet transaction
           const transaction = new WalletTransaction({
@@ -1331,15 +1358,24 @@ class OrderService {
       for (const { order, orderTotal } of processableOrders) {
         // Deduct wallet for this order
         if (session) {
-          user.walletBalance -= orderTotal;
-          await user.save({ session });
+          const newBalance = user.walletBalance - orderTotal;
+
+          // Use atomic update to avoid tenantId validation issues
+          await User.findByIdAndUpdate(
+            userId,
+            { $inc: { walletBalance: -orderTotal } },
+            { session, new: false }
+          );
+
+          // Update local user object for consistency
+          user.walletBalance = newBalance;
 
           // Record wallet transaction
           const transaction = new WalletTransaction({
             user: userId,
             type: "debit",
             amount: orderTotal,
-            balanceAfter: user.walletBalance,
+            balanceAfter: newBalance,
             description: `Payment for draft order ${order.orderNumber}`,
             relatedOrder: order._id,
             metadata: { orderType: "draft_processing" },

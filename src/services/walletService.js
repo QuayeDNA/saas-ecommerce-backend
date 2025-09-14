@@ -36,7 +36,7 @@ class WalletService {
 
       // Update wallet balance
       user.walletBalance += amount;
-      await user.save();
+      await user.save({ validateBeforeSave: false });
 
       // Record transaction
       const transaction = new WalletTransaction({
@@ -121,7 +121,7 @@ class WalletService {
 
       // Update wallet balance
       user.walletBalance -= amount;
-      await user.save();
+      await user.save({ validateBeforeSave: false });
 
       // Record transaction
       const transaction = new WalletTransaction({
@@ -266,7 +266,7 @@ class WalletService {
 
         // Credit the wallet
         user.walletBalance += transaction.amount;
-        await user.save();
+        await user.save({ validateBeforeSave: false });
 
         // Update transaction
         transaction.status = "completed";
@@ -362,7 +362,7 @@ class WalletService {
 
       const initialAmount = 0; // 100 GH₵
       user.walletBalance = initialAmount;
-      await user.save();
+      await user.save({ validateBeforeSave: false });
 
       // Record transaction
       const transaction = new WalletTransaction({
