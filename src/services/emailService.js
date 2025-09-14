@@ -22,7 +22,6 @@ class EmailService {
     };
     
     this.transporter = nodemailer.createTransport(transportOptions);
-    logger.info(`Email service configured for Gmail: ${process.env.EMAIL_USER}`);
   }
 
   async verifyConnection() {
