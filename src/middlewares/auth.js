@@ -41,6 +41,8 @@ export const authenticate = async (req, res, next) => {
       userType: user.userType,
       tenantId: decoded.tenantId
         ? decoded.tenantId.toString()
+        : user.tenantId
+        ? user.tenantId.toString()
         : user._id.toString(),
       ...user.toJSON(),
     };

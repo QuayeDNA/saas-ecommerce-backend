@@ -36,6 +36,18 @@ class OrderController {
   async createSingleOrder(req, res) {
     try {
       const { tenantId, userId } = req.user;
+
+      // Validate tenantId exists and is valid
+      if (!tenantId) {
+        logger.error(
+          `Order creation failed: tenantId missing for user ${userId}`
+        );
+        return res.status(400).json({
+          success: false,
+          message: "User tenantId is not set. Please contact support.",
+        });
+      }
+
       const order = await orderService.createSingleOrder(
         req.body,
         tenantId,
@@ -68,19 +80,32 @@ class OrderController {
 
   // Create bulk order
   async createBulkOrder(req, res) {
-    // This assumes userId, tenantId come from req.user (middleware) or from the body for flexibility
-    const { error, value } = orderValidation.createBulk.validate({
-      ...req.body,
-      // Example: override with req.user for stricter tenancy
-      tenantId: req.user.tenantId,
-      userId: req.user.userId,
-    });
-    if (error) {
-      return res
-        .status(400)
-        .json({ success: false, message: error.details[0].message });
-    }
     try {
+      const { tenantId, userId } = req.user;
+
+      // Validate tenantId exists and is valid
+      if (!tenantId) {
+        logger.error(
+          `Bulk order creation failed: tenantId missing for user ${userId}`
+        );
+        return res.status(400).json({
+          success: false,
+          message: "User tenantId is not set. Please contact support.",
+        });
+      }
+
+      // This assumes userId, tenantId come from req.user (middleware) or from the body for flexibility
+      const { error, value } = orderValidation.createBulk.validate({
+        ...req.body,
+        // Example: override with req.user for stricter tenancy
+        tenantId: tenantId,
+        userId: userId,
+      });
+      if (error) {
+        return res
+          .status(400)
+          .json({ success: false, message: error.details[0].message });
+      }
       const result = await orderService.createBulkOrders(value);
       return res.status(201).json({ success: true, ...result });
     } catch (err) {

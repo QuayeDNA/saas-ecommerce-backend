@@ -165,12 +165,22 @@ class OrderService {
 
   // Create single order
   async createSingleOrder(orderData, tenantId, userId) {
+    // Validate tenantId
+    if (!tenantId) {
+      throw new Error(
+        "tenantId must be provided and cannot be null or undefined"
+      );
+    }
+
+    // Ensure tenantId is a string
+    const tenantIdStr = tenantId.toString();
+
     // Check for duplicate orders first (outside transaction for better performance)
     const duplicateCheck =
       await duplicateOrderPreventionService.checkForDuplicates(
         orderData,
         userId,
-        tenantId,
+        tenantIdStr,
         { forceOverride: orderData.forceOverride }
       );
 
@@ -298,7 +308,7 @@ class OrderService {
       // Create order
       const order = new Order({
         orderType: "single",
-        tenantId,
+        tenantId: tenantIdStr,
         createdBy: userId,
         items: [
           {
