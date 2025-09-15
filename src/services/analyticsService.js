@@ -197,6 +197,23 @@ class AnalyticsService {
       userTypeMap[stat._id] = stat.count;
     });
 
+    // Build dynamic byType object with all user types
+    const byType = {};
+    const allUserTypes = [
+      "agent",
+      "super_agent",
+      "dealer",
+      "super_dealer",
+      "super_admin",
+    ];
+
+    allUserTypes.forEach((userType) => {
+      // Convert user type to plural for display (e.g., agent -> agents)
+      const pluralKey =
+        userType === "super_admin" ? "super_admins" : `${userType}s`;
+      byType[pluralKey] = userTypeMap[userType] || 0;
+    });
+
     return {
       total: totalUsers,
       newThisPeriod: newUsersPeriod,
@@ -204,11 +221,7 @@ class AnalyticsService {
       activeAgents,
       verified: verifiedUsers,
       unverified: totalUsers - verifiedUsers,
-      byType: {
-        agents: userTypeMap.agent || 0,
-        customers: userTypeMap.customer || 0,
-        super_admins: userTypeMap.super_admin || 0,
-      },
+      byType,
     };
   }
 
