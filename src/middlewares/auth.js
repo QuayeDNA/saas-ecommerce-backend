@@ -88,11 +88,15 @@ export const authorize = (...roles) => {
 };
 
 // Authorization middleware for business users (agent, super_agent, dealer, super_dealer)
+// Also allows super_admin for administrative access to agent commissions
 export const authorizeBusinessUser = (req, res, next) => {
   logger.debug(
     `Business user authorization check - User: ${req.user.email} (${req.user.userType})`
   );
-  if (!isBusinessUser(req.user.userType)) {
+  if (
+    !isBusinessUser(req.user.userType) &&
+    req.user.userType !== "super_admin"
+  ) {
     logger.warn(
       `Unauthorized business access attempt by ${req.user.email} (userType: "${req.user.userType}") to ${req.originalUrl}`
     );
