@@ -35,19 +35,32 @@ export const authenticate = async (req, res, next) => {
       });
     }
 
-    req.user = {
+    // Create user object without tenantId first
+    const userObject = {
       userId: user._id.toString(),
       email: user.email,
       userType: user.userType,
-      tenantId: decoded.tenantId
-        ? decoded.tenantId.toString()
-        : user.tenantId
-        ? user.tenantId.toString()
-        : user._id.toString(),
-      ...user.toJSON(),
+      ...user.toJSON(), // Spread user data first
     };
 
-    logger.debug(`Authenticated user: ${user.email}`);
+    // Determine tenantId value
+    let tenantIdValue;
+    if (decoded.tenantId) {
+      tenantIdValue = decoded.tenantId.toString();
+    } else if (user.tenantId) {
+      tenantIdValue = user.tenantId.toString();
+    } else {
+      tenantIdValue = user._id.toString();
+    }
+
+    // Then set tenantId to ensure it overrides any ObjectId from user.toJSON()
+    userObject.tenantId = tenantIdValue;
+
+    req.user = userObject;
+
+    logger.debug(
+      `Authenticated user: ${user.email}, tenantId: ${userObject.tenantId}`
+    );
     next();
   } catch (err) {
     if (err.name === "TokenExpiredError") {

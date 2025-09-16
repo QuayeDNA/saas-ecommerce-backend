@@ -94,18 +94,33 @@ class OrderController {
         });
       }
 
-      // This assumes userId, tenantId come from req.user (middleware) or from the body for flexibility
-      const { error, value } = orderValidation.createBulk.validate({
+      // Ensure tenantId is a string for validation
+      const tenantIdString = tenantId.toString();
+      logger.debug(
+        `Bulk order tenantId: ${tenantIdString} (type: ${typeof tenantIdString})`
+      );
+
+      const validationData = {
         ...req.body,
-        // Example: override with req.user for stricter tenancy
-        tenantId: tenantId,
+        tenantId: tenantIdString,
         userId: userId,
-      });
+      };
+
+      const { error, value } =
+        orderValidation.createBulk.validate(validationData);
       if (error) {
+        logger.error(
+          `Bulk order validation error: ${error.details[0].message}`
+        );
+        logger.error(`Validation error details:`, error.details);
         return res
           .status(400)
           .json({ success: false, message: error.details[0].message });
       }
+
+      logger.info(
+        "Bulk order validation passed, calling orderService.createBulkOrders"
+      );
       const result = await orderService.createBulkOrders(value);
       return res.status(201).json({ success: true, ...result });
     } catch (err) {

@@ -484,13 +484,28 @@ class OrderService {
     packageId,
     forceOverride = false,
   }) {
+    logger.debug(
+      `Bulk order service called with tenantId: ${tenantId} (type: ${typeof tenantId})`
+    );
+
+    // Validate tenantId
+    if (!tenantId) {
+      throw new Error(
+        "tenantId must be provided and cannot be null or undefined"
+      );
+    }
+
+    // Ensure tenantId is a string
+    const tenantIdStr = tenantId.toString();
+    logger.debug(`tenantIdStr: ${tenantIdStr} (length: ${tenantIdStr.length})`);
+
     // Check for duplicate orders first (outside transaction for better performance)
     const bulkOrderData = { items, packageId, forceOverride };
     const duplicateCheck =
       await duplicateOrderPreventionService.checkForDuplicates(
         bulkOrderData,
         userId,
-        tenantId,
+        tenantIdStr,
         { forceOverride }
       );
 
@@ -516,7 +531,7 @@ class OrderService {
         // fallback: try to convert
         return new mongoose.Types.ObjectId(String(id));
       };
-      const tenantObjectId = getObjectId(tenantId);
+      const tenantObjectId = getObjectId(tenantIdStr);
       const userObjectId = getObjectId(userId);
 
       // First pass: validate all items and calculate total
