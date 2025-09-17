@@ -54,17 +54,25 @@ class CommissionService {
 
       switch (agent.userType) {
         case "super_dealer":
-          commissionRate = settings.superDealerCommission || 12.5;
+          commissionRate =
+            settings.superDealerCommission ||
+            settings.defaultCommissionRate ||
+            1.0;
           break;
         case "dealer":
-          commissionRate = settings.dealerCommission || 10.0;
+          commissionRate =
+            settings.dealerCommission || settings.defaultCommissionRate || 1.0;
           break;
         case "super_agent":
-          commissionRate = settings.superAgentCommission || 7.5;
+          commissionRate =
+            settings.superAgentCommission ||
+            settings.defaultCommissionRate ||
+            1.0;
           break;
         case "agent":
         default:
-          commissionRate = settings.agentCommission || 5.0;
+          commissionRate =
+            settings.agentCommission || settings.defaultCommissionRate || 1.0;
           break;
       }
 
@@ -964,20 +972,42 @@ class CommissionService {
         settingsDoc.agentCommission = settings.agentCommission;
       }
 
-      if (settings.customerCommission !== undefined) {
-        settingsDoc.customerCommission = settings.customerCommission;
+      if (settings.superAgentCommission !== undefined) {
+        settingsDoc.superAgentCommission = settings.superAgentCommission;
+      }
+
+      if (settings.dealerCommission !== undefined) {
+        settingsDoc.dealerCommission = settings.dealerCommission;
+      }
+
+      if (settings.superDealerCommission !== undefined) {
+        settingsDoc.superDealerCommission = settings.superDealerCommission;
+      }
+
+      if (settings.defaultCommissionRate !== undefined) {
+        settingsDoc.defaultCommissionRate = settings.defaultCommissionRate;
       }
 
       await settingsDoc.save();
 
       logger.info("Commission settings updated:", settings);
 
-      // Invalidate settings cache
-      await this.invalidateSettingsCache();
+      // Invalidate settings cache (only if Redis is available)
+      try {
+        await this.invalidateSettingsCache();
+      } catch (redisError) {
+        logger.warn(
+          "Failed to invalidate commission settings cache, continuing:",
+          redisError.message
+        );
+      }
 
       return {
         agentCommission: settingsDoc.agentCommission,
-        customerCommission: settingsDoc.customerCommission,
+        superAgentCommission: settingsDoc.superAgentCommission,
+        dealerCommission: settingsDoc.dealerCommission,
+        superDealerCommission: settingsDoc.superDealerCommission,
+        defaultCommissionRate: settingsDoc.defaultCommissionRate,
       };
     } catch (error) {
       logger.error(`Update commission settings error: ${error.message}`);
@@ -994,22 +1024,39 @@ class CommissionService {
       // Create cache key for settings
       const cacheKey = "commission:settings";
 
-      // Try to get from cache first
-      const cachedResult = await redisService.get(cacheKey);
-      if (cachedResult) {
-        logger.debug("Commission settings cache hit");
-        return cachedResult;
+      // Try to get from cache first (only if Redis is available)
+      try {
+        const cachedResult = await redisService.get(cacheKey);
+        if (cachedResult) {
+          logger.debug("Commission settings cache hit");
+          return cachedResult;
+        }
+      } catch (redisError) {
+        logger.warn(
+          "Redis cache unavailable, proceeding with database query:",
+          redisError.message
+        );
       }
 
       const settings = await Settings.getInstance();
       const result = {
         agentCommission: settings.agentCommission,
-        customerCommission: settings.customerCommission,
+        superAgentCommission: settings.superAgentCommission,
+        dealerCommission: settings.dealerCommission,
+        superDealerCommission: settings.superDealerCommission,
+        defaultCommissionRate: settings.defaultCommissionRate,
       };
 
-      // Cache the result for 1 hour (3600 seconds) since settings don't change often
-      await redisService.set(cacheKey, result, 3600);
-      logger.debug("Commission settings cached");
+      // Try to cache the result (only if Redis is available)
+      try {
+        await redisService.set(cacheKey, result, 3600);
+        logger.debug("Commission settings cached");
+      } catch (redisError) {
+        logger.warn(
+          "Failed to cache commission settings, continuing without cache:",
+          redisError.message
+        );
+      }
 
       return result;
     } catch (error) {
@@ -1078,7 +1125,10 @@ class CommissionService {
         logger.debug("Commission settings cache invalidated");
       }
     } catch (error) {
-      logger.error("Error invalidating settings cache:", error);
+      logger.warn(
+        "Failed to invalidate commission settings cache, continuing without cache:",
+        error.message
+      );
     }
   }
 }

@@ -1,5 +1,5 @@
-import settingsService from '../services/settingsService.js';
-import logger from '../utils/logger.js';
+import settingsService from "../services/settingsService.js";
+import logger from "../utils/logger.js";
 
 // =============================================================================
 // SETTINGS CONTROLLER
@@ -12,19 +12,22 @@ class SettingsController {
       const settings = await settingsService.getSiteSettings();
       res.json(settings);
     } catch (error) {
-      logger.error('Error getting site settings:', error);
-      res.status(500).json({ error: 'Failed to get site settings' });
+      logger.error("Error getting site settings:", error);
+      res.status(500).json({ error: "Failed to get site settings" });
     }
   }
 
   async updateSiteSettings(req, res) {
     try {
       const { isSiteOpen, customMessage } = req.body;
-      const settings = await settingsService.updateSiteSettings({ isSiteOpen, customMessage });
+      const settings = await settingsService.updateSiteSettings({
+        isSiteOpen,
+        customMessage,
+      });
       res.json(settings);
     } catch (error) {
-      logger.error('Error updating site settings:', error);
-      res.status(500).json({ error: 'Failed to update site settings' });
+      logger.error("Error updating site settings:", error);
+      res.status(500).json({ error: "Failed to update site settings" });
     }
   }
 
@@ -33,8 +36,8 @@ class SettingsController {
       const result = await settingsService.toggleSiteStatus();
       res.json(result);
     } catch (error) {
-      logger.error('Error toggling site status:', error);
-      res.status(500).json({ error: 'Failed to toggle site status' });
+      logger.error("Error toggling site status:", error);
+      res.status(500).json({ error: "Failed to toggle site status" });
     }
   }
 
@@ -44,19 +47,33 @@ class SettingsController {
       const rates = await settingsService.getCommissionRates();
       res.json(rates);
     } catch (error) {
-      logger.error('Error getting commission rates:', error);
-      res.status(500).json({ error: 'Failed to get commission rates' });
+      logger.error("Error getting commission rates:", error);
+      res.status(500).json({ error: "Failed to get commission rates" });
     }
   }
 
   async updateCommissionRates(req, res) {
     try {
-      const { agentCommission, customerCommission } = req.body;
-      const rates = await settingsService.updateCommissionRates({ agentCommission, customerCommission });
+      const {
+        agentCommission,
+        superAgentCommission,
+        dealerCommission,
+        superDealerCommission,
+        defaultCommissionRate,
+        customerCommission,
+      } = req.body;
+      const rates = await settingsService.updateCommissionRates({
+        agentCommission,
+        superAgentCommission,
+        dealerCommission,
+        superDealerCommission,
+        defaultCommissionRate,
+        customerCommission,
+      });
       res.json(rates);
     } catch (error) {
-      logger.error('Error updating commission rates:', error);
-      res.status(500).json({ error: 'Failed to update commission rates' });
+      logger.error("Error updating commission rates:", error);
+      res.status(500).json({ error: "Failed to update commission rates" });
     }
   }
 
@@ -66,24 +83,25 @@ class SettingsController {
       const settings = await settingsService.getApiSettings();
       res.json(settings);
     } catch (error) {
-      logger.error('Error getting API settings:', error);
-      res.status(500).json({ error: 'Failed to get API settings' });
+      logger.error("Error getting API settings:", error);
+      res.status(500).json({ error: "Failed to get API settings" });
     }
   }
 
   async updateApiSettings(req, res) {
     try {
-      const { mtnApiKey, telecelApiKey, airtelTigoApiKey, apiEndpoint } = req.body;
-      const settings = await settingsService.updateApiSettings({ 
-        mtnApiKey, 
-        telecelApiKey, 
-        airtelTigoApiKey, 
-        apiEndpoint 
+      const { mtnApiKey, telecelApiKey, airtelTigoApiKey, apiEndpoint } =
+        req.body;
+      const settings = await settingsService.updateApiSettings({
+        mtnApiKey,
+        telecelApiKey,
+        airtelTigoApiKey,
+        apiEndpoint,
       });
       res.json(settings);
     } catch (error) {
-      logger.error('Error updating API settings:', error);
-      res.status(500).json({ error: 'Failed to update API settings' });
+      logger.error("Error updating API settings:", error);
+      res.status(500).json({ error: "Failed to update API settings" });
     }
   }
 
@@ -91,11 +109,14 @@ class SettingsController {
   async resetUserPassword(req, res) {
     try {
       const { userId, newPassword } = req.body;
-      const result = await settingsService.resetUserPassword(userId, newPassword);
+      const result = await settingsService.resetUserPassword(
+        userId,
+        newPassword
+      );
       res.json(result);
     } catch (error) {
-      logger.error('Error resetting user password:', error);
-      res.status(500).json({ error: 'Failed to reset user password' });
+      logger.error("Error resetting user password:", error);
+      res.status(500).json({ error: "Failed to reset user password" });
     }
   }
 
@@ -105,8 +126,8 @@ class SettingsController {
       const result = await settingsService.changeUserRole(userId, newRole);
       res.json(result);
     } catch (error) {
-      logger.error('Error changing user role:', error);
-      res.status(500).json({ error: 'Failed to change user role' });
+      logger.error("Error changing user role:", error);
+      res.status(500).json({ error: "Failed to change user role" });
     }
   }
 
@@ -116,8 +137,8 @@ class SettingsController {
       const info = await settingsService.getSystemInfo();
       res.json(info);
     } catch (error) {
-      logger.error('Error getting system info:', error);
-      res.status(500).json({ error: 'Failed to get system info' });
+      logger.error("Error getting system info:", error);
+      res.status(500).json({ error: "Failed to get system info" });
     }
   }
 
@@ -127,11 +148,11 @@ class SettingsController {
       const siteSettings = await settingsService.getSiteSettings();
       res.json({
         isSiteOpen: siteSettings.isSiteOpen,
-        customMessage: siteSettings.customMessage
+        customMessage: siteSettings.customMessage,
       });
     } catch (error) {
-      logger.error('Error getting site status:', error);
-      res.status(500).json({ error: 'Failed to get site status' });
+      logger.error("Error getting site status:", error);
+      res.status(500).json({ error: "Failed to get site status" });
     }
   }
 
@@ -140,13 +161,17 @@ class SettingsController {
     try {
       const { currentPassword, newPassword } = req.body;
       const userId = req.user.id; // Get current admin's ID
-      const result = await settingsService.changeAdminPassword(userId, currentPassword, newPassword);
+      const result = await settingsService.changeAdminPassword(
+        userId,
+        currentPassword,
+        newPassword
+      );
       res.json(result);
     } catch (error) {
-      logger.error('Error changing admin password:', error);
-      res.status(500).json({ error: 'Failed to change admin password' });
+      logger.error("Error changing admin password:", error);
+      res.status(500).json({ error: "Failed to change admin password" });
     }
   }
 }
 
-export default new SettingsController(); 
+export default new SettingsController();

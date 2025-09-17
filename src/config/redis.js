@@ -41,11 +41,22 @@ class RedisClient {
         redisConfig.password = process.env.REDIS_PASSWORD;
       }
 
-      this.client = createClient(redisConfig);
+      // Create client with error handling
+      try {
+        this.client = createClient(redisConfig);
+      } catch (clientError) {
+        logger.warn(
+          "Failed to create Redis client, will operate without caching:",
+          clientError.message
+        );
+        this.client = null;
+        this.isConnected = false;
+        return null;
+      }
 
       // Event handlers
       this.client.on("error", (err) => {
-        logger.error("Redis Client Error:", err);
+        logger.warn("Redis Client Error (non-fatal):", err.message);
         this.isConnected = false;
       });
 
@@ -67,8 +78,13 @@ class RedisClient {
       await this.client.connect();
       return this.client;
     } catch (error) {
-      logger.error("Failed to connect to Redis:", error);
-      throw error;
+      logger.warn(
+        "Failed to connect to Redis, will operate without caching:",
+        error.message
+      );
+      this.isConnected = false;
+      this.client = null;
+      return null;
     }
   }
 
@@ -85,10 +101,21 @@ class RedisClient {
   }
 
   async getClient() {
-    if (!this.client || !this.isConnected) {
-      await this.connect();
+    try {
+      if (!this.client || !this.isConnected) {
+        const client = await this.connect();
+        if (!client) {
+          return null;
+        }
+      }
+      return this.client;
+    } catch (error) {
+      logger.warn(
+        "Redis client not available, falling back to database operations:",
+        error.message
+      );
+      return null;
     }
-    return this.client;
   }
 
   // Health check

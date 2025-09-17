@@ -12,6 +12,13 @@ class RedisService {
   async get(key) {
     try {
       const client = await redisClient.getClient();
+      if (!client) {
+        logger.debug(
+          `Redis client not available, skipping cache for key: ${key}`
+        );
+        return null;
+      }
+
       const fullKey = this.cachePrefix + key;
       const value = await client.get(fullKey);
 
@@ -23,7 +30,10 @@ class RedisService {
       logger.debug(`Cache miss for key: ${key}`);
       return null;
     } catch (error) {
-      logger.error("Redis get error:", error);
+      logger.warn(
+        `Redis get error for key ${key}, falling back to database:`,
+        error.message
+      );
       return null;
     }
   }
@@ -32,6 +42,13 @@ class RedisService {
   async set(key, value, ttl = null) {
     try {
       const client = await redisClient.getClient();
+      if (!client) {
+        logger.debug(
+          `Redis client not available, skipping cache set for key: ${key}`
+        );
+        return false;
+      }
+
       const fullKey = this.cachePrefix + key;
       const serializedValue = JSON.stringify(value);
       const expiration = ttl || this.defaultTTL;
@@ -40,7 +57,10 @@ class RedisService {
       logger.debug(`Cache set for key: ${key} with TTL: ${expiration}s`);
       return true;
     } catch (error) {
-      logger.error("Redis set error:", error);
+      logger.warn(
+        `Redis set error for key ${key}, continuing without cache:`,
+        error.message
+      );
       return false;
     }
   }
@@ -49,6 +69,13 @@ class RedisService {
   async del(key) {
     try {
       const client = await redisClient.getClient();
+      if (!client) {
+        logger.debug(
+          `Redis client not available, skipping cache delete for key: ${key}`
+        );
+        return false;
+      }
+
       const fullKey = this.cachePrefix + key;
       const result = await client.del(fullKey);
 
@@ -58,7 +85,10 @@ class RedisService {
 
       return result > 0;
     } catch (error) {
-      logger.error("Redis delete error:", error);
+      logger.warn(
+        `Redis delete error for key ${key}, continuing without cache:`,
+        error.message
+      );
       return false;
     }
   }

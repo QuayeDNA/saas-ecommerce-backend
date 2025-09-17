@@ -1,7 +1,7 @@
 // src/controllers/commissionController.js
 
-import commissionService from '../services/commissionService.js';
-import logger from '../utils/logger.js';
+import commissionService from "../services/commissionService.js";
+import logger from "../utils/logger.js";
 
 class CommissionController {
   /**
@@ -13,13 +13,13 @@ class CommissionController {
 
       res.json({
         success: true,
-        data: settings
+        data: settings,
       });
     } catch (error) {
       logger.error("Get commission settings error:", error);
       res.status(500).json({
         success: false,
-        message: 'Failed to get commission settings'
+        message: "Failed to get commission settings",
       });
     }
   }
@@ -29,37 +29,53 @@ class CommissionController {
    */
   async updateCommissionSettings(req, res) {
     try {
-      const { agentCommission, customerCommission } = req.body;
+      const {
+        agentCommission,
+        superAgentCommission,
+        dealerCommission,
+        superDealerCommission,
+        defaultCommissionRate,
+      } = req.body;
 
-      if (agentCommission !== undefined && (agentCommission < 0 || agentCommission > 100)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Agent commission must be between 0 and 100'
-        });
-      }
+      // Validation for all commission rates
+      const commissionFields = {
+        agentCommission,
+        superAgentCommission,
+        dealerCommission,
+        superDealerCommission,
+        defaultCommissionRate,
+      };
 
-      if (customerCommission !== undefined && (customerCommission < 0 || customerCommission > 100)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Customer commission must be between 0 and 100'
-        });
+      for (const [field, value] of Object.entries(commissionFields)) {
+        if (value !== undefined && (value < 0 || value > 100)) {
+          return res.status(400).json({
+            success: false,
+            message: `${field.replace(
+              "Commission",
+              " commission"
+            )} must be between 0 and 100`,
+          });
+        }
       }
 
       const settings = await commissionService.updateCommissionSettings({
         agentCommission,
-        customerCommission
+        superAgentCommission,
+        dealerCommission,
+        superDealerCommission,
+        defaultCommissionRate,
       });
 
       res.json({
         success: true,
         data: settings,
-        message: 'Commission settings updated successfully'
+        message: "Commission settings updated successfully",
       });
     } catch (error) {
       logger.error("Update commission settings error:", error);
       res.status(500).json({
         success: false,
-        message: 'Failed to update commission settings'
+        message: "Failed to update commission settings",
       });
     }
   }
@@ -70,7 +86,14 @@ class CommissionController {
   async getAgentCommissions(req, res) {
     try {
       const { userId } = req.user;
-      const { status, period, startDate, endDate, page = 1, limit = 20 } = req.query;
+      const {
+        status,
+        period,
+        startDate,
+        endDate,
+        page = 1,
+        limit = 20,
+      } = req.query;
 
       const filters = {};
       if (status) filters.status = status;
@@ -80,7 +103,10 @@ class CommissionController {
         filters.endDate = new Date(endDate);
       }
 
-      const commissions = await commissionService.getAgentCommissions(userId, filters);
+      const commissions = await commissionService.getAgentCommissions(
+        userId,
+        filters
+      );
 
       // Apply pagination
       const startIndex = (page - 1) * limit;
@@ -94,14 +120,14 @@ class CommissionController {
           total: commissions.length,
           page: parseInt(page),
           pages: Math.ceil(commissions.length / limit),
-          limit: parseInt(limit)
-        }
+          limit: parseInt(limit),
+        },
       });
     } catch (error) {
       logger.error("Get agent commissions error:", error);
       res.status(500).json({
         success: false,
-        message: 'Failed to fetch agent commissions'
+        message: "Failed to fetch agent commissions",
       });
     }
   }
@@ -111,7 +137,16 @@ class CommissionController {
    */
   async getAllCommissions(req, res) {
     try {
-      const { status, agentId, period, startDate, endDate, month, page = 1, limit = 20 } = req.query;
+      const {
+        status,
+        agentId,
+        period,
+        startDate,
+        endDate,
+        month,
+        page = 1,
+        limit = 20,
+      } = req.query;
 
       const filters = {};
       if (status) filters.status = status;
@@ -137,14 +172,14 @@ class CommissionController {
           total: commissions.length,
           page: parseInt(page),
           pages: Math.ceil(commissions.length / limit),
-          limit: parseInt(limit)
-        }
+          limit: parseInt(limit),
+        },
       });
     } catch (error) {
       logger.error("Get all commissions error:", error);
       res.status(500).json({
         success: false,
-        message: 'Failed to fetch commissions'
+        message: "Failed to fetch commissions",
       });
     }
   }
@@ -160,7 +195,7 @@ class CommissionController {
       if (!agentId || !startDate || !endDate) {
         return res.status(400).json({
           success: false,
-          message: 'Agent ID, start date, and end date are required'
+          message: "Agent ID, start date, and end date are required",
         });
       }
 
@@ -173,13 +208,13 @@ class CommissionController {
 
       res.json({
         success: true,
-        data: calculation
+        data: calculation,
       });
     } catch (error) {
       logger.error("Calculate commission error:", error);
       res.status(500).json({
         success: false,
-        message: 'Failed to calculate commission'
+        message: "Failed to calculate commission",
       });
     }
   }
@@ -189,13 +224,13 @@ class CommissionController {
    */
   async createCommissionRecord(req, res) {
     try {
-      const { agentId, periodStart, periodEnd, period = 'monthly' } = req.body;
+      const { agentId, periodStart, periodEnd, period = "monthly" } = req.body;
       const { tenantId } = req.user;
 
       if (!agentId || !periodStart || !periodEnd) {
         return res.status(400).json({
           success: false,
-          message: 'Agent ID, period start, and period end are required'
+          message: "Agent ID, period start, and period end are required",
         });
       }
 
@@ -212,21 +247,23 @@ class CommissionController {
         ...calculation,
         period,
         periodStart: new Date(periodStart),
-        periodEnd: new Date(periodEnd)
+        periodEnd: new Date(periodEnd),
       };
 
-      const commissionRecord = await commissionService.createCommissionRecord(commissionData);
+      const commissionRecord = await commissionService.createCommissionRecord(
+        commissionData
+      );
 
       res.status(201).json({
         success: true,
         data: commissionRecord,
-        message: 'Commission record created successfully'
+        message: "Commission record created successfully",
       });
     } catch (error) {
       logger.error("Create commission record error:", error);
       res.status(500).json({
         success: false,
-        message: 'Failed to create commission record'
+        message: "Failed to create commission record",
       });
     }
   }
@@ -249,13 +286,13 @@ class CommissionController {
       res.json({
         success: true,
         data: commission,
-        message: 'Commission paid successfully'
+        message: "Commission paid successfully",
       });
     } catch (error) {
       logger.error("Pay commission error:", error);
       res.status(400).json({
         success: false,
-        message: error.message
+        message: error.message,
       });
     }
   }
@@ -278,13 +315,13 @@ class CommissionController {
       res.json({
         success: true,
         data: commission,
-        message: 'Commission rejected successfully'
+        message: "Commission rejected successfully",
       });
     } catch (error) {
       logger.error("Reject commission error:", error);
       res.status(400).json({
         success: false,
-        message: error.message
+        message: error.message,
       });
     }
   }
@@ -297,10 +334,14 @@ class CommissionController {
       const { commissionIds, rejectionReason } = req.body;
       const { userId } = req.user;
 
-      if (!commissionIds || !Array.isArray(commissionIds) || commissionIds.length === 0) {
+      if (
+        !commissionIds ||
+        !Array.isArray(commissionIds) ||
+        commissionIds.length === 0
+      ) {
         return res.status(400).json({
           success: false,
-          message: 'Commission IDs array is required'
+          message: "Commission IDs array is required",
         });
       }
 
@@ -310,19 +351,19 @@ class CommissionController {
         rejectionReason
       );
 
-      const successful = results.filter(r => r.success).length;
-      const failed = results.filter(r => !r.success).length;
+      const successful = results.filter((r) => r.success).length;
+      const failed = results.filter((r) => !r.success).length;
 
       res.json({
         success: true,
         data: results,
-        message: `${successful} commissions rejected successfully, ${failed} failed`
+        message: `${successful} commissions rejected successfully, ${failed} failed`,
       });
     } catch (error) {
       logger.error("Reject multiple commissions error:", error);
       res.status(400).json({
         success: false,
-        message: 'Failed to reject multiple commissions'
+        message: "Failed to reject multiple commissions",
       });
     }
   }
@@ -335,10 +376,14 @@ class CommissionController {
       const { commissionIds, paymentReference } = req.body;
       const { userId } = req.user;
 
-      if (!commissionIds || !Array.isArray(commissionIds) || commissionIds.length === 0) {
+      if (
+        !commissionIds ||
+        !Array.isArray(commissionIds) ||
+        commissionIds.length === 0
+      ) {
         return res.status(400).json({
           success: false,
-          message: 'Commission IDs array is required'
+          message: "Commission IDs array is required",
         });
       }
 
@@ -351,13 +396,13 @@ class CommissionController {
       res.json({
         success: true,
         data: results,
-        message: `${results.length} commissions paid successfully`
+        message: `${results.length} commissions paid successfully`,
       });
     } catch (error) {
       logger.error("Pay multiple commissions error:", error);
       res.status(400).json({
         success: false,
-        message: 'Failed to pay multiple commissions'
+        message: "Failed to pay multiple commissions",
       });
     }
   }
@@ -370,12 +415,16 @@ class CommissionController {
       const { targetMonth } = req.body;
 
       const targetDate = targetMonth ? new Date(targetMonth) : new Date();
-      const results = await commissionService.generateMonthlyCommissions(targetDate);
+      const results = await commissionService.generateMonthlyCommissions(
+        targetDate
+      );
 
-      const successful = results.filter(r => r.status === 'created').length;
-      const existing = results.filter(r => r.status === 'exists').length;
-      const noCommission = results.filter(r => r.status === 'no_commission').length;
-      const errors = results.filter(r => r.status === 'error').length;
+      const successful = results.filter((r) => r.status === "created").length;
+      const existing = results.filter((r) => r.status === "exists").length;
+      const noCommission = results.filter(
+        (r) => r.status === "no_commission"
+      ).length;
+      const errors = results.filter((r) => r.status === "error").length;
 
       res.json({
         success: true,
@@ -386,16 +435,16 @@ class CommissionController {
             successful,
             existing,
             noCommission,
-            errors
-          }
+            errors,
+          },
         },
-        message: `Generated ${successful} commission records with ${errors} errors`
+        message: `Generated ${successful} commission records with ${errors} errors`,
       });
     } catch (error) {
       logger.error("Generate monthly commissions error:", error);
       res.status(500).json({
         success: false,
-        message: 'Failed to generate monthly commissions'
+        message: "Failed to generate monthly commissions",
       });
     }
   }
@@ -408,17 +457,19 @@ class CommissionController {
       const { month } = req.body; // Optional: specific month to reset
       const resetMonth = month ? new Date(month) : new Date();
 
-      const result = await commissionService.resetMonthlyCommissions(resetMonth);
+      const result = await commissionService.resetMonthlyCommissions(
+        resetMonth
+      );
 
       res.json({
         success: true,
-        data: result
+        data: result,
       });
     } catch (error) {
       logger.error("Reset monthly commissions error:", error);
       res.status(500).json({
         success: false,
-        message: 'Failed to reset monthly commissions'
+        message: "Failed to reset monthly commissions",
       });
     }
   }
@@ -431,18 +482,20 @@ class CommissionController {
       const { month } = req.body; // Optional: specific month to reset
       const resetMonth = month ? new Date(month) : new Date();
 
-      const { manualCommissionReset } = await import('../jobs/commissionReset.js');
+      const { manualCommissionReset } = await import(
+        "../jobs/commissionReset.js"
+      );
       const result = await manualCommissionReset(resetMonth);
 
       res.json({
         success: true,
-        data: result
+        data: result,
       });
     } catch (error) {
       logger.error("Manual commission reset error:", error);
       res.status(500).json({
         success: false,
-        message: 'Failed to manually reset commissions'
+        message: "Failed to manually reset commissions",
       });
     }
   }
@@ -456,19 +509,21 @@ class CommissionController {
 
       // For super admin users, don't filter by tenant (show all data)
       // For regular users, filter by their tenant
-      const statisticsTenantId = userType === 'super_admin' ? null : tenantId;
+      const statisticsTenantId = userType === "super_admin" ? null : tenantId;
 
-      const statistics = await commissionService.getCommissionStatistics(statisticsTenantId);
+      const statistics = await commissionService.getCommissionStatistics(
+        statisticsTenantId
+      );
 
       res.json({
         success: true,
-        data: statistics
+        data: statistics,
       });
     } catch (error) {
       logger.error("Get commission statistics error:", error);
       res.status(500).json({
         success: false,
-        message: 'Failed to fetch commission statistics'
+        message: "Failed to fetch commission statistics",
       });
     }
   }
