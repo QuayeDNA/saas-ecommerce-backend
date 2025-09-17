@@ -92,16 +92,10 @@ class AnalyticsService {
    */
   async getAgentAnalytics(agentId, tenantId, timeframe = "30d") {
     try {
-      const cacheKey = `analytics:agent:${agentId}:${timeframe}`;
-
-      // Try to get from cache first
-      const cachedAnalytics = await redisService.get(cacheKey);
-      if (cachedAnalytics) {
-        logger.debug(
-          `Agent analytics cache hit for agent ${agentId}, timeframe ${timeframe}`
-        );
-        return cachedAnalytics;
-      }
+      // TEMPORARILY DISABLE REDIS CACHING TO AVOID CLIENT ERRORS
+      logger.debug(
+        `Generating agent analytics for agent ${agentId}, timeframe ${timeframe}`
+      );
 
       const dateRange = this.getDateRange(timeframe);
 
@@ -109,11 +103,16 @@ class AnalyticsService {
       const userStats = await this.getAgentUserStatistics(agentId, dateRange);
 
       // Get agent's order statistics
-      const orderStats = await this.getAgentOrderStatistics(agentId, dateRange);
+      const orderStats = await this.getAgentOrderStatistics(
+        agentId,
+        tenantId,
+        dateRange
+      );
 
       // Get agent's revenue statistics
       const revenueStats = await this.getAgentRevenueStatistics(
         agentId,
+        tenantId,
         dateRange
       );
 
@@ -130,7 +129,11 @@ class AnalyticsService {
       const recentActivity = await this.getAgentRecentActivity(agentId);
 
       // Get agent's chart data
-      const chartData = await this.getAgentChartData(agentId, timeframe);
+      const chartData = await this.getAgentChartData(
+        agentId,
+        tenantId,
+        timeframe
+      );
 
       const result = {
         users: userStats,
@@ -144,10 +147,8 @@ class AnalyticsService {
         generatedAt: new Date(),
       };
 
-      // Cache the result for 10 minutes (600 seconds) since agent analytics are moderately dynamic
-      await redisService.set(cacheKey, result, 600);
       logger.debug(
-        `Agent analytics cached for agent ${agentId}, timeframe ${timeframe}`
+        `Agent analytics generated for agent ${agentId}, timeframe ${timeframe}`
       );
 
       return result;
@@ -810,7 +811,7 @@ class AnalyticsService {
    * @param {Object} dateRange - Date range
    * @returns {Promise<Object>} Agent order statistics
    */
-  async getAgentOrderStatistics(agentId, dateRange) {
+  async getAgentOrderStatistics(agentId, tenantId, dateRange) {
     const { startDate, endDate } = dateRange;
 
     // Calculate today's range
@@ -832,7 +833,9 @@ class AnalyticsService {
         {
           $match: {
             createdBy: new mongoose.Types.ObjectId(agentId),
-            tenantId: new mongoose.Types.ObjectId(tenantId),
+            ...(tenantId
+              ? { tenantId: new mongoose.Types.ObjectId(tenantId) }
+              : {}),
             createdAt: { $gte: startDate, $lte: endDate },
           },
         },
@@ -861,7 +864,9 @@ class AnalyticsService {
         {
           $match: {
             createdBy: new mongoose.Types.ObjectId(agentId),
-            tenantId: new mongoose.Types.ObjectId(tenantId),
+            ...(tenantId
+              ? { tenantId: new mongoose.Types.ObjectId(tenantId) }
+              : {}),
             createdAt: { $gte: todayStart, $lte: todayEnd },
           },
         },
@@ -935,7 +940,7 @@ class AnalyticsService {
    * @param {Object} dateRange - Date range
    * @returns {Promise<Object>} Agent revenue statistics
    */
-  async getAgentRevenueStatistics(agentId, dateRange) {
+  async getAgentRevenueStatistics(agentId, tenantId, dateRange) {
     const { startDate, endDate } = dateRange;
 
     // Calculate today's range
@@ -960,7 +965,9 @@ class AnalyticsService {
         {
           $match: {
             createdBy: new mongoose.Types.ObjectId(agentId),
-            tenantId: new mongoose.Types.ObjectId(tenantId),
+            ...(tenantId
+              ? { tenantId: new mongoose.Types.ObjectId(tenantId) }
+              : {}),
             status: "completed",
             createdAt: { $gte: startDate, $lte: endDate },
           },
@@ -977,7 +984,9 @@ class AnalyticsService {
         {
           $match: {
             createdBy: new mongoose.Types.ObjectId(agentId),
-            tenantId: new mongoose.Types.ObjectId(tenantId),
+            ...(tenantId
+              ? { tenantId: new mongoose.Types.ObjectId(tenantId) }
+              : {}),
             status: "completed",
             createdAt: { $gte: todayStart, $lte: todayEnd },
           },
@@ -994,7 +1003,9 @@ class AnalyticsService {
         {
           $match: {
             createdBy: new mongoose.Types.ObjectId(agentId),
-            tenantId: new mongoose.Types.ObjectId(tenantId),
+            ...(tenantId
+              ? { tenantId: new mongoose.Types.ObjectId(tenantId) }
+              : {}),
             status: "completed",
             createdAt: { $gte: thisMonthStart, $lte: thisMonthEnd },
           },
@@ -1042,7 +1053,7 @@ class AnalyticsService {
       // Get agent's completed orders for the period
       const completedOrders = await Order.find({
         createdBy: agentId,
-        tenantId: tenantId,
+        ...(tenantId ? { tenantId: tenantId } : {}),
         status: "completed",
         createdAt: { $gte: startDate, $lte: endDate },
       });
@@ -1120,7 +1131,9 @@ class AnalyticsService {
       {
         $match: {
           createdBy: new mongoose.Types.ObjectId(agentId),
-          tenantId: new mongoose.Types.ObjectId(tenantId),
+          ...(tenantId
+            ? { tenantId: new mongoose.Types.ObjectId(tenantId) }
+            : {}),
           createdAt: { $gte: startDate, $lte: endDate },
         },
       },
@@ -1226,6 +1239,234 @@ class AnalyticsService {
       logger.error(
         `Failed to invalidate commission analytics cache: ${error.message}`
       );
+    }
+  }
+
+  /**
+   * Get agent user statistics
+   * @param {string} agentId - Agent ID
+   * @param {Object} dateRange - Date range object
+   * @returns {Promise<Object>} Agent user statistics
+   */
+  async getAgentUserStatistics(agentId, dateRange) {
+    try {
+      const { startDate, endDate } = dateRange;
+      const agentObjectId = new mongoose.Types.ObjectId(agentId);
+
+      // Get users referred by this agent within the date range
+      const referredUsers = await User.countDocuments({
+        referredBy: agentObjectId,
+        createdAt: { $gte: startDate, $lte: endDate },
+        isDeleted: { $ne: true },
+      });
+
+      // Get total users referred by this agent (all time)
+      const totalReferredUsers = await User.countDocuments({
+        referredBy: agentObjectId,
+        isDeleted: { $ne: true },
+      });
+
+      // Get active users referred by this agent
+      const activeReferredUsers = await User.countDocuments({
+        referredBy: agentObjectId,
+        subscriptionStatus: "active",
+        isDeleted: { $ne: true },
+      });
+
+      return {
+        referredUsers,
+        totalReferredUsers,
+        activeReferredUsers,
+        conversionRate:
+          totalReferredUsers > 0
+            ? (activeReferredUsers / totalReferredUsers) * 100
+            : 0,
+      };
+    } catch (error) {
+      logger.error(`Agent user statistics error: ${error.message}`);
+      return {
+        referredUsers: 0,
+        totalReferredUsers: 0,
+        activeReferredUsers: 0,
+        conversionRate: 0,
+      };
+    }
+  }
+
+  /**
+   * Get agent commission statistics
+   * @param {string} agentId - Agent ID
+   * @param {Object} dateRange - Date range object
+   * @returns {Promise<Object>} Agent commission statistics
+   */
+  async getAgentCommissionStatistics(agentId, dateRange) {
+    try {
+      const { startDate, endDate } = dateRange;
+      const agentObjectId = new mongoose.Types.ObjectId(agentId);
+
+      // Get commission records for this agent
+      const commissionRecords = await CommissionRecord.find({
+        agentId: agentObjectId,
+        createdAt: { $gte: startDate, $lte: endDate },
+      });
+
+      const totalCommission = commissionRecords.reduce(
+        (sum, record) => sum + (record.amount || 0),
+        0
+      );
+
+      const paidCommission = commissionRecords
+        .filter((record) => record.status === "paid")
+        .reduce((sum, record) => sum + (record.amount || 0), 0);
+
+      const pendingCommission = commissionRecords
+        .filter((record) => record.status === "pending")
+        .reduce((sum, record) => sum + (record.amount || 0), 0);
+
+      return {
+        totalCommission,
+        paidCommission,
+        pendingCommission,
+        commissionCount: commissionRecords.length,
+      };
+    } catch (error) {
+      logger.error(`Agent commission statistics error: ${error.message}`);
+      return {
+        totalCommission: 0,
+        paidCommission: 0,
+        pendingCommission: 0,
+        commissionCount: 0,
+      };
+    }
+  }
+
+  /**
+   * Get agent wallet statistics
+   * @param {string} agentId - Agent ID
+   * @returns {Promise<Object>} Agent wallet statistics
+   */
+  async getAgentWalletStatistics(agentId) {
+    try {
+      const agentObjectId = new mongoose.Types.ObjectId(agentId);
+      const user = await User.findById(agentObjectId).select(
+        "walletBalance subscriptionStatus"
+      );
+
+      // Get wallet transactions for this agent
+      const transactions = await WalletTransaction.find({
+        userId: agentObjectId,
+      })
+        .sort({ createdAt: -1 })
+        .limit(10);
+
+      const totalCredits = transactions
+        .filter((t) => t.type === "credit")
+        .reduce((sum, t) => sum + (t.amount || 0), 0);
+
+      const totalDebits = transactions
+        .filter((t) => t.type === "debit")
+        .reduce((sum, t) => sum + (t.amount || 0), 0);
+
+      return {
+        balance: user?.walletBalance || 0,
+        totalCredits,
+        totalDebits,
+        transactionCount: transactions.length,
+        subscriptionStatus: user?.subscriptionStatus || "inactive",
+        recentTransactions: transactions.slice(0, 5).map((t) => ({
+          id: t._id,
+          type: t.type,
+          amount: t.amount,
+          description: t.description,
+          createdAt: t.createdAt,
+        })),
+      };
+    } catch (error) {
+      logger.error(`Agent wallet statistics error: ${error.message}`);
+      return {
+        balance: 0,
+        totalCredits: 0,
+        totalDebits: 0,
+        transactionCount: 0,
+        subscriptionStatus: "inactive",
+        recentTransactions: [],
+      };
+    }
+  }
+
+  /**
+   * Get agent recent activity
+   * @param {string} agentId - Agent ID
+   * @returns {Promise<Array>} Agent recent activity
+   */
+  async getAgentRecentActivity(agentId) {
+    try {
+      const agentObjectId = new mongoose.Types.ObjectId(agentId);
+      const activities = [];
+
+      // Get recent orders
+      const recentOrders = await Order.find({
+        createdBy: agentObjectId,
+      })
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .select("orderNumber total status createdAt");
+
+      // Get recent commission records
+      const recentCommissions = await CommissionRecord.find({
+        agentId: agentObjectId,
+      })
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .select("amount status createdAt");
+
+      // Get recent wallet transactions
+      const recentTransactions = await WalletTransaction.find({
+        userId: agentObjectId,
+      })
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .select("type amount description createdAt");
+
+      // Combine and sort all activities
+      recentOrders.forEach((order) => {
+        activities.push({
+          type: "order",
+          description: `Order ${order.orderNumber} created`,
+          amount: order.total,
+          status: order.status,
+          createdAt: order.createdAt,
+        });
+      });
+
+      recentCommissions.forEach((commission) => {
+        activities.push({
+          type: "commission",
+          description: `Commission earned`,
+          amount: commission.amount,
+          status: commission.status,
+          createdAt: commission.createdAt,
+        });
+      });
+
+      recentTransactions.forEach((transaction) => {
+        activities.push({
+          type: "transaction",
+          description:
+            transaction.description || `${transaction.type} transaction`,
+          amount: transaction.amount,
+          status: transaction.type,
+          createdAt: transaction.createdAt,
+        });
+      });
+
+      // Sort by createdAt descending and return top 10
+      return activities
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .slice(0, 10);
+    } catch (error) {
+      logger.error(`Agent recent activity error: ${error.message}`);
+      return [];
     }
   }
 }

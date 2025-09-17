@@ -11,7 +11,17 @@ class RedisService {
   // Get value from cache
   async get(key) {
     try {
-      const client = await redisClient.getClient();
+      let client;
+      try {
+        client = await redisClient.getClient();
+      } catch (clientError) {
+        logger.warn(
+          `Redis getClient error for key ${key}, falling back to database:`,
+          clientError.message
+        );
+        return null;
+      }
+
       if (!client) {
         logger.debug(
           `Redis client not available, skipping cache for key: ${key}`
@@ -41,7 +51,17 @@ class RedisService {
   // Set value in cache with optional TTL
   async set(key, value, ttl = null) {
     try {
-      const client = await redisClient.getClient();
+      let client;
+      try {
+        client = await redisClient.getClient();
+      } catch (clientError) {
+        logger.warn(
+          `Redis getClient error for key ${key}, skipping cache set:`,
+          clientError.message
+        );
+        return false;
+      }
+
       if (!client) {
         logger.debug(
           `Redis client not available, skipping cache set for key: ${key}`
@@ -68,7 +88,17 @@ class RedisService {
   // Delete value from cache
   async del(key) {
     try {
-      const client = await redisClient.getClient();
+      let client;
+      try {
+        client = await redisClient.getClient();
+      } catch (clientError) {
+        logger.warn(
+          `Redis getClient error for key ${key}, skipping cache delete:`,
+          clientError.message
+        );
+        return false;
+      }
+
       if (!client) {
         logger.debug(
           `Redis client not available, skipping cache delete for key: ${key}`
