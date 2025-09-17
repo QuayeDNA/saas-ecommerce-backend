@@ -1,6 +1,5 @@
 // src/services/userService.js
 import User from "../models/User.js";
-import redisService from "./redisService.js";
 import logger from "../utils/logger.js";
 import {
   isBusinessUser,
@@ -16,26 +15,11 @@ class UserService {
    */
   async getUserById(userId, includeSensitive = false) {
     try {
-      const cacheKey = `user:${userId}:${includeSensitive}`;
-
-      // Try to get from cache first
-      const cachedUser = await redisService.get(cacheKey);
-      if (cachedUser) {
-        logger.debug(`User cache hit for user ${userId}`);
-        return cachedUser;
-      }
-
       const selectFields = includeSensitive
         ? "-password -refreshToken"
         : "-password -refreshToken -verificationToken -resetPasswordToken";
 
       const user = await User.findById(userId).select(selectFields);
-
-      if (user) {
-        // Cache the user for 15 minutes
-        await redisService.set(cacheKey, user, 900);
-        logger.debug(`User cached for user ${userId}`);
-      }
 
       return user;
     } catch (error) {
@@ -58,24 +42,6 @@ class UserService {
     try {
       const { page = 1, limit = 10 } = pagination;
       const { search, userType, status } = filters;
-
-      // Create cache key based on filters and pagination
-      const filterKey = JSON.stringify({
-        filters,
-        pagination,
-        requestUserType,
-        requestUserId,
-      });
-      const cacheKey = `users:list:${Buffer.from(filterKey).toString(
-        "base64"
-      )}`;
-
-      // Try to get from cache first
-      const cachedResult = await redisService.get(cacheKey);
-      if (cachedResult) {
-        logger.debug("Users list cache hit");
-        return cachedResult;
-      }
 
       let query = {};
 
@@ -123,10 +89,6 @@ class UserService {
         },
       };
 
-      // Cache the result for 10 minutes
-      await redisService.set(cacheKey, result, 600);
-      logger.debug("Users list cached");
-
       return result;
     } catch (error) {
       logger.error(`Get users error: ${error.message}`);
@@ -146,19 +108,6 @@ class UserService {
     try {
       const { page = 1, limit = 20 } = pagination;
       const { search, userType } = filters;
-
-      // Create cache key
-      const filterKey = JSON.stringify({ filters, pagination });
-      const cacheKey = `users:wallet:${Buffer.from(filterKey).toString(
-        "base64"
-      )}`;
-
-      // Try to get from cache first
-      const cachedResult = await redisService.get(cacheKey);
-      if (cachedResult) {
-        logger.debug("Users with wallet cache hit");
-        return cachedResult;
-      }
 
       let query = {};
 
@@ -194,10 +143,6 @@ class UserService {
         },
       };
 
-      // Cache the result for 5 minutes
-      await redisService.set(cacheKey, result, 300);
-      logger.debug("Users with wallet cached");
-
       return result;
     } catch (error) {
       logger.error(`Get users with wallet error: ${error.message}`);
@@ -213,15 +158,6 @@ class UserService {
    */
   async getUserStats(requestUserType, requestUserId) {
     try {
-      const cacheKey = `user:stats:${requestUserType}:${requestUserId}`;
-
-      // Try to get from cache first
-      const cachedStats = await redisService.get(cacheKey);
-      if (cachedStats) {
-        logger.debug(`User stats cache hit for ${requestUserType}`);
-        return cachedStats;
-      }
-
       let stats = {};
 
       if (isBusinessUser(requestUserType)) {
@@ -282,10 +218,6 @@ class UserService {
         };
       }
 
-      // Cache the stats for 10 minutes
-      await redisService.set(cacheKey, stats, 600);
-      logger.debug(`User stats cached for ${requestUserType}`);
-
       return stats;
     } catch (error) {
       logger.error(`Get user stats error: ${error.message}`);
@@ -299,15 +231,6 @@ class UserService {
    */
   async getDashboardStats() {
     try {
-      const cacheKey = "user:dashboard:stats";
-
-      // Try to get from cache first
-      const cachedStats = await redisService.get(cacheKey);
-      if (cachedStats) {
-        logger.debug("Dashboard stats cache hit");
-        return cachedStats;
-      }
-
       // Get various user statistics
       const [
         totalUsers,
@@ -347,10 +270,6 @@ class UserService {
         },
       };
 
-      // Cache the dashboard stats for 5 minutes
-      await redisService.set(cacheKey, stats, 300);
-      logger.debug("Dashboard stats cached");
-
       return stats;
     } catch (error) {
       logger.error(`Get dashboard stats error: ${error.message}`);
@@ -376,9 +295,6 @@ class UserService {
       if (updates.phone) user.phone = updates.phone;
 
       await user.save();
-
-      // Invalidate user cache
-      await this.invalidateUserCache(userId);
 
       logger.info(`Profile updated for user: ${user.email}`);
       return user;
@@ -430,10 +346,6 @@ class UserService {
 
       await user.save();
 
-      // Invalidate user cache and related caches
-      await this.invalidateUserCache(userId);
-      await this.invalidateStatsCache();
-
       logger.info(`User status updated: ${user.email}`);
       return user;
     } catch (error) {
@@ -459,89 +371,11 @@ class UserService {
       user.isVerified = false;
       await user.save();
 
-      // Invalidate user cache and related caches
-      await this.invalidateUserCache(userId);
-      await this.invalidateStatsCache();
-
       logger.info(`User deleted: ${user.email}`);
       return true;
     } catch (error) {
       logger.error(`Delete user error: ${error.message}`);
       throw new Error("Failed to delete user");
-    }
-  }
-
-  /**
-   * Invalidate user-related caches
-   * @param {string} userId - User ID (optional)
-   */
-  async invalidateUserCache(userId = null) {
-    try {
-      const keysToDelete = [];
-
-      if (userId) {
-        // Clear specific user caches
-        keysToDelete.push(`user:${userId}:*`);
-      }
-
-      // Clear general user caches
-      keysToDelete.push("users:list:*");
-      keysToDelete.push("users:wallet:*");
-
-      for (const pattern of keysToDelete) {
-        const deletedCount = await redisService.delPattern(pattern);
-        if (deletedCount > 0) {
-          logger.debug(
-            `Invalidated ${deletedCount} user cache entries for pattern: ${pattern}`
-          );
-        }
-      }
-    } catch (error) {
-      logger.error("Error invalidating user cache:", error);
-    }
-  }
-
-  /**
-   * Invalidate statistics caches
-   */
-  async invalidateStatsCache() {
-    try {
-      const keysToDelete = ["user:stats:*", "user:dashboard:stats"];
-
-      for (const pattern of keysToDelete) {
-        const deletedCount = await redisService.delPattern(pattern);
-        if (deletedCount > 0) {
-          logger.debug(
-            `Invalidated ${deletedCount} stats cache entries for pattern: ${pattern}`
-          );
-        }
-      }
-    } catch (error) {
-      logger.error("Error invalidating stats cache:", error);
-    }
-  }
-
-  /**
-   * Get cache statistics for user service
-   * @returns {Promise<Object>} Cache statistics
-   */
-  async getCacheStats() {
-    try {
-      const patterns = ["user:*", "users:*"];
-      let totalEntries = 0;
-
-      for (const pattern of patterns) {
-        const keys = await redisService.keys(pattern);
-        totalEntries += keys.length;
-      }
-
-      return {
-        totalUserCacheEntries: totalEntries,
-        cachePatterns: patterns,
-      };
-    } catch (error) {
-      logger.error("Error getting user cache stats:", error);
-      return { totalUserCacheEntries: 0, error: error.message };
     }
   }
 }

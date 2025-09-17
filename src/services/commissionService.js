@@ -6,7 +6,6 @@ import Settings from "../models/Settings.js";
 import walletService from "./walletService.js";
 import notificationService from "./notificationService.js";
 import websocketService from "./websocketService.js";
-import redisService from "./redisService.js";
 import logger from "../utils/logger.js";
 
 class CommissionService {
@@ -20,18 +19,6 @@ class CommissionService {
    */
   async calculateCommission(agentId, tenantId, startDate, endDate) {
     try {
-      // Create cache key for commission calculation
-      const cacheKey = `commission:calc:${agentId}:${tenantId}:${
-        startDate.toISOString().split("T")[0]
-      }:${endDate.toISOString().split("T")[0]}`;
-
-      // Try to get from cache first
-      const cachedResult = await redisService.get(cacheKey);
-      if (cachedResult) {
-        logger.debug(`Commission calculation cache hit for agent ${agentId}`);
-        return cachedResult;
-      }
-
       // Get agent details to determine commission rate
       const agent = await User.findById(agentId);
       if (!agent) {
@@ -93,10 +80,6 @@ class CommissionService {
           createdAt: order.createdAt,
         })),
       };
-
-      // Cache the result for 1 hour (3600 seconds)
-      await redisService.set(cacheKey, result, 3600);
-      logger.debug(`Commission calculation cached for agent ${agentId}`);
 
       return result;
     } catch (error) {
@@ -166,19 +149,6 @@ class CommissionService {
    */
   async getAgentCommissions(agentId, filters = {}) {
     try {
-      // Create cache key based on agent and filters
-      const filterKey = JSON.stringify(filters);
-      const cacheKey = `commission:agent:${agentId}:${Buffer.from(
-        filterKey
-      ).toString("base64")}`;
-
-      // Try to get from cache first
-      const cachedResult = await redisService.get(cacheKey);
-      if (cachedResult) {
-        logger.debug(`Agent commissions cache hit for agent ${agentId}`);
-        return cachedResult;
-      }
-
       const query = { agentId };
 
       if (filters.status) query.status = filters.status;
@@ -192,10 +162,6 @@ class CommissionService {
         .sort({ periodStart: -1 })
         .populate("paidBy", "fullName email")
         .populate("agentId", "fullName email businessName userType");
-
-      // Cache the result for 15 minutes (900 seconds)
-      await redisService.set(cacheKey, commissions, 900);
-      logger.debug(`Agent commissions cached for agent ${agentId}`);
 
       return commissions;
     } catch (error) {
@@ -211,19 +177,6 @@ class CommissionService {
    */
   async getAllCommissions(filters = {}) {
     try {
-      // Create cache key based on filters
-      const filterKey = JSON.stringify(filters);
-      const cacheKey = `commission:all:${Buffer.from(filterKey).toString(
-        "base64"
-      )}`;
-
-      // Try to get from cache first
-      const cachedResult = await redisService.get(cacheKey);
-      if (cachedResult) {
-        logger.debug("All commissions cache hit");
-        return cachedResult;
-      }
-
       const query = {};
 
       if (filters.status) query.status = filters.status;
@@ -245,10 +198,6 @@ class CommissionService {
         .sort({ periodStart: -1 })
         .populate("agentId", "fullName email businessName userType")
         .populate("paidBy", "fullName email");
-
-      // Cache the result for 10 minutes (600 seconds)
-      await redisService.set(cacheKey, commissions, 600);
-      logger.debug("All commissions cached");
 
       return commissions;
     } catch (error) {
@@ -875,18 +824,6 @@ class CommissionService {
    */
   async getCommissionStatistics(tenantId) {
     try {
-      // Create cache key based on tenant
-      const cacheKey = `commission:stats:${tenantId || "all"}`;
-
-      // Try to get from cache first
-      const cachedResult = await redisService.get(cacheKey);
-      if (cachedResult) {
-        logger.debug(
-          `Commission statistics cache hit for tenant ${tenantId || "all"}`
-        );
-        return cachedResult;
-      }
-
       // Build query based on whether tenantId is provided
       const baseQuery = tenantId ? { tenantId } : {};
 
@@ -940,12 +877,6 @@ class CommissionService {
         },
       };
 
-      // Cache the result for 5 minutes (300 seconds)
-      await redisService.set(cacheKey, result, 300);
-      logger.debug(
-        `Commission statistics cached for tenant ${tenantId || "all"}`
-      );
-
       return result;
     } catch (error) {
       logger.error(`Commission statistics error: ${error.message}`);
@@ -992,16 +923,6 @@ class CommissionService {
 
       logger.info("Commission settings updated:", settings);
 
-      // Invalidate settings cache (only if Redis is available)
-      try {
-        await this.invalidateSettingsCache();
-      } catch (redisError) {
-        logger.warn(
-          "Failed to invalidate commission settings cache, continuing:",
-          redisError.message
-        );
-      }
-
       return {
         agentCommission: settingsDoc.agentCommission,
         superAgentCommission: settingsDoc.superAgentCommission,
@@ -1021,23 +942,6 @@ class CommissionService {
    */
   async getCommissionSettings() {
     try {
-      // Create cache key for settings
-      const cacheKey = "commission:settings";
-
-      // Try to get from cache first (only if Redis is available)
-      try {
-        const cachedResult = await redisService.get(cacheKey);
-        if (cachedResult) {
-          logger.debug("Commission settings cache hit");
-          return cachedResult;
-        }
-      } catch (redisError) {
-        logger.warn(
-          "Redis cache unavailable, proceeding with database query:",
-          redisError.message
-        );
-      }
-
       const settings = await Settings.getInstance();
       const result = {
         agentCommission: settings.agentCommission,
@@ -1047,88 +951,10 @@ class CommissionService {
         defaultCommissionRate: settings.defaultCommissionRate,
       };
 
-      // Try to cache the result (only if Redis is available)
-      try {
-        await redisService.set(cacheKey, result, 3600);
-        logger.debug("Commission settings cached");
-      } catch (redisError) {
-        logger.warn(
-          "Failed to cache commission settings, continuing without cache:",
-          redisError.message
-        );
-      }
-
       return result;
     } catch (error) {
       logger.error(`Get commission settings error: ${error.message}`);
       throw new Error("Failed to get commission settings");
-    }
-  }
-
-  /**
-   * Invalidate commission-related caches
-   * @param {string} agentId - Agent ID (optional, if not provided, clears all agent caches)
-   * @param {string} tenantId - Tenant ID (optional)
-   */
-  async invalidateCommissionCache(agentId = null, tenantId = null) {
-    try {
-      const keysToDelete = [];
-
-      if (agentId) {
-        // Clear specific agent caches
-        keysToDelete.push(`commission:agent:${agentId}:*`);
-        if (tenantId) {
-          // Clear calculation cache for specific agent and tenant
-          const today = new Date();
-          const startOfMonth = new Date(
-            today.getFullYear(),
-            today.getMonth(),
-            1
-          );
-          const endOfMonth = new Date(
-            today.getFullYear(),
-            today.getMonth() + 1,
-            0
-          );
-          const startDateStr = startOfMonth.toISOString().split("T")[0];
-          const endDateStr = endOfMonth.toISOString().split("T")[0];
-          keysToDelete.push(
-            `commission:calc:${agentId}:${tenantId}:${startDateStr}:${endDateStr}`
-          );
-        }
-      }
-
-      // Always clear general caches
-      keysToDelete.push("commission:all:*");
-      keysToDelete.push("commission:stats:*");
-
-      for (const pattern of keysToDelete) {
-        const deletedCount = await redisService.delPattern(pattern);
-        if (deletedCount > 0) {
-          logger.debug(
-            `Invalidated ${deletedCount} cache entries for pattern: ${pattern}`
-          );
-        }
-      }
-    } catch (error) {
-      logger.error("Error invalidating commission cache:", error);
-    }
-  }
-
-  /**
-   * Invalidate settings cache
-   */
-  async invalidateSettingsCache() {
-    try {
-      const deleted = await redisService.del("commission:settings");
-      if (deleted) {
-        logger.debug("Commission settings cache invalidated");
-      }
-    } catch (error) {
-      logger.warn(
-        "Failed to invalidate commission settings cache, continuing without cache:",
-        error.message
-      );
     }
   }
 }

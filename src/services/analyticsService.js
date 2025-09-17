@@ -5,7 +5,6 @@ import WalletTransaction from "../models/WalletTransaction.js";
 import Settings from "../models/Settings.js";
 import CommissionRecord from "../models/CommissionRecord.js";
 import Provider from "../models/Provider.js";
-import redisService from "./redisService.js";
 import logger from "../utils/logger.js";
 import mongoose from "mongoose";
 import { getBusinessUserTypes } from "../utils/userTypeHelpers.js";
@@ -18,17 +17,6 @@ class AnalyticsService {
    */
   async getSuperAdminAnalytics(timeframe = "30d") {
     try {
-      const cacheKey = `analytics:super_admin:${timeframe}`;
-
-      // Try to get from cache first
-      const cachedAnalytics = await redisService.get(cacheKey);
-      if (cachedAnalytics) {
-        logger.debug(
-          `Super admin analytics cache hit for timeframe ${timeframe}`
-        );
-        return cachedAnalytics;
-      }
-
       const dateRange = this.getDateRange(timeframe);
 
       // Get user statistics
@@ -72,10 +60,6 @@ class AnalyticsService {
         generatedAt: new Date(),
       };
 
-      // Cache the result for 15 minutes (900 seconds) since analytics don't need to be real-time
-      await redisService.set(cacheKey, result, 900);
-      logger.debug(`Super admin analytics cached for timeframe ${timeframe}`);
-
       return result;
     } catch (error) {
       logger.error(`Super admin analytics error: ${error.message}`);
@@ -92,7 +76,6 @@ class AnalyticsService {
    */
   async getAgentAnalytics(agentId, tenantId, timeframe = "30d") {
     try {
-      // TEMPORARILY DISABLE REDIS CACHING TO AVOID CLIENT ERRORS
       logger.debug(
         `Generating agent analytics for agent ${agentId}, timeframe ${timeframe}`
       );
@@ -1158,88 +1141,6 @@ class AnalyticsService {
       revenue: dailyData.map((d) => d.revenue),
       completedOrders: dailyData.map((d) => d.completedOrders),
     };
-  }
-
-  /**
-   * Invalidate analytics cache for specific patterns
-   * @param {string} pattern - Cache key pattern to invalidate
-   */
-  async invalidateAnalyticsCache(pattern) {
-    try {
-      const keys = await redisService.keys(pattern);
-      if (keys.length > 0) {
-        await redisService.del(keys);
-        logger.debug(
-          `Invalidated ${keys.length} analytics cache keys matching pattern: ${pattern}`
-        );
-      }
-    } catch (error) {
-      logger.error(`Failed to invalidate analytics cache: ${error.message}`);
-    }
-  }
-
-  /**
-   * Invalidate all analytics cache
-   */
-  async invalidateAllAnalyticsCache() {
-    try {
-      await this.invalidateAnalyticsCache("analytics:*");
-      logger.info("All analytics cache invalidated");
-    } catch (error) {
-      logger.error(
-        `Failed to invalidate all analytics cache: ${error.message}`
-      );
-    }
-  }
-
-  /**
-   * Invalidate analytics cache when user data changes
-   * @param {string} userId - User ID that changed
-   */
-  async invalidateUserAnalyticsCache(userId) {
-    try {
-      // Invalidate super admin analytics
-      await this.invalidateAnalyticsCache("analytics:super_admin:*");
-
-      // Invalidate specific agent analytics if user is an agent
-      await this.invalidateAnalyticsCache(`analytics:agent:${userId}:*`);
-
-      logger.debug(`Analytics cache invalidated for user ${userId}`);
-    } catch (error) {
-      logger.error(
-        `Failed to invalidate user analytics cache: ${error.message}`
-      );
-    }
-  }
-
-  /**
-   * Invalidate analytics cache when order data changes
-   */
-  async invalidateOrderAnalyticsCache() {
-    try {
-      // Invalidate all analytics since orders affect multiple metrics
-      await this.invalidateAllAnalyticsCache();
-      logger.debug("Analytics cache invalidated due to order changes");
-    } catch (error) {
-      logger.error(
-        `Failed to invalidate order analytics cache: ${error.message}`
-      );
-    }
-  }
-
-  /**
-   * Invalidate analytics cache when commission data changes
-   */
-  async invalidateCommissionAnalyticsCache() {
-    try {
-      // Invalidate all analytics since commissions affect revenue metrics
-      await this.invalidateAllAnalyticsCache();
-      logger.debug("Analytics cache invalidated due to commission changes");
-    } catch (error) {
-      logger.error(
-        `Failed to invalidate commission analytics cache: ${error.message}`
-      );
-    }
   }
 
   /**

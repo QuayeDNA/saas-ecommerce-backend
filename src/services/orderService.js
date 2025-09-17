@@ -8,7 +8,6 @@ import notificationService from "./notificationService.js";
 import pushNotificationService from "./pushNotificationService.js";
 import duplicateOrderPreventionService from "./duplicateOrderPreventionService.js";
 import commissionService from "./commissionService.js";
-import redisService from "./redisService.js";
 import mongoose from "mongoose";
 import logger from "../utils/logger.js";
 import { parseBulkOrderRow } from "../utils/parseBulkOrderRow.js";
@@ -474,9 +473,6 @@ class OrderService {
       );
     }
 
-    // Invalidate order caches after successful creation
-    await this.invalidateOrderCache(result.order._id.toString(), tenantId);
-
     return result.order;
   }
 
@@ -793,24 +789,6 @@ class OrderService {
     currentUserId = null
   ) {
     try {
-      // Create cache key based on all parameters
-      const paramsKey = JSON.stringify({
-        tenantId,
-        filters,
-        pagination,
-        currentUserId,
-      });
-      const cacheKey = `orders:list:${Buffer.from(paramsKey).toString(
-        "base64"
-      )}`;
-
-      // Try to get from cache first
-      const cachedResult = await redisService.get(cacheKey);
-      if (cachedResult) {
-        logger.debug(`Orders list cache hit for tenant ${tenantId || "all"}`);
-        return cachedResult;
-      }
-
       const {
         page = 1,
         limit = 20,
@@ -905,10 +883,6 @@ class OrderService {
           limit: Number(limit),
         },
       };
-
-      // Cache the result for 5 minutes (300 seconds)
-      await redisService.set(cacheKey, result, 300);
-      logger.debug(`Orders list cached for tenant ${tenantId || "all"}`);
 
       return result;
     } catch (error) {
@@ -1307,20 +1281,6 @@ class OrderService {
   // Get order analytics
   async getOrderAnalytics(tenantId, timeframe = "30d") {
     try {
-      // Create cache key for analytics
-      const cacheKey = `orders:analytics:${tenantId || "all"}:${timeframe}`;
-
-      // Try to get from cache first
-      const cachedResult = await redisService.get(cacheKey);
-      if (cachedResult) {
-        logger.debug(
-          `Order analytics cache hit for tenant ${
-            tenantId || "all"
-          }, timeframe ${timeframe}`
-        );
-        return cachedResult;
-      }
-
       // Convert timeframe to date
       const endDate = new Date();
       let startDate;
@@ -1390,14 +1350,6 @@ class OrderService {
           timeframe,
         };
       }
-
-      // Cache the result for 10 minutes (600 seconds) since analytics don't need to be real-time
-      await redisService.set(cacheKey, result, 600);
-      logger.debug(
-        `Order analytics cached for tenant ${
-          tenantId || "all"
-        }, timeframe ${timeframe}`
-      );
 
       return result;
     } catch (error) {
@@ -1905,15 +1857,6 @@ class OrderService {
    */
   async getOrderById(orderId, tenantId = null) {
     try {
-      const cacheKey = `order:${orderId}:${tenantId || "all"}`;
-
-      // Try to get from cache first
-      const cachedOrder = await redisService.get(cacheKey);
-      if (cachedOrder) {
-        logger.debug(`Order cache hit for order ${orderId}`);
-        return cachedOrder;
-      }
-
       // Build query based on tenant access
       const query = tenantId ? { _id: orderId, tenantId } : { _id: orderId };
 
@@ -1922,73 +1865,10 @@ class OrderService {
         .populate("createdBy", "fullName email")
         .populate("processedBy", "fullName email");
 
-      if (order) {
-        // Cache the order for 10 minutes
-        await redisService.set(cacheKey, order, 600);
-        logger.debug(`Order cached for order ${orderId}`);
-      }
-
       return order;
     } catch (error) {
       logger.error(`Get order by ID error: ${error.message}`);
       throw new Error("Failed to get order");
-    }
-  }
-
-  /**
-   * Invalidate order-related caches
-   * @param {string} orderId - Order ID (optional)
-   * @param {string} tenantId - Tenant ID (optional)
-   */
-  async invalidateOrderCache(orderId = null, tenantId = null) {
-    try {
-      const keysToDelete = [];
-
-      if (orderId) {
-        // Clear specific order cache
-        keysToDelete.push(`order:${orderId}:*`);
-      }
-
-      // Clear orders list cache (since orders may have changed)
-      keysToDelete.push("orders:list:*");
-
-      // Clear analytics cache (since order changes affect analytics)
-      keysToDelete.push("orders:analytics:*");
-
-      for (const pattern of keysToDelete) {
-        const deletedCount = await redisService.delPattern(pattern);
-        if (deletedCount > 0) {
-          logger.debug(
-            `Invalidated ${deletedCount} order cache entries for pattern: ${pattern}`
-          );
-        }
-      }
-    } catch (error) {
-      logger.error("Error invalidating order cache:", error);
-    }
-  }
-
-  /**
-   * Get cache statistics for order service
-   * @returns {Promise<Object>} Cache statistics
-   */
-  async getCacheStats() {
-    try {
-      const patterns = ["order:*", "orders:*"];
-      let totalEntries = 0;
-
-      for (const pattern of patterns) {
-        const keys = await redisService.keys(pattern);
-        totalEntries += keys.length;
-      }
-
-      return {
-        totalOrderCacheEntries: totalEntries,
-        cachePatterns: patterns,
-      };
-    } catch (error) {
-      logger.error("Error getting order cache stats:", error);
-      return { totalOrderCacheEntries: 0, error: error.message };
     }
   }
 }

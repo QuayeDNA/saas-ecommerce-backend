@@ -414,9 +414,6 @@ class OrderController {
 
       await order.save();
 
-      // Invalidate order caches after status update
-      await orderService.invalidateOrderCache(id, tenantId);
-
       res.json({
         success: true,
         message: "Order status updated successfully",
