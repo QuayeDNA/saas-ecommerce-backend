@@ -9,9 +9,6 @@
     "dev": "nodemon app.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "seed": "node src/scripts/seed-packages.js",
-    "seed:check": "node src/scripts/check-seeding.js",
-    "test:transactions": "node src/scripts/test-transactions.js",
     "build": "npm install && npm install --only=dev && npm install --only=production"
   },
   "keywords": [],
@@ -34,7 +31,6 @@
     "node-fetch": "^3.3.2",
     "nodemailer": "^7.0.3",
     "redis": "^5.8.2",
-    "saas-ecommerce-backend": "file:",
     "web-push": "^3.6.7",
     "winston": "^3.17.0",
     "ws": "^8.18.3"

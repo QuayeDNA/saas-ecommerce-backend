@@ -123,6 +123,70 @@ app.get("/health/redis", async (req, res) => {
   }
 });
 
+// Root endpoint - ASCII Landing Page
+app.get("/", (req, res) => {
+  const asciiArt = `
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║                    🚀 SAAS E-COMMERCE BACKEND API 🚀                          ║
+║                                                                              ║
+║              ███████╗ █████╗  █████╗ ███████╗                               ║
+║              ██╔════╝██╔══██╗██╔══██╗██╔════╝                               ║
+║              ███████╗███████║███████║███████╗                               ║
+║              ╚════██║██╔══██║██╔══██║╚════██║                               ║
+║              ███████║██║  ██║██║  ██║███████║                               ║
+║              ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝                               ║
+║                                                                              ║
+║                    🛒 Multi-Vendor E-Commerce Platform 🛒                      ║
+║                                                                              ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                              ║
+║  🎯 WELCOME TO THE BACKEND API!                                              ║
+║                                                                              ║
+║  This is a secure multi-vendor e-commerce platform backend built with       ║
+║  modern technologies for scalable and reliable operations.                  ║
+║                                                                              ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                              ║
+║  🏥 SYSTEM STATUS:                                                            ║
+║                                                                              ║
+║  ✅ API Status:       Online                                                 ║
+║  � Environment:      ${process.env.NODE_ENV?.toUpperCase() || 'DEVELOPMENT'} MODE                        ║
+║  ⏰ Server Time:       ${new Date().toLocaleString()}                              ║
+║  🌐 Health Check:      /health                                               ║
+║                                                                              ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                              ║
+║  🛠️  TECHNOLOGIES:                                                           ║
+║                                                                              ║
+║  • Node.js + Express.js (RESTful API)                                       ║
+║  • MongoDB (Primary Database)                                               ║
+║  • Redis (Caching & Sessions)                                               ║
+║  • WebSocket (Real-time Communication)                                      ║
+║  • JWT (Authentication & Security)                                          ║
+║  • Push Notifications (VAPID)                                               ║
+║                                                                              ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                              ║
+║  � API DOCUMENTATION:                                                       ║
+║                                                                              ║
+║  � Check the /docs/ folder for detailed API documentation                  ║
+║  🔗 Frontend Application: http://localhost:5173                             ║
+║                                                                              ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                              ║
+║  � SECURITY NOTICE:                                                         ║
+║                                                                              ║
+║  This API is secured with JWT authentication and role-based access control. ║
+║  All endpoints require proper authentication and authorization.              ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+`;
+
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(asciiArt);
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   logger.error(`Server error: ${err.message}`);
