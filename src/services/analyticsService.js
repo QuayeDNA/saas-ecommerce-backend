@@ -5,6 +5,7 @@ import WalletTransaction from "../models/WalletTransaction.js";
 import Settings from "../models/Settings.js";
 import CommissionRecord from "../models/CommissionRecord.js";
 import Provider from "../models/Provider.js";
+import redisService from "./redisService.js";
 import logger from "../utils/logger.js";
 import mongoose from "mongoose";
 import { getBusinessUserTypes } from "../utils/userTypeHelpers.js";
@@ -17,6 +18,17 @@ class AnalyticsService {
    */
   async getSuperAdminAnalytics(timeframe = "30d") {
     try {
+      const cacheKey = `analytics:super_admin:${timeframe}`;
+
+      // Try to get from cache first
+      const cachedAnalytics = await redisService.get(cacheKey);
+      if (cachedAnalytics) {
+        logger.debug(
+          `Super admin analytics cache hit for timeframe ${timeframe}`
+        );
+        return cachedAnalytics;
+      }
+
       const dateRange = this.getDateRange(timeframe);
 
       // Get user statistics
@@ -46,7 +58,7 @@ class AnalyticsService {
       // Get chart data
       const chartData = await this.getChartData(timeframe);
 
-      return {
+      const result = {
         users: userStats,
         orders: orderStats,
         revenue: revenueStats,
@@ -59,6 +71,12 @@ class AnalyticsService {
         timeframe,
         generatedAt: new Date(),
       };
+
+      // Cache the result for 15 minutes (900 seconds) since analytics don't need to be real-time
+      await redisService.set(cacheKey, result, 900);
+      logger.debug(`Super admin analytics cached for timeframe ${timeframe}`);
+
+      return result;
     } catch (error) {
       logger.error(`Super admin analytics error: ${error.message}`);
       throw new Error("Failed to generate super admin analytics");
@@ -74,50 +92,67 @@ class AnalyticsService {
    */
   async getAgentAnalytics(agentId, tenantId, timeframe = "30d") {
     try {
+      const cacheKey = `analytics:agent:${agentId}:${timeframe}`;
+
+      // Try to get from cache first
+      const cachedAnalytics = await redisService.get(cacheKey);
+      if (cachedAnalytics) {
+        logger.debug(
+          `Agent analytics cache hit for agent ${agentId}, timeframe ${timeframe}`
+        );
+        return cachedAnalytics;
+      }
+
       const dateRange = this.getDateRange(timeframe);
 
+      // Get agent's user statistics
+      const userStats = await this.getAgentUserStatistics(agentId, dateRange);
+
       // Get agent's order statistics
-      const orderStats = await this.getAgentOrderStatistics(
-        agentId,
-        tenantId,
-        dateRange
-      );
+      const orderStats = await this.getAgentOrderStatistics(agentId, dateRange);
 
       // Get agent's revenue statistics
       const revenueStats = await this.getAgentRevenueStatistics(
         agentId,
-        tenantId,
         dateRange
       );
 
-      // Get agent's commission data
-      const commissionData = await this.getAgentCommissionData(
+      // Get agent's commission statistics
+      const commissionStats = await this.getAgentCommissionStatistics(
         agentId,
-        tenantId,
         dateRange
       );
 
-      // Get agent's wallet data
-      const walletData = await this.getAgentWalletData(agentId);
+      // Get agent's wallet statistics
+      const walletStats = await this.getAgentWalletStatistics(agentId);
+
+      // Get agent's recent activity
+      const recentActivity = await this.getAgentRecentActivity(agentId);
 
       // Get agent's chart data
-      const chartData = await this.getAgentChartData(
-        agentId,
-        tenantId,
-        timeframe
-      );
+      const chartData = await this.getAgentChartData(agentId, timeframe);
 
-      return {
+      const result = {
+        users: userStats,
         orders: orderStats,
         revenue: revenueStats,
-        commissions: commissionData,
-        wallet: walletData,
+        commissions: commissionStats,
+        wallet: walletStats,
+        recentActivity,
         charts: chartData,
         timeframe,
         generatedAt: new Date(),
       };
+
+      // Cache the result for 10 minutes (600 seconds) since agent analytics are moderately dynamic
+      await redisService.set(cacheKey, result, 600);
+      logger.debug(
+        `Agent analytics cached for agent ${agentId}, timeframe ${timeframe}`
+      );
+
+      return result;
     } catch (error) {
-      logger.error(`Agent analytics error: ${error.message}`);
+      logger.error(`Agent analytics error for ${agentId}: ${error.message}`);
       throw new Error("Failed to generate agent analytics");
     }
   }
@@ -772,11 +807,10 @@ class AnalyticsService {
   /**
    * Get agent order statistics
    * @param {string} agentId - Agent ID
-   * @param {string} tenantId - Tenant ID
    * @param {Object} dateRange - Date range
    * @returns {Promise<Object>} Agent order statistics
    */
-  async getAgentOrderStatistics(agentId, tenantId, dateRange) {
+  async getAgentOrderStatistics(agentId, dateRange) {
     const { startDate, endDate } = dateRange;
 
     // Calculate today's range
@@ -898,11 +932,10 @@ class AnalyticsService {
   /**
    * Get agent revenue statistics
    * @param {string} agentId - Agent ID
-   * @param {string} tenantId - Tenant ID
    * @param {Object} dateRange - Date range
    * @returns {Promise<Object>} Agent revenue statistics
    */
-  async getAgentRevenueStatistics(agentId, tenantId, dateRange) {
+  async getAgentRevenueStatistics(agentId, dateRange) {
     const { startDate, endDate } = dateRange;
 
     // Calculate today's range
@@ -1112,6 +1145,88 @@ class AnalyticsService {
       revenue: dailyData.map((d) => d.revenue),
       completedOrders: dailyData.map((d) => d.completedOrders),
     };
+  }
+
+  /**
+   * Invalidate analytics cache for specific patterns
+   * @param {string} pattern - Cache key pattern to invalidate
+   */
+  async invalidateAnalyticsCache(pattern) {
+    try {
+      const keys = await redisService.keys(pattern);
+      if (keys.length > 0) {
+        await redisService.del(keys);
+        logger.debug(
+          `Invalidated ${keys.length} analytics cache keys matching pattern: ${pattern}`
+        );
+      }
+    } catch (error) {
+      logger.error(`Failed to invalidate analytics cache: ${error.message}`);
+    }
+  }
+
+  /**
+   * Invalidate all analytics cache
+   */
+  async invalidateAllAnalyticsCache() {
+    try {
+      await this.invalidateAnalyticsCache("analytics:*");
+      logger.info("All analytics cache invalidated");
+    } catch (error) {
+      logger.error(
+        `Failed to invalidate all analytics cache: ${error.message}`
+      );
+    }
+  }
+
+  /**
+   * Invalidate analytics cache when user data changes
+   * @param {string} userId - User ID that changed
+   */
+  async invalidateUserAnalyticsCache(userId) {
+    try {
+      // Invalidate super admin analytics
+      await this.invalidateAnalyticsCache("analytics:super_admin:*");
+
+      // Invalidate specific agent analytics if user is an agent
+      await this.invalidateAnalyticsCache(`analytics:agent:${userId}:*`);
+
+      logger.debug(`Analytics cache invalidated for user ${userId}`);
+    } catch (error) {
+      logger.error(
+        `Failed to invalidate user analytics cache: ${error.message}`
+      );
+    }
+  }
+
+  /**
+   * Invalidate analytics cache when order data changes
+   */
+  async invalidateOrderAnalyticsCache() {
+    try {
+      // Invalidate all analytics since orders affect multiple metrics
+      await this.invalidateAllAnalyticsCache();
+      logger.debug("Analytics cache invalidated due to order changes");
+    } catch (error) {
+      logger.error(
+        `Failed to invalidate order analytics cache: ${error.message}`
+      );
+    }
+  }
+
+  /**
+   * Invalidate analytics cache when commission data changes
+   */
+  async invalidateCommissionAnalyticsCache() {
+    try {
+      // Invalidate all analytics since commissions affect revenue metrics
+      await this.invalidateAllAnalyticsCache();
+      logger.debug("Analytics cache invalidated due to commission changes");
+    } catch (error) {
+      logger.error(
+        `Failed to invalidate commission analytics cache: ${error.message}`
+      );
+    }
   }
 }
 

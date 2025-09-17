@@ -8,6 +8,7 @@ import notificationService from "./notificationService.js";
 import pushNotificationService from "./pushNotificationService.js";
 import duplicateOrderPreventionService from "./duplicateOrderPreventionService.js";
 import commissionService from "./commissionService.js";
+import redisService from "./redisService.js";
 import mongoose from "mongoose";
 import logger from "../utils/logger.js";
 import { parseBulkOrderRow } from "../utils/parseBulkOrderRow.js";
@@ -473,6 +474,9 @@ class OrderService {
       );
     }
 
+    // Invalidate order caches after successful creation
+    await this.invalidateOrderCache(result.order._id.toString(), tenantId);
+
     return result.order;
   }
 
@@ -788,97 +792,129 @@ class OrderService {
     pagination = {},
     currentUserId = null
   ) {
-    const {
-      page = 1,
-      limit = 20,
-      sortBy = "createdAt",
-      sortOrder = -1,
-    } = pagination;
-    const {
-      status,
-      orderType,
-      paymentStatus,
-      startDate,
-      endDate,
-      search,
-      createdBy,
-      provider,
-    } = filters;
+    try {
+      // Create cache key based on all parameters
+      const paramsKey = JSON.stringify({
+        tenantId,
+        filters,
+        pagination,
+        currentUserId,
+      });
+      const cacheKey = `orders:list:${Buffer.from(paramsKey).toString(
+        "base64"
+      )}`;
 
-    // For super admins (tenantId is null), don't filter by tenant
-    // For regular users, filter by their tenant
-    const query = tenantId ? { tenantId } : {};
-
-    if (status) query.status = status;
-    if (orderType) query.orderType = orderType;
-    if (paymentStatus) query.paymentStatus = paymentStatus;
-    if (createdBy) query.createdBy = createdBy;
-
-    // Restrict draft orders to only the creator (agents can only see their own drafts)
-    if (status === "draft") {
-      // If specifically filtering for drafts, only show user's own drafts
-      if (currentUserId) {
-        query.createdBy = currentUserId;
-      } else {
-        // If no currentUserId (super admin), don't show any drafts
-        query.status = { $ne: "draft" };
+      // Try to get from cache first
+      const cachedResult = await redisService.get(cacheKey);
+      if (cachedResult) {
+        logger.debug(`Orders list cache hit for tenant ${tenantId || "all"}`);
+        return cachedResult;
       }
-    } else if (!status && currentUserId) {
-      // If no specific status filter and user is not super admin, exclude draft orders from other users
-      query.$or = [{ status: { $ne: "draft" } }, { createdBy: currentUserId }];
-    }
 
-    if (startDate || endDate) {
-      query.createdAt = {};
-      if (startDate) query.createdAt.$gte = new Date(startDate);
-      if (endDate) query.createdAt.$lte = new Date(endDate);
-    }
+      const {
+        page = 1,
+        limit = 20,
+        sortBy = "createdAt",
+        sortOrder = -1,
+      } = pagination;
+      const {
+        status,
+        orderType,
+        paymentStatus,
+        startDate,
+        endDate,
+        search,
+        createdBy,
+        provider,
+      } = filters;
 
-    // Add provider filter - filter by package provider
-    if (provider) {
-      query["items.packageDetails.provider"] = provider;
-    }
+      // For super admins (tenantId is null), don't filter by tenant
+      // For regular users, filter by their tenant
+      const query = tenantId ? { tenantId } : {};
 
-    if (search) {
-      const searchConditions = [
-        { orderNumber: { $regex: search, $options: "i" } },
-        { "customerInfo.name": { $regex: search, $options: "i" } },
-        { "customerInfo.phone": { $regex: search, $options: "i" } },
-        { "items.customerPhone": { $regex: search, $options: "i" } },
-      ];
+      if (status) query.status = status;
+      if (orderType) query.orderType = orderType;
+      if (paymentStatus) query.paymentStatus = paymentStatus;
+      if (createdBy) query.createdBy = createdBy;
 
-      // If we already have an $or condition (from draft restrictions), combine them
-      if (query.$or) {
-        // We need to combine the existing $or with search conditions
-        // This is complex, so we'll use $and to combine both conditions
-        const existingOr = query.$or;
-        delete query.$or;
-        query.$and = [{ $or: existingOr }, { $or: searchConditions }];
-      } else {
-        query.$or = searchConditions;
+      // Restrict draft orders to only the creator (agents can only see their own drafts)
+      if (status === "draft") {
+        // If specifically filtering for drafts, only show user's own drafts
+        if (currentUserId) {
+          query.createdBy = currentUserId;
+        } else {
+          // If no currentUserId (super admin), don't show any drafts
+          query.status = { $ne: "draft" };
+        }
+      } else if (!status && currentUserId) {
+        // If no specific status filter and user is not super admin, exclude draft orders from other users
+        query.$or = [
+          { status: { $ne: "draft" } },
+          { createdBy: currentUserId },
+        ];
       }
+
+      if (startDate || endDate) {
+        query.createdAt = {};
+        if (startDate) query.createdAt.$gte = new Date(startDate);
+        if (endDate) query.createdAt.$lte = new Date(endDate);
+      }
+
+      // Add provider filter - filter by package provider
+      if (provider) {
+        query["items.packageDetails.provider"] = provider;
+      }
+
+      if (search) {
+        const searchConditions = [
+          { orderNumber: { $regex: search, $options: "i" } },
+          { "customerInfo.name": { $regex: search, $options: "i" } },
+          { "customerInfo.phone": { $regex: search, $options: "i" } },
+          { "items.customerPhone": { $regex: search, $options: "i" } },
+        ];
+
+        // If we already have an $or condition (from draft restrictions), combine them
+        if (query.$or) {
+          // We need to combine the existing $or with search conditions
+          // This is complex, so we'll use $and to combine both conditions
+          const existingOr = query.$or;
+          delete query.$or;
+          query.$and = [{ $or: existingOr }, { $or: searchConditions }];
+        } else {
+          query.$or = searchConditions;
+        }
+      }
+
+      const [orders, total] = await Promise.all([
+        Order.find(query)
+          .populate("items.packageGroup", "name provider")
+          .populate("createdBy", "fullName email")
+          .populate("processedBy", "fullName email")
+          .skip((page - 1) * limit)
+          .limit(Number(limit))
+          .sort({ [sortBy]: sortOrder }),
+        Order.countDocuments(query),
+      ]);
+
+      const result = {
+        orders,
+        pagination: {
+          total,
+          page: Number(page),
+          pages: Math.ceil(total / limit),
+          limit: Number(limit),
+        },
+      };
+
+      // Cache the result for 5 minutes (300 seconds)
+      await redisService.set(cacheKey, result, 300);
+      logger.debug(`Orders list cached for tenant ${tenantId || "all"}`);
+
+      return result;
+    } catch (error) {
+      logger.error(`Get orders error: ${error.message}`);
+      throw new Error("Failed to get orders");
     }
-
-    const [orders, total] = await Promise.all([
-      Order.find(query)
-        .populate("items.packageGroup", "name provider")
-        .populate("createdBy", "fullName email")
-        .populate("processedBy", "fullName email")
-        .skip((page - 1) * limit)
-        .limit(Number(limit))
-        .sort({ [sortBy]: sortOrder }),
-      Order.countDocuments(query),
-    ]);
-
-    return {
-      orders,
-      pagination: {
-        total,
-        page: Number(page),
-        pages: Math.ceil(total / limit),
-        limit: Number(limit),
-      },
-    };
   }
 
   // Process order item
@@ -1270,74 +1306,104 @@ class OrderService {
 
   // Get order analytics
   async getOrderAnalytics(tenantId, timeframe = "30d") {
-    // Convert timeframe to date
-    const endDate = new Date();
-    let startDate;
+    try {
+      // Create cache key for analytics
+      const cacheKey = `orders:analytics:${tenantId || "all"}:${timeframe}`;
 
-    switch (timeframe) {
-      case "7d":
-        startDate = new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
-        break;
-      case "30d":
-        startDate = new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
-        break;
-      case "90d":
-        startDate = new Date(endDate.getTime() - 90 * 24 * 60 * 60 * 1000);
-        break;
-      case "365d":
-        startDate = new Date(endDate.getTime() - 365 * 24 * 60 * 60 * 1000);
-        break;
-      default:
-        startDate = new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
-    }
+      // Try to get from cache first
+      const cachedResult = await redisService.get(cacheKey);
+      if (cachedResult) {
+        logger.debug(
+          `Order analytics cache hit for tenant ${
+            tenantId || "all"
+          }, timeframe ${timeframe}`
+        );
+        return cachedResult;
+      }
 
-    const stats = await Order.aggregate([
-      {
-        $match: {
-          tenantId: tenantId,
-          createdAt: { $gte: startDate, $lte: endDate },
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          totalOrders: { $sum: 1 },
-          completedOrders: {
-            $sum: { $cond: ["$status", 1, 0] },
+      // Convert timeframe to date
+      const endDate = new Date();
+      let startDate;
+
+      switch (timeframe) {
+        case "7d":
+          startDate = new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        case "30d":
+          startDate = new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+          break;
+        case "90d":
+          startDate = new Date(endDate.getTime() - 90 * 24 * 60 * 60 * 1000);
+          break;
+        case "365d":
+          startDate = new Date(endDate.getTime() - 365 * 24 * 60 * 60 * 1000);
+          break;
+        default:
+          startDate = new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+      }
+
+      const stats = await Order.aggregate([
+        {
+          $match: {
+            tenantId: tenantId,
+            createdAt: { $gte: startDate, $lte: endDate },
           },
-          totalRevenue: { $sum: "$total" },
-          bulkOrders: {
-            $sum: { $cond: [{ $eq: ["$orderType", "bulk"] }, 1, 0] },
+        },
+        {
+          $group: {
+            _id: null,
+            totalOrders: { $sum: 1 },
+            completedOrders: {
+              $sum: { $cond: ["$status", 1, 0] },
+            },
+            totalRevenue: { $sum: "$total" },
+            bulkOrders: {
+              $sum: { $cond: [{ $eq: ["$orderType", "bulk"] }, 1, 0] },
+            },
           },
         },
-      },
-    ]);
+      ]);
 
-    if (stats.length === 0) {
-      return {
-        totalOrders: 0,
-        completedOrders: 0,
-        totalRevenue: 0,
-        bulkOrders: 0,
-        completionRate: 0,
-        timeframe,
-      };
+      let result;
+      if (stats.length === 0) {
+        result = {
+          totalOrders: 0,
+          completedOrders: 0,
+          totalRevenue: 0,
+          bulkOrders: 0,
+          completionRate: 0,
+          timeframe,
+        };
+      } else {
+        const statsData = stats[0];
+        const completionRate =
+          statsData.totalOrders > 0
+            ? (statsData.completedOrders / statsData.totalOrders) * 100
+            : 0;
+
+        result = {
+          totalOrders: statsData.totalOrders,
+          completedOrders: statsData.completedOrders,
+          totalRevenue: statsData.totalRevenue,
+          bulkOrders: statsData.bulkOrders,
+          completionRate: Math.round(completionRate * 100) / 100,
+          timeframe,
+        };
+      }
+
+      // Cache the result for 10 minutes (600 seconds) since analytics don't need to be real-time
+      await redisService.set(cacheKey, result, 600);
+      logger.debug(
+        `Order analytics cached for tenant ${
+          tenantId || "all"
+        }, timeframe ${timeframe}`
+      );
+
+      return result;
+    } catch (error) {
+      logger.error(`Get order analytics error: ${error.message}`);
+      throw new Error("Failed to get order analytics");
     }
-
-    const result = stats[0];
-    const completionRate =
-      result.totalOrders > 0
-        ? (result.completedOrders / result.totalOrders) * 100
-        : 0;
-
-    return {
-      totalOrders: result.totalOrders,
-      completedOrders: result.completedOrders,
-      totalRevenue: result.totalRevenue,
-      bulkOrders: result.bulkOrders,
-      completionRate: Math.round(completionRate * 100) / 100,
-      timeframe,
-    };
   }
 
   // Process draft orders when wallet is topped up
@@ -1829,6 +1895,101 @@ class OrderService {
         name: reporter.fullName || reporter.email,
       },
     };
+  }
+
+  /**
+   * Get single order by ID with caching
+   * @param {string} orderId - Order ID
+   * @param {string} tenantId - Tenant ID (optional, for access control)
+   * @returns {Promise<Object>} Order object
+   */
+  async getOrderById(orderId, tenantId = null) {
+    try {
+      const cacheKey = `order:${orderId}:${tenantId || "all"}`;
+
+      // Try to get from cache first
+      const cachedOrder = await redisService.get(cacheKey);
+      if (cachedOrder) {
+        logger.debug(`Order cache hit for order ${orderId}`);
+        return cachedOrder;
+      }
+
+      // Build query based on tenant access
+      const query = tenantId ? { _id: orderId, tenantId } : { _id: orderId };
+
+      const order = await Order.findOne(query)
+        .populate("items.packageGroup", "name provider")
+        .populate("createdBy", "fullName email")
+        .populate("processedBy", "fullName email");
+
+      if (order) {
+        // Cache the order for 10 minutes
+        await redisService.set(cacheKey, order, 600);
+        logger.debug(`Order cached for order ${orderId}`);
+      }
+
+      return order;
+    } catch (error) {
+      logger.error(`Get order by ID error: ${error.message}`);
+      throw new Error("Failed to get order");
+    }
+  }
+
+  /**
+   * Invalidate order-related caches
+   * @param {string} orderId - Order ID (optional)
+   * @param {string} tenantId - Tenant ID (optional)
+   */
+  async invalidateOrderCache(orderId = null, tenantId = null) {
+    try {
+      const keysToDelete = [];
+
+      if (orderId) {
+        // Clear specific order cache
+        keysToDelete.push(`order:${orderId}:*`);
+      }
+
+      // Clear orders list cache (since orders may have changed)
+      keysToDelete.push("orders:list:*");
+
+      // Clear analytics cache (since order changes affect analytics)
+      keysToDelete.push("orders:analytics:*");
+
+      for (const pattern of keysToDelete) {
+        const deletedCount = await redisService.delPattern(pattern);
+        if (deletedCount > 0) {
+          logger.debug(
+            `Invalidated ${deletedCount} order cache entries for pattern: ${pattern}`
+          );
+        }
+      }
+    } catch (error) {
+      logger.error("Error invalidating order cache:", error);
+    }
+  }
+
+  /**
+   * Get cache statistics for order service
+   * @returns {Promise<Object>} Cache statistics
+   */
+  async getCacheStats() {
+    try {
+      const patterns = ["order:*", "orders:*"];
+      let totalEntries = 0;
+
+      for (const pattern of patterns) {
+        const keys = await redisService.keys(pattern);
+        totalEntries += keys.length;
+      }
+
+      return {
+        totalOrderCacheEntries: totalEntries,
+        cachePatterns: patterns,
+      };
+    } catch (error) {
+      logger.error("Error getting order cache stats:", error);
+      return { totalOrderCacheEntries: 0, error: error.message };
+    }
   }
 }
 

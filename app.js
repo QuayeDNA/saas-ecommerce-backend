@@ -4,6 +4,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import connectDB from "./src/config/db.js";
+import redisClient from "./src/config/redis.js";
 import logger from "./src/utils/logger.js";
 import websocketService from "./src/services/websocketService.js";
 import { scheduleNotificationCleanup } from "./src/jobs/clearOldNotifications.js";
@@ -28,6 +29,21 @@ const PORT = process.env.PORT || 5050;
 
 // Database connection
 connectDB();
+
+// Redis connection
+const initializeRedis = async () => {
+  try {
+    await redisClient.connect();
+    logger.info("Redis initialized successfully");
+  } catch (error) {
+    logger.error("Failed to initialize Redis:", error);
+    // Don't exit the process, just log the error
+    // The app can still function without Redis (graceful degradation)
+  }
+};
+
+// Initialize Redis
+initializeRedis();
 
 // Start notification cleanup job
 scheduleNotificationCleanup();
@@ -81,6 +97,32 @@ app.get("/health", (req, res) => {
   res.json({ status: "OK", timestamp: new Date().toISOString() });
 });
 
+// Redis health check
+app.get("/health/redis", async (req, res) => {
+  try {
+    const isRedisHealthy = await redisClient.ping();
+    const redisStatus = redisClient.getStatus();
+    res.json({
+      status: isRedisHealthy ? "OK" : "ERROR",
+      redis: {
+        connected: redisStatus.connected,
+        client: redisStatus.client,
+        ping: isRedisHealthy,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: "ERROR",
+      redis: {
+        connected: false,
+        error: error.message,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   logger.error(`Server error: ${err.message}`);
@@ -103,6 +145,35 @@ app.use((req, res) => {
 
 const server = app.listen(PORT, () => {
   logger.info(`Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
+});
+
+// Graceful shutdown
+process.on("SIGTERM", async () => {
+  logger.info("SIGTERM received, shutting down gracefully");
+  server.close(async () => {
+    logger.info("HTTP server closed");
+    try {
+      await redisClient.disconnect();
+      logger.info("Redis connection closed");
+    } catch (error) {
+      logger.error("Error closing Redis connection:", error);
+    }
+    process.exit(0);
+  });
+});
+
+process.on("SIGINT", async () => {
+  logger.info("SIGINT received, shutting down gracefully");
+  server.close(async () => {
+    logger.info("HTTP server closed");
+    try {
+      await redisClient.disconnect();
+      logger.info("Redis connection closed");
+    } catch (error) {
+      logger.error("Error closing Redis connection:", error);
+    }
+    process.exit(0);
+  });
 });
 
 // Initialize WebSocket server

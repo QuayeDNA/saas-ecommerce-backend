@@ -2,6 +2,7 @@ import bcrypt from "bcrypt";
 import User from "../models/User.js";
 import Settings from "../models/Settings.js";
 import logger from "../utils/logger.js";
+import redisService from "./redisService.js";
 
 // =============================================================================
 // SETTINGS SERVICE
@@ -10,11 +11,31 @@ import logger from "../utils/logger.js";
 class SettingsService {
   // Site Management
   async getSiteSettings() {
-    const settings = await Settings.getInstance();
-    return {
-      isSiteOpen: settings.isSiteOpen,
-      customMessage: settings.customMessage,
-    };
+    try {
+      const cacheKey = "settings:site";
+
+      // Try to get from cache first
+      const cachedSettings = await redisService.get(cacheKey);
+      if (cachedSettings) {
+        logger.debug("Site settings cache hit");
+        return cachedSettings;
+      }
+
+      const settings = await Settings.getInstance();
+      const result = {
+        isSiteOpen: settings.isSiteOpen,
+        customMessage: settings.customMessage,
+      };
+
+      // Cache for 5 minutes (300 seconds) since site settings change infrequently
+      await redisService.set(cacheKey, result, 300);
+      logger.debug("Site settings cached");
+
+      return result;
+    } catch (error) {
+      logger.error(`Error getting site settings: ${error.message}`);
+      throw error;
+    }
   }
 
   async updateSiteSettings(settings) {
@@ -22,6 +43,9 @@ class SettingsService {
     settingsDoc.isSiteOpen = settings.isSiteOpen;
     settingsDoc.customMessage = settings.customMessage;
     await settingsDoc.save();
+
+    // Invalidate site settings cache
+    await this.invalidateSiteSettingsCache();
 
     logger.info("Site settings updated:", settings);
     return settings;
@@ -32,6 +56,9 @@ class SettingsService {
     settings.isSiteOpen = !settings.isSiteOpen;
     await settings.save();
 
+    // Invalidate site settings cache
+    await this.invalidateSiteSettingsCache();
+
     logger.info(
       `Site status toggled to: ${settings.isSiteOpen ? "open" : "closed"}`
     );
@@ -41,17 +68,58 @@ class SettingsService {
 
   // Get site status for middleware checks
   async isSiteOpen() {
-    const settings = await Settings.getInstance();
-    return settings.isSiteOpen;
+    try {
+      const cacheKey = "settings:site:status";
+
+      // Try to get from cache first (very short TTL for status checks)
+      const cachedStatus = await redisService.get(cacheKey);
+      if (cachedStatus !== null) {
+        logger.debug("Site status cache hit");
+        return cachedStatus;
+      }
+
+      const settings = await Settings.getInstance();
+      const isOpen = settings.isSiteOpen;
+
+      // Cache for 30 seconds (30 seconds) since status is checked frequently
+      await redisService.set(cacheKey, isOpen, 30);
+      logger.debug("Site status cached");
+
+      return isOpen;
+    } catch (error) {
+      logger.error(`Error checking site status: ${error.message}`);
+      // Return true as default to avoid blocking access during errors
+      return true;
+    }
   }
 
   // Commission Rates
   async getCommissionRates() {
-    const settings = await Settings.getInstance();
-    return {
-      agentCommission: settings.agentCommission,
-      customerCommission: settings.customerCommission,
-    };
+    try {
+      const cacheKey = "settings:commission_rates";
+
+      // Try to get from cache first
+      const cachedRates = await redisService.get(cacheKey);
+      if (cachedRates) {
+        logger.debug("Commission rates cache hit");
+        return cachedRates;
+      }
+
+      const settings = await Settings.getInstance();
+      const result = {
+        agentCommission: settings.agentCommission,
+        customerCommission: settings.customerCommission,
+      };
+
+      // Cache for 10 minutes (600 seconds) since commission rates change moderately
+      await redisService.set(cacheKey, result, 600);
+      logger.debug("Commission rates cached");
+
+      return result;
+    } catch (error) {
+      logger.error(`Error getting commission rates: ${error.message}`);
+      throw error;
+    }
   }
 
   async updateCommissionRates(rates) {
@@ -60,24 +128,47 @@ class SettingsService {
     settings.customerCommission = rates.customerCommission;
     await settings.save();
 
+    // Invalidate commission rates cache
+    await this.invalidateCommissionRatesCache();
+
     logger.info("Commission rates updated:", rates);
     return rates;
   }
 
   // API Settings
   async getApiSettings() {
-    const settings = await Settings.getInstance();
-    return {
-      mtnApiKey: settings.mtnApiKey || process.env.MTN_API_KEY || "",
-      telecelApiKey:
-        settings.telecelApiKey || process.env.TELECEL_API_KEY || "",
-      airtelTigoApiKey:
-        settings.airtelTigoApiKey || process.env.AIRTELTIGO_API_KEY || "",
-      apiEndpoint:
-        settings.apiEndpoint ||
-        process.env.API_ENDPOINT ||
-        "https://api.telecomsaas.com",
-    };
+    try {
+      const cacheKey = "settings:api";
+
+      // Try to get from cache first
+      const cachedSettings = await redisService.get(cacheKey);
+      if (cachedSettings) {
+        logger.debug("API settings cache hit");
+        return cachedSettings;
+      }
+
+      const settings = await Settings.getInstance();
+      const result = {
+        mtnApiKey: settings.mtnApiKey || process.env.MTN_API_KEY || "",
+        telecelApiKey:
+          settings.telecelApiKey || process.env.TELECEL_API_KEY || "",
+        airtelTigoApiKey:
+          settings.airtelTigoApiKey || process.env.AIRTELTIGO_API_KEY || "",
+        apiEndpoint:
+          settings.apiEndpoint ||
+          process.env.API_ENDPOINT ||
+          "https://api.telecomsaas.com",
+      };
+
+      // Cache for 30 minutes (1800 seconds) since API settings change infrequently
+      await redisService.set(cacheKey, result, 1800);
+      logger.debug("API settings cached");
+
+      return result;
+    } catch (error) {
+      logger.error(`Error getting API settings: ${error.message}`);
+      throw error;
+    }
   }
 
   async updateApiSettings(settings) {
@@ -87,6 +178,9 @@ class SettingsService {
     settingsDoc.airtelTigoApiKey = settings.airtelTigoApiKey;
     settingsDoc.apiEndpoint = settings.apiEndpoint;
     await settingsDoc.save();
+
+    // Invalidate API settings cache
+    await this.invalidateApiSettingsCache();
 
     logger.info("API settings updated:", {
       ...settings,
@@ -203,6 +297,52 @@ class SettingsService {
     } catch (error) {
       logger.error("Error changing admin password:", error);
       throw error;
+    }
+  }
+
+  // Cache Invalidation Methods
+  async invalidateSiteSettingsCache() {
+    try {
+      await redisService.del(["settings:site", "settings:site:status"]);
+      logger.debug("Site settings cache invalidated");
+    } catch (error) {
+      logger.error(
+        `Failed to invalidate site settings cache: ${error.message}`
+      );
+    }
+  }
+
+  async invalidateCommissionRatesCache() {
+    try {
+      await redisService.del(["settings:commission_rates"]);
+      logger.debug("Commission rates cache invalidated");
+    } catch (error) {
+      logger.error(
+        `Failed to invalidate commission rates cache: ${error.message}`
+      );
+    }
+  }
+
+  async invalidateApiSettingsCache() {
+    try {
+      await redisService.del(["settings:api"]);
+      logger.debug("API settings cache invalidated");
+    } catch (error) {
+      logger.error(`Failed to invalidate API settings cache: ${error.message}`);
+    }
+  }
+
+  async invalidateAllSettingsCache() {
+    try {
+      await redisService.del([
+        "settings:site",
+        "settings:site:status",
+        "settings:commission_rates",
+        "settings:api",
+      ]);
+      logger.debug("All settings cache invalidated");
+    } catch (error) {
+      logger.error(`Failed to invalidate all settings cache: ${error.message}`);
     }
   }
 }
