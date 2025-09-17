@@ -85,7 +85,7 @@ class CommissionController {
    */
   async getAgentCommissions(req, res) {
     try {
-      const { userId } = req.user;
+      const { userId, userType } = req.user;
       const {
         status,
         period,
@@ -101,6 +101,11 @@ class CommissionController {
       if (startDate && endDate) {
         filters.startDate = new Date(startDate);
         filters.endDate = new Date(endDate);
+      }
+
+      // For non-super-admin users, only show paid commissions
+      if (userType !== "super_admin") {
+        filters.status = "paid";
       }
 
       const commissions = await commissionService.getAgentCommissions(
