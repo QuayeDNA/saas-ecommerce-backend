@@ -62,6 +62,13 @@ const settingsSchema = new mongoose.Schema(
       type: String,
       default: "https://api.telecomsaas.com",
     },
+
+    // Wallet Settings
+    minimumTopUpAmount: {
+      type: Number,
+      default: 100.0,
+      min: 0,
+    },
   },
   {
     timestamps: true,

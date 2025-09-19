@@ -242,6 +242,30 @@ class SettingsService {
       throw error;
     }
   }
+
+  // Wallet Settings
+  async getWalletSettings() {
+    try {
+      const settings = await Settings.getInstance();
+      const result = {
+        minimumTopUpAmount: settings.minimumTopUpAmount,
+      };
+
+      return result;
+    } catch (error) {
+      logger.error(`Error getting wallet settings: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async updateWalletSettings(walletSettings) {
+    const settings = await Settings.getInstance();
+    settings.minimumTopUpAmount = walletSettings.minimumTopUpAmount;
+    await settings.save();
+
+    logger.info("Wallet settings updated:", walletSettings);
+    return walletSettings;
+  }
 }
 
 export default new SettingsService();

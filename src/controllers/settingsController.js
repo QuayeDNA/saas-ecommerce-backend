@@ -172,6 +172,30 @@ class SettingsController {
       res.status(500).json({ error: "Failed to change admin password" });
     }
   }
+
+  // Wallet Settings
+  async getWalletSettings(req, res) {
+    try {
+      const settings = await settingsService.getWalletSettings();
+      res.json(settings);
+    } catch (error) {
+      logger.error("Error getting wallet settings:", error);
+      res.status(500).json({ error: "Failed to get wallet settings" });
+    }
+  }
+
+  async updateWalletSettings(req, res) {
+    try {
+      const { minimumTopUpAmount } = req.body;
+      const settings = await settingsService.updateWalletSettings({
+        minimumTopUpAmount,
+      });
+      res.json(settings);
+    } catch (error) {
+      logger.error("Error updating wallet settings:", error);
+      res.status(500).json({ error: "Failed to update wallet settings" });
+    }
+  }
 }
 
 export default new SettingsController();
