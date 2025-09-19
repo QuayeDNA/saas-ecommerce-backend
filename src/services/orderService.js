@@ -1795,6 +1795,11 @@ class OrderService {
       throw new Error("Reporter not found");
     }
 
+    // Update order reception status to 'not_received' and mark as reported
+    order.receptionStatus = "not_received";
+    order.reported = true;
+    await order.save();
+
     // Create a report record (you might want to create a separate Report model for this)
     const reportId = new mongoose.Types.ObjectId();
 
@@ -1802,7 +1807,7 @@ class OrderService {
     logger.info(
       `Data delivery issue reported: Order ${order.orderNumber} by user ${
         reporter.fullName || reporter.email
-      }`
+      }. Reception status changed to 'not_received'.`
     );
 
     // Send notification to super admin
@@ -1811,7 +1816,7 @@ class OrderService {
       const superAdmins = await User.find({ userType: "super_admin" });
 
       for (const admin of superAdmins) {
-        await notificationService.createNotification(
+        await notificationService.createInAppNotification(
           admin._id.toString(),
           "Data Delivery Issue Reported",
           `User ${
@@ -1869,6 +1874,103 @@ class OrderService {
     } catch (error) {
       logger.error(`Get order by ID error: ${error.message}`);
       throw new Error("Failed to get order");
+    }
+  }
+
+  /**
+   * Update order reception status (admin only)
+   * @param {string} orderId - Order ID
+   * @param {string} receptionStatus - New reception status
+   * @param {string} adminId - Admin user ID making the change
+   * @param {string} tenantId - Tenant ID (optional)
+   * @returns {Promise<Object>} Updated order
+   */
+  async updateReceptionStatus(
+    orderId,
+    receptionStatus,
+    adminId,
+    tenantId = null
+  ) {
+    try {
+      // Validate reception status
+      const validStatuses = [
+        "not_received",
+        "received",
+        "checking",
+        "resolved",
+      ];
+      if (!validStatuses.includes(receptionStatus)) {
+        throw new Error(`Invalid reception status: ${receptionStatus}`);
+      }
+
+      // Find the order
+      const query = tenantId ? { _id: orderId, tenantId } : { _id: orderId };
+      const order = await Order.findOne(query);
+
+      if (!order) {
+        throw new Error("Order not found");
+      }
+
+      // Only allow status changes on completed orders
+      if (order.status !== "completed") {
+        throw new Error("Can only update reception status on completed orders");
+      }
+
+      const oldStatus = order.receptionStatus;
+      order.receptionStatus = receptionStatus;
+      // Explicitly update the updatedAt field to ensure frontend 3-day logic works
+      order.updatedAt = new Date();
+      await order.save();
+
+      // Get admin info for logging
+      const admin = await User.findById(adminId);
+
+      // Log the status change
+      logger.info(
+        `Order reception status updated: Order ${
+          order.orderNumber
+        } changed from '${oldStatus}' to '${receptionStatus}' by admin ${
+          admin?.fullName || admin?.email || adminId
+        }`
+      );
+
+      // Send notification to the order creator if status changed to 'checking' or 'resolved'
+      if (receptionStatus === "checking" || receptionStatus === "resolved") {
+        try {
+          const statusMessage =
+            receptionStatus === "checking"
+              ? `We're currently investigating the data delivery issue for your order ${order.orderNumber}. We'll update you soon.`
+              : `The data delivery issue for your order ${order.orderNumber} has been resolved. Thank you for your patience.`;
+
+          await notificationService.createNotification(
+            order.createdBy.toString(),
+            receptionStatus === "checking"
+              ? "Issue Investigation Started"
+              : "Issue Resolved",
+            statusMessage,
+            receptionStatus === "checking" ? "info" : "success",
+            {
+              orderId: order._id.toString(),
+              orderNumber: order.orderNumber,
+              receptionStatus,
+              type: "reception_status_update",
+              navigationLink: this.getNavigationLink(
+                order.createdBy.userType,
+                "orders"
+              ),
+            }
+          );
+        } catch (notificationError) {
+          logger.error(
+            `Failed to send reception status notification: ${notificationError.message}`
+          );
+        }
+      }
+
+      return order;
+    } catch (error) {
+      logger.error(`Update reception status error: ${error.message}`);
+      throw new Error("Failed to update reception status");
     }
   }
 }

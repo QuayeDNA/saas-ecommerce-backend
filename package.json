@@ -9,7 +9,9 @@
     "dev": "nodemon app.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "build": "npm install && npm install --only=dev && npm install --only=production"
+    "build": "npm install && npm install --only=dev && npm install --only=production",
+    "migrate:reception-status": "node src/scripts/migrateReceptionStatus.js",
+    "migrate:reception-status:prod": "NODE_ENV=production node src/scripts/migrateReceptionStatus.js"
   },
   "keywords": [],
   "author": "",

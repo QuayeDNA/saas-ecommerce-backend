@@ -324,11 +324,16 @@ class OrderController {
       const { id } = req.params;
       const { description } = req.body;
 
+      // Provide default description if none is provided
+      const reportDescription =
+        description ||
+        "User reported that data was not received for this completed order";
+
       const result = await orderService.reportOrder(
         id,
         tenantId,
         userId,
-        description
+        reportDescription
       );
 
       res.json({
@@ -928,6 +933,57 @@ class OrderController {
       res.status(500).json({
         success: false,
         message: "Failed to process orders",
+      });
+    }
+  }
+
+  // Update order reception status (admin only)
+  async updateReceptionStatus(req, res) {
+    try {
+      const { userId, userType } = req.user;
+      const { id } = req.params;
+      const { receptionStatus } = req.body;
+
+      // Validate reception status
+      const validStatuses = [
+        "not_received",
+        "received",
+        "checking",
+        "resolved",
+      ];
+      if (!validStatuses.includes(receptionStatus)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid reception status. Must be one of: ${validStatuses.join(
+            ", "
+          )}`,
+        });
+      }
+
+      // Only super admins can update reception status
+      if (userType !== "super_admin") {
+        return res.status(403).json({
+          success: false,
+          message: "Only super admins can update reception status",
+        });
+      }
+
+      const updatedOrder = await orderService.updateReceptionStatus(
+        id,
+        receptionStatus,
+        userId
+      );
+
+      res.json({
+        success: true,
+        message: `Order reception status updated to '${receptionStatus}'`,
+        order: updatedOrder,
+      });
+    } catch (error) {
+      logger.error(`Update reception status failed: ${error.message}`);
+      res.status(400).json({
+        success: false,
+        message: error.message,
       });
     }
   }

@@ -117,6 +117,14 @@ router.post(
   orderController.processDraftOrders
 );
 
+// Update reception status - RESTRICTED TO SUPER ADMIN ONLY
+router.patch(
+  "/:id/reception-status",
+  authenticate,
+  authorize("super_admin"),
+  orderController.updateReceptionStatus
+);
+
 // GENERIC ROUTES LAST
 router.get(
   "/",

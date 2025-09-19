@@ -39,7 +39,7 @@ const orderValidation = {
   }),
 
   report: Joi.object({
-    description: Joi.string().required().min(10).max(1000),
+    description: Joi.string().optional().min(10).max(1000),
   }),
 };
 
