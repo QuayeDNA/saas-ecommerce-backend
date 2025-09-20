@@ -140,8 +140,8 @@ class OrderController {
     }
   }
 
-  // Get orders
-  async getOrders(req, res) {
+  // Get reported orders
+  async getReportedOrders(req, res) {
     try {
       const { tenantId, userType, userId } = req.user;
       const filters = {
@@ -153,6 +153,63 @@ class OrderController {
         search: req.query.search,
         createdBy: req.query.createdBy,
         provider: req.query.provider,
+        reported: true, // Always filter for reported orders
+      };
+
+      const pagination = {
+        page: parseInt(req.query.page) || 1,
+        limit: Math.min(parseInt(req.query.limit) || 20, 100),
+        sortBy: req.query.sortBy || "createdAt",
+        sortOrder: req.query.sortOrder === "asc" ? 1 : -1,
+      };
+
+      // For super admins, allow access to all orders (no tenant restriction)
+      // For regular users, restrict to their tenant
+      const effectiveTenantId = userType === "super_admin" ? null : tenantId;
+
+      const result = await orderService.getOrders(
+        effectiveTenantId,
+        filters,
+        pagination,
+        userId
+      );
+
+      res.json({
+        success: true,
+        ...result,
+      });
+    } catch (error) {
+      logger.error(`Get reported orders failed: ${error.message}`);
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch reported orders",
+      });
+    }
+  }
+
+  // Get orders
+  async getOrders(req, res) {
+    try {
+      const { tenantId, userType, userId } = req.user;
+      let reportedFilter;
+      if (req.query.reported === "true") {
+        reportedFilter = true;
+      } else if (req.query.reported === "false") {
+        reportedFilter = false;
+      } else {
+        reportedFilter = undefined;
+      }
+
+      const filters = {
+        status: req.query.status,
+        orderType: req.query.orderType,
+        paymentStatus: req.query.paymentStatus,
+        startDate: req.query.startDate,
+        endDate: req.query.endDate,
+        search: req.query.search,
+        createdBy: req.query.createdBy,
+        provider: req.query.provider,
+        reported: reportedFilter,
       };
 
       const pagination = {

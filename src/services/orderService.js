@@ -804,6 +804,7 @@ class OrderService {
         search,
         createdBy,
         provider,
+        reported,
       } = filters;
 
       // For super admins (tenantId is null), don't filter by tenant
@@ -814,6 +815,7 @@ class OrderService {
       if (orderType) query.orderType = orderType;
       if (paymentStatus) query.paymentStatus = paymentStatus;
       if (createdBy) query.createdBy = createdBy;
+      if (reported !== undefined) query.reported = reported;
 
       // Restrict draft orders to only the creator (agents can only see their own drafts)
       if (status === "draft") {

@@ -125,6 +125,14 @@ router.patch(
   orderController.updateReceptionStatus
 );
 
+// Get reported orders - SPECIFIC ENDPOINT
+router.get(
+  "/reported",
+  authenticate,
+  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
+  orderController.getReportedOrders
+);
+
 // GENERIC ROUTES LAST
 router.get(
   "/",
