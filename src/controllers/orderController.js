@@ -158,7 +158,7 @@ class OrderController {
 
       const pagination = {
         page: parseInt(req.query.page) || 1,
-        limit: Math.min(parseInt(req.query.limit) || 20, 100),
+        limit: Math.min(parseInt(req.query.limit) || 20, 500),
         sortBy: req.query.sortBy || "createdAt",
         sortOrder: req.query.sortOrder === "asc" ? 1 : -1,
       };
@@ -214,7 +214,7 @@ class OrderController {
 
       const pagination = {
         page: parseInt(req.query.page) || 1,
-        limit: Math.min(parseInt(req.query.limit) || 20, 100),
+        limit: Math.min(parseInt(req.query.limit) || 20, 500),
         sortBy: req.query.sortBy || "createdAt",
         sortOrder: req.query.sortOrder === "asc" ? 1 : -1,
       };
