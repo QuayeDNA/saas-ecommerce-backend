@@ -365,7 +365,7 @@ class WalletController {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit))
-        .populate("user", "fullName email phone userType");
+        .populate("user", "fullName email phone userType agentCode");
 
       const totalCount = await WalletTransaction.countDocuments(filter);
 
