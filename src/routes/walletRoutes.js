@@ -63,5 +63,11 @@ router.get(
   authorize("super_admin"),
   walletController.getWalletAnalytics
 );
+router.get(
+  "/admin-transactions",
+  authenticate,
+  authorize("super_admin"),
+  walletController.getAdminTransactions
+);
 
 export default router;

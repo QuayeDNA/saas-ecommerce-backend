@@ -4,7 +4,7 @@ import WalletTransaction from "../models/WalletTransaction.js";
 import walletService from "../services/walletService.js";
 import websocketService from "../services/websocketService.js";
 import logger from "../utils/logger.js";
-import { isBusinessUser, getTenantId } from "../utils/userTypeHelpers.js";
+import { isBusinessUser } from "../utils/userTypeHelpers.js";
 
 class WalletController {
   /**
@@ -509,6 +509,135 @@ class WalletController {
       res.status(500).json({
         success: false,
         message: error.message || "Failed to debit wallet",
+      });
+    }
+  }
+
+  /**
+   * Get all wallet transactions performed by admin (super_admin only)
+   */
+  async getAdminTransactions(req, res) {
+    try {
+      const adminId = req.user.userId;
+      const {
+        page = 1,
+        limit = 20,
+        type,
+        startDate,
+        endDate,
+        userId,
+      } = req.query;
+
+      logger.debug(
+        `[getAdminTransactions] Admin ${adminId} fetching transactions: page=${page}, limit=${limit}, type=${type}, startDate=${startDate}, endDate=${endDate}, userId=${userId}`
+      );
+
+      // Build filter - find transactions where admin was involved
+      const filter = {
+        $or: [
+          { approvedBy: adminId }, // Transactions approved by this admin (top-ups from requests)
+          { "metadata.debitedBy": adminId }, // Transactions debited by this admin
+          { "metadata.adminAction": true, approvedBy: adminId }, // Direct admin credits
+        ],
+      };
+
+      // Add additional filters
+      if (type && ["credit", "debit"].includes(type)) {
+        filter.type = type;
+      }
+
+      if (userId) {
+        filter.user = userId;
+      }
+
+      if (startDate || endDate) {
+        filter.createdAt = {};
+        if (startDate) {
+          filter.createdAt.$gte = new Date(startDate);
+        }
+        if (endDate) {
+          filter.createdAt.$lte = new Date(endDate);
+        }
+      }
+
+      // Get transactions with pagination
+      const skip = (parseInt(page) - 1) * parseInt(limit);
+
+      let transactions = [];
+      try {
+        // First try without population to see if the basic query works
+        let basicTransactions = await WalletTransaction.find(filter)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(parseInt(limit));
+
+        logger.debug(
+          `[getAdminTransactions] Basic transactions found: ${basicTransactions.length}`
+        );
+
+        // Now try to populate each transaction individually to handle any population errors
+        transactions = [];
+        for (const tx of basicTransactions) {
+          try {
+            const populatedTx = await tx.populate([
+              {
+                path: "user",
+                select: "fullName email phone userType agentCode",
+              },
+              { path: "approvedBy", select: "fullName email" },
+              { path: "relatedOrder", select: "orderNumber" },
+            ]);
+            transactions.push(populatedTx);
+          } catch (populateError) {
+            logger.warn(
+              `[getAdminTransactions] Failed to populate transaction ${tx._id}: ${populateError.message}`
+            );
+            // Add the transaction without population
+            transactions.push(tx);
+          }
+        }
+
+        logger.debug(
+          `[getAdminTransactions] Final transactions count: ${transactions.length}`
+        );
+        if (!Array.isArray(transactions)) {
+          logger.debug(
+            `[getAdminTransactions] transactions is not an array, setting to []`
+          );
+          transactions = [];
+        }
+      } catch (txError) {
+        logger.warn(
+          `[getAdminTransactions] Failed to get admin transactions: ${txError.message}`
+        );
+        logger.error(txError.stack);
+        transactions = [];
+      }
+
+      const totalCount = await WalletTransaction.countDocuments(filter).catch(
+        (err) => 0
+      );
+
+      logger.debug(
+        `[getAdminTransactions] Sending response: transactions.length=${transactions.length}, totalCount=${totalCount}`
+      );
+
+      res.json({
+        success: true,
+        transactions: transactions,
+        pagination: {
+          total: totalCount,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          pages: Math.ceil(totalCount / parseInt(limit)),
+        },
+      });
+    } catch (error) {
+      logger.error(`Get admin transactions error: ${error.message}`);
+      logger.error(error.stack);
+      res.status(500).json({
+        success: false,
+        message: "Failed to get admin transactions",
       });
     }
   }
