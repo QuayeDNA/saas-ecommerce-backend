@@ -128,12 +128,6 @@ class CommissionService {
         `Commission record created for agent ${commissionData.agentId}: ${commissionData.amount}`
       );
 
-      // Invalidate related caches
-      await this.invalidateCommissionCache(
-        commissionData.agentId,
-        commissionData.tenantId
-      );
-
       return commissionRecord;
     } catch (error) {
       logger.error(`Create commission record error: ${error.message}`);
@@ -302,12 +296,6 @@ class CommissionService {
         `Commission paid to agent ${agent.fullName}: GH₵${commission.amount}`
       );
 
-      // Invalidate related caches
-      await this.invalidateCommissionCache(
-        commission.agentId,
-        commission.tenantId
-      );
-
       return commission;
     } catch (error) {
       logger.error(`Pay commission error: ${error.message}`);
@@ -392,12 +380,6 @@ class CommissionService {
 
       logger.info(
         `Commission rejected for agent ${agent.fullName}: GH₵${commission.amount}`
-      );
-
-      // Invalidate related caches
-      await this.invalidateCommissionCache(
-        commission.agentId,
-        commission.tenantId
       );
 
       return commission;
