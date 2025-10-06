@@ -146,6 +146,12 @@ const orderSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    reportedAt: {
+      type: Date,
+    },
+    resolvedAt: {
+      type: Date,
+    },
 
     // Payment information
     paymentStatus: {

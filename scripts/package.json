@@ -1,0 +1,11 @@
+{
+  "name": "saas-ecommerce-scripts",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Database management scripts",
+  "scripts": {
+    "copy-db": "node copy-prod-to-local.js",
+    "backup-prod": "node backup-production.js",
+    "restore-local": "node restore-to-local.js"
+  }
+}

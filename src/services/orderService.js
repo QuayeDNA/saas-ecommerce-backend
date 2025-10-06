@@ -799,12 +799,14 @@ class OrderService {
         status,
         orderType,
         paymentStatus,
+        receptionStatus,
         startDate,
         endDate,
         search,
         createdBy,
         provider,
         reported,
+        excludeResolvedAfter3Days,
       } = filters;
 
       // For super admins (tenantId is null), don't filter by tenant
@@ -814,8 +816,33 @@ class OrderService {
       if (status) query.status = status;
       if (orderType) query.orderType = orderType;
       if (paymentStatus) query.paymentStatus = paymentStatus;
+      if (receptionStatus) query.receptionStatus = receptionStatus;
       if (createdBy) query.createdBy = createdBy;
       if (reported !== undefined) query.reported = reported;
+
+      // Exclude orders that are resolved and more than 3 days have passed
+      if (excludeResolvedAfter3Days) {
+        const threeDaysAgo = new Date();
+        threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+
+        query.$and = query.$and || [];
+        query.$and.push({
+          $or: [
+            { receptionStatus: { $ne: "resolved" } }, // Not resolved - show it
+            {
+              // Resolved with resolvedAt timestamp and within 3 days - show it
+              receptionStatus: "resolved",
+              resolvedAt: { $exists: true, $gte: threeDaysAgo },
+            },
+            {
+              // Resolved without resolvedAt (legacy), use updatedAt as fallback and within 3 days - show it
+              receptionStatus: "resolved",
+              resolvedAt: { $exists: false },
+              updatedAt: { $gte: threeDaysAgo },
+            },
+          ],
+        });
+      }
 
       // Restrict draft orders to only the creator (agents can only see their own drafts)
       if (status === "draft") {
@@ -1800,6 +1827,7 @@ class OrderService {
     // Update order reception status to 'not_received' and mark as reported
     order.receptionStatus = "not_received";
     order.reported = true;
+    order.reportedAt = new Date();
     await order.save();
 
     // Create a report record (you might want to create a separate Report model for this)
@@ -1920,6 +1948,12 @@ class OrderService {
 
       const oldStatus = order.receptionStatus;
       order.receptionStatus = receptionStatus;
+
+      // Set resolvedAt timestamp when status changes to resolved
+      if (receptionStatus === "resolved" && oldStatus !== "resolved") {
+        order.resolvedAt = new Date();
+      }
+
       // Explicitly update the updatedAt field to ensure frontend 3-day logic works
       order.updatedAt = new Date();
       await order.save();

@@ -9,6 +9,7 @@ import logger from "./src/utils/logger.js";
 import websocketService from "./src/services/websocketService.js";
 import { scheduleNotificationCleanup } from "./src/jobs/clearOldNotifications.js";
 import { scheduleCommissionGeneration } from "./src/jobs/commissionGeneration.js";
+import { initializeCommissionCleanupJob } from "./src/jobs/commissionCleanup.js";
 import authRoutes from "./src/routes/authRoutes.js";
 import orderRouter from "./src/routes/orderRoutes.js";
 import packageRoutes from "./src/routes/packageRoutes.js";
@@ -50,6 +51,9 @@ scheduleNotificationCleanup();
 
 // Start commission generation job
 scheduleCommissionGeneration();
+
+// Start commission expiry cleanup job
+initializeCommissionCleanupJob();
 
 // Security middleware
 app.use(helmet());
@@ -151,7 +155,9 @@ app.get("/", (req, res) => {
 ║  🏥 SYSTEM STATUS:                                                            ║
 ║                                                                              ║
 ║  ✅ API Status:       Online                                                 ║
-║  � Environment:      ${process.env.NODE_ENV?.toUpperCase() || 'DEVELOPMENT'} MODE                        ║
+║  � Environment:      ${
+    process.env.NODE_ENV?.toUpperCase() || "DEVELOPMENT"
+  } MODE                        ║
 ║  ⏰ Server Time:       ${new Date().toLocaleString()}                              ║
 ║  🌐 Health Check:      /health                                               ║
 ║                                                                              ║
@@ -183,7 +189,7 @@ app.get("/", (req, res) => {
 ╚══════════════════════════════════════════════════════════════════════════════╝
 `;
 
-  res.setHeader('Content-Type', 'text/plain');
+  res.setHeader("Content-Type", "text/plain");
   res.send(asciiArt);
 });
 

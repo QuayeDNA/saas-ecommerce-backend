@@ -86,6 +86,14 @@ router.post(
   orderController.bulkProcessOrders
 );
 
+// Bulk reception status update - NEW ENDPOINT FOR SUPER ADMIN
+router.post(
+  "/bulk-reception-status",
+  authenticate,
+  authorize("super_admin"),
+  orderController.bulkUpdateReceptionStatus
+);
+
 router.post(
   "/:id/cancel",
   authenticate,

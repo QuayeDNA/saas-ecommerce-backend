@@ -7,25 +7,45 @@ import walletService from "./walletService.js";
 import notificationService from "./notificationService.js";
 import websocketService from "./websocketService.js";
 import logger from "../utils/logger.js";
+import mongoose from "mongoose";
+import {
+  COMMISSION_STATUS,
+  COMMISSION_PERIOD,
+  COMMISSION_DEFAULTS,
+  COMMISSION_ERRORS,
+  COMMISSION_MESSAGES,
+  COMMISSION_EVENTS,
+  COMMISSION_USER_TYPES,
+  getCommissionRateField,
+  getDefaultRate,
+  isValidStatusTransition,
+} from "../constants/commission.js";
 
 class CommissionService {
   /**
    * Calculate commission for an agent for a specific period
-   * @param {string} agentId - Agent ID
-   * @param {string} tenantId - Tenant ID
-   * @param {Date} startDate - Period start date
-   * @param {Date} endDate - Period end date
-   * @returns {Promise<Object>} Commission calculation result
+   *
+   * This is the core calculation function used by:
+   * 1. Automatic generation when orders are completed (orderService.js)
+   * 2. Manual/forced generation via admin dashboard
+   * 3. Preview calculations before creating records
+   *
+   * @param {string} agentId - Agent ID (the user earning the commission)
+   * @param {string} tenantId - Tenant ID (business owner, can be same as agentId)
+   * @param {Date} startDate - Period start date (inclusive)
+   * @param {Date} endDate - Period end date (inclusive)
+   * @returns {Promise<Object>} Commission calculation result with breakdown
    */
   async calculateCommission(agentId, tenantId, startDate, endDate) {
     try {
       // Get agent details to determine commission rate
       const agent = await User.findById(agentId);
       if (!agent) {
-        throw new Error("Agent not found");
+        throw new Error(COMMISSION_ERRORS.AGENT_NOT_FOUND);
       }
 
-      // Get completed orders for the period
+      // Fetch all completed orders for the agent within the period
+      // Note: Only 'completed' status orders count toward commission
       const orders = await Order.find({
         createdBy: agentId,
         tenantId: tenantId,
@@ -35,35 +55,17 @@ class CommissionService {
 
       const totalRevenue = orders.reduce((sum, order) => sum + order.total, 0);
 
-      // Get commission rate based on user type
+      // Get commission rate based on user type from Settings
       const settings = await Settings.getInstance();
-      let commissionRate;
+      const rateField = getCommissionRateField(agent.userType);
+      const defaultRate = getDefaultRate(agent.userType);
 
-      switch (agent.userType) {
-        case "super_dealer":
-          commissionRate =
-            settings.superDealerCommission ||
-            settings.defaultCommissionRate ||
-            1.0;
-          break;
-        case "dealer":
-          commissionRate =
-            settings.dealerCommission || settings.defaultCommissionRate || 1.0;
-          break;
-        case "super_agent":
-          commissionRate =
-            settings.superAgentCommission ||
-            settings.defaultCommissionRate ||
-            1.0;
-          break;
-        case "agent":
-        default:
-          commissionRate =
-            settings.agentCommission || settings.defaultCommissionRate || 1.0;
-          break;
-      }
+      // Use setting if available, otherwise use default rate for user type
+      const commissionRate =
+        settings[rateField] || settings.defaultCommissionRate || defaultRate;
 
       const commissionAmount = (totalRevenue * commissionRate) / 100;
+
       const result = {
         agentId,
         tenantId,
@@ -72,7 +74,7 @@ class CommissionService {
         totalOrders: orders.length,
         totalRevenue,
         commissionRate,
-        amount: Math.round(commissionAmount * 100) / 100,
+        amount: Math.round(commissionAmount * 100) / 100, // Round to 2 decimal places
         orders: orders.map((order) => ({
           orderId: order._id,
           orderNumber: order.orderNumber,
@@ -81,10 +83,13 @@ class CommissionService {
         })),
       };
 
+      logger.info(
+        `Commission calculated for agent ${agent.fullName}: ${result.amount} from ${result.totalOrders} orders`
+      );
       return result;
     } catch (error) {
       logger.error(`Commission calculation error: ${error.message}`);
-      throw new Error("Failed to calculate commission");
+      throw new Error(COMMISSION_ERRORS.CALCULATION_FAILED);
     }
   }
 
@@ -201,35 +206,55 @@ class CommissionService {
   }
 
   /**
-   * Pay commission to agent
+   * Pay commission to agent (with transaction safety)
+   *
+   * This is a critical operation that:
+   * 1. Updates commission status to 'paid'
+   * 2. Credits agent's wallet
+   * 3. Creates wallet transaction record
+   *
+   * Uses MongoDB transactions to ensure atomicity - either all steps succeed or all rollback.
+   * Notifications are sent AFTER transaction commits to avoid sending premature notifications.
+   *
    * @param {string} commissionId - Commission record ID
-   * @param {string} paidBy - User ID who is paying
-   * @param {string} paymentReference - Payment reference
+   * @param {string} paidBy - User ID who is paying (typically super admin)
+   * @param {string} paymentReference - Optional payment reference for audit trail
    * @returns {Promise<Object>} Updated commission record
    */
   async payCommission(commissionId, paidBy, paymentReference = null) {
+    // Start a MongoDB session for transaction
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
     try {
-      const commission = await CommissionRecord.findById(commissionId);
+      // Step 1: Validate commission exists and can be paid
+      const commission = await CommissionRecord.findById(commissionId).session(
+        session
+      );
 
       if (!commission) {
-        throw new Error("Commission record not found");
+        throw new Error(COMMISSION_ERRORS.COMMISSION_NOT_FOUND);
       }
 
-      if (commission.status === "paid") {
-        throw new Error("Commission already paid");
+      if (commission.status === COMMISSION_STATUS.PAID) {
+        throw new Error(COMMISSION_ERRORS.ALREADY_PAID);
       }
 
-      // Get agent details
-      const agent = await User.findById(commission.agentId);
+      // Validate status transition
+      if (!isValidStatusTransition(commission.status, COMMISSION_STATUS.PAID)) {
+        throw new Error(COMMISSION_ERRORS.INVALID_STATUS_TRANSITION);
+      }
 
+      // Step 2: Get agent details
+      const agent = await User.findById(commission.agentId).session(session);
       if (!agent) {
-        throw new Error("Agent not found");
+        throw new Error(COMMISSION_ERRORS.AGENT_NOT_FOUND);
       }
 
       // Get admin who is paying
       const admin = await User.findById(paidBy);
 
-      // Credit commission amount to agent's wallet
+      // Step 3: Credit commission amount to agent's wallet (within transaction)
       await walletService.creditWallet(
         commission.agentId,
         commission.amount,
@@ -243,63 +268,76 @@ class CommissionService {
           totalOrders: commission.totalOrders,
           totalRevenue: commission.totalRevenue,
           paymentReference: paymentReference || `COM-${commissionId}`,
-        }
+        },
+        { session } // Pass session for transaction
       );
 
-      // Update commission record
-      commission.status = "paid";
+      // Step 4: Update commission record (within transaction)
+      commission.status = COMMISSION_STATUS.PAID;
       commission.paidAt = new Date();
       commission.paidBy = paidBy;
-      commission.paymentReference = paymentReference;
-      await commission.save();
+      commission.paymentReference = paymentReference || `COM-${commissionId}`;
+      await commission.save({ session });
 
-      // Send notification to agent
-      try {
-        await notificationService.createInAppNotification(
-          commission.agentId.toString(),
-          "Commission Paid",
-          `Your commission of GH₵${commission.amount} for ${commission.period} period has been paid to your wallet.`,
-          "success",
-          {
-            commissionId: commission._id.toString(),
-            amount: commission.amount,
-            period: commission.period,
-            paidBy: admin?.fullName || admin?.email || "Admin",
-            type: "commission_paid",
-            navigationLink: "/agent/dashboard/wallet",
-          }
-        );
-
-        // Send WebSocket notification
-        websocketService.sendCommissionPaidToUser(
-          commission.agentId.toString(),
-          {
-            _id: commission._id.toString(),
-            agentId: commission.agentId.toString(),
-            amount: commission.amount,
-            period: commission.period,
-            periodStart: commission.periodStart,
-            periodEnd: commission.periodEnd,
-            status: "paid",
-            paidAt: commission.paidAt,
-            paidBy: commission.paidBy,
-            paymentReference: commission.paymentReference,
-          }
-        );
-      } catch (notificationError) {
-        logger.error(
-          `Failed to send commission payment notification: ${notificationError.message}`
-        );
-      }
+      // Step 5: Commit transaction
+      await session.commitTransaction();
 
       logger.info(
-        `Commission paid to agent ${agent.fullName}: GH₵${commission.amount}`
+        `Commission paid successfully to agent ${agent.fullName}: GH₵${commission.amount}`
       );
+
+      // Step 6: Send notifications (AFTER successful transaction)
+      // This is outside transaction to avoid blocking if notifications fail
+      setImmediate(async () => {
+        try {
+          await notificationService.createInAppNotification(
+            commission.agentId.toString(),
+            "Commission Paid",
+            `Your commission of GH₵${commission.amount} for ${commission.period} period has been paid to your wallet.`,
+            "success",
+            {
+              commissionId: commission._id.toString(),
+              amount: commission.amount,
+              period: commission.period,
+              paidBy: admin?.fullName || admin?.email || "Admin",
+              type: COMMISSION_EVENTS.PAID,
+              navigationLink: "/agent/dashboard/wallet",
+            }
+          );
+
+          // Send WebSocket notification
+          websocketService.sendCommissionPaidToUser(
+            commission.agentId.toString(),
+            {
+              _id: commission._id.toString(),
+              agentId: commission.agentId.toString(),
+              amount: commission.amount,
+              period: commission.period,
+              periodStart: commission.periodStart,
+              periodEnd: commission.periodEnd,
+              status: COMMISSION_STATUS.PAID,
+              paidAt: commission.paidAt,
+              paidBy: commission.paidBy,
+              paymentReference: commission.paymentReference,
+            }
+          );
+        } catch (notificationError) {
+          // Log notification errors but don't fail the payment
+          logger.error(
+            `Failed to send commission payment notification: ${notificationError.message}`
+          );
+        }
+      });
 
       return commission;
     } catch (error) {
+      // Rollback transaction on any error
+      await session.abortTransaction();
       logger.error(`Pay commission error: ${error.message}`);
-      throw new Error("Failed to pay commission");
+      throw new Error(COMMISSION_ERRORS.PAYMENT_FAILED + ": " + error.message);
+    } finally {
+      // Always end the session
+      session.endSession();
     }
   }
 
@@ -356,14 +394,14 @@ class CommissionService {
             period: commission.period,
             rejectedBy: admin?.fullName || admin?.email || "Admin",
             rejectionReason: rejectionReason,
-            type: "commission_rejected",
+            type: COMMISSION_EVENTS.REJECTED,
             navigationLink: "/agent/dashboard/commissions",
           }
         );
 
         // Send WebSocket notification
         websocketService.sendToUser(commission.agentId.toString(), {
-          type: "commission_rejected",
+          type: COMMISSION_EVENTS.REJECTED,
           commissionId: commission._id.toString(),
           amount: commission.amount,
           period: commission.period,
@@ -481,14 +519,14 @@ class CommissionService {
           period: commissionRecord.period,
           totalOrders: commissionRecord.totalOrders,
           totalRevenue: commissionRecord.totalRevenue,
-          type: "commission_generated",
+          type: COMMISSION_EVENTS.GENERATED,
           navigationLink: "/agent/dashboard/commissions",
         }
       );
 
       // Send WebSocket notification
       websocketService.sendToUser(agent._id.toString(), {
-        type: "commission_generated",
+        type: COMMISSION_EVENTS.GENERATED,
         commissionId: commissionRecord._id.toString(),
         amount: commissionRecord.amount,
         period: commissionRecord.period,
@@ -512,10 +550,30 @@ class CommissionService {
 
   /**
    * Generate monthly commission records for all agents
+   *
+   * IMPORTANT: This function is called in TWO ways:
+   * 1. AUTOMATIC: When an order is completed (orderService.js) - generates for current month
+   * 2. MANUAL: Via admin dashboard - can generate/regenerate for any month
+   *
+   * To prevent duplicate commission records:
+   * - Automatic calls skip if record already exists (force=false)
+   * - Manual calls can force regeneration (force=true) for recalculation
+   *
+   * Batch Processing:
+   * - Processes agents in batches of 10 to avoid memory issues
+   * - 100ms delay between batches to prevent database overload
+   * - Progress can be tracked via callback function
+   *
    * @param {Date} month - Month to generate commissions for (defaults to current month)
-   * @returns {Promise<Array} Generated commission records
+   * @param {boolean} force - If true, regenerate even if records exist (manual only)
+   * @param {Function} onProgress - Optional callback for progress updates (processed, total, percentage)
+   * @returns {Promise<Object>} Generation results with summary statistics
    */
-  async generateMonthlyCommissions(month = new Date()) {
+  async generateMonthlyCommissions(
+    month = new Date(),
+    force = false,
+    onProgress = null
+  ) {
     try {
       const startTime = Date.now();
       const startOfMonth = new Date(month.getFullYear(), month.getMonth(), 1);
@@ -529,16 +587,37 @@ class CommissionService {
         999
       );
 
+      const monthName = startOfMonth.toLocaleDateString("en-US", {
+        month: "long",
+        year: "numeric",
+      });
+
       logger.info(
-        `Starting commission generation for ${startOfMonth.toLocaleDateString(
-          "en-US",
-          { month: "long", year: "numeric" }
-        )}`
+        `Starting commission generation for ${monthName} (force: ${force})`
       );
+
+      // Check if commissions already exist for this period (unless force=true)
+      if (!force) {
+        const existingCount = await CommissionRecord.countDocuments({
+          period: COMMISSION_PERIOD.MONTHLY,
+          periodStart: startOfMonth,
+          periodEnd: endOfMonth,
+        });
+
+        if (existingCount > 0) {
+          logger.warn(
+            `Commissions already generated for ${monthName} (${existingCount} records). Use force=true to regenerate.`
+          );
+          throw new Error(
+            COMMISSION_ERRORS.DUPLICATE_GENERATION +
+              `. Found ${existingCount} existing records. Use force flag to regenerate.`
+          );
+        }
+      }
 
       // Get all active agents in a single optimized query
       const agents = await User.find({
-        userType: "agent",
+        userType: COMMISSION_USER_TYPES.AGENT,
         isActive: true,
       })
         .select("_id fullName email tenantId")
@@ -546,7 +625,18 @@ class CommissionService {
 
       if (agents.length === 0) {
         logger.info("No active agents found for commission generation");
-        return [];
+        return {
+          summary: {
+            totalAgents: 0,
+            created: 0,
+            exists: 0,
+            noCommission: 0,
+            errors: 0,
+          },
+          results: [],
+          month: monthName,
+          duration: 0,
+        };
       }
 
       logger.info(
@@ -554,41 +644,52 @@ class CommissionService {
       );
 
       const results = [];
-      const batchSize = 10; // Process in batches to avoid memory issues
+      const batchSize = COMMISSION_DEFAULTS.BATCH_SIZE;
 
       // Process agents in batches for better performance
       for (let i = 0; i < agents.length; i += batchSize) {
         const batch = agents.slice(i, i + batchSize);
+        const batchNumber = Math.floor(i / batchSize) + 1;
+        const totalBatches = Math.ceil(agents.length / batchSize);
+
         logger.info(
-          `Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(
-            agents.length / batchSize
-          )} (${batch.length} agents)`
+          `Processing batch ${batchNumber}/${totalBatches} (${batch.length} agents)`
         );
 
         const batchPromises = batch.map(async (agent) => {
           try {
-            // Check if commission record already exists for this period (optimized query)
+            // Check if commission record already exists for this period
             const existingRecord = await CommissionRecord.findOne({
               agentId: agent._id,
-              period: "monthly",
+              period: COMMISSION_PERIOD.MONTHLY,
               periodStart: startOfMonth,
               periodEnd: endOfMonth,
             })
-              .select("_id")
+              .select("_id amount status")
               .lean();
 
-            if (existingRecord) {
+            if (existingRecord && !force) {
               return {
                 agentId: agent._id,
+                agentName: agent.fullName,
                 status: "exists",
                 record: existingRecord,
               };
             }
 
-            // For agents, use their userId as tenantId since they don't have a separate tenantId
+            // Delete existing record if force=true
+            if (existingRecord && force) {
+              await CommissionRecord.deleteOne({ _id: existingRecord._id });
+              logger.info(
+                `Deleted existing commission record for agent ${agent.fullName} (force regeneration)`
+              );
+            }
+
+            // For agents, tenantId can be their own ID or a parent tenant
+            // Note: This is a known ambiguity - see COMMISSION_SYSTEM_ANALYSIS.md issue #3
             const agentTenantId = agent.tenantId || agent._id;
 
-            // Calculate commission with optimized query
+            // Calculate commission
             const calculation = await this.calculateCommission(
               agent._id,
               agentTenantId,
@@ -600,7 +701,7 @@ class CommissionService {
             if (calculation.amount > 0) {
               const commissionRecord = await this.createCommissionRecord({
                 ...calculation,
-                period: "monthly",
+                period: COMMISSION_PERIOD.MONTHLY,
               });
 
               // Send notification asynchronously (don't block batch processing)
@@ -620,23 +721,30 @@ class CommissionService {
 
               return {
                 agentId: agent._id,
+                agentName: agent.fullName,
                 status: "created",
-                record: commissionRecord,
+                record: {
+                  _id: commissionRecord._id,
+                  amount: commissionRecord.amount,
+                  totalOrders: commissionRecord.totalOrders,
+                },
               };
             } else {
               // No commission to generate
               return {
                 agentId: agent._id,
+                agentName: agent.fullName,
                 status: "no_commission",
                 message: "No orders/commission for this period",
               };
             }
           } catch (error) {
             logger.error(
-              `Error processing agent ${agent._id}: ${error.message}`
+              `Error processing agent ${agent.fullName}: ${error.message}`
             );
             return {
               agentId: agent._id,
+              agentName: agent.fullName,
               status: "error",
               error: error.message,
             };
@@ -647,9 +755,24 @@ class CommissionService {
         const batchResults = await Promise.all(batchPromises);
         results.push(...batchResults);
 
+        // Report progress if callback provided
+        if (onProgress) {
+          const processed = Math.min(i + batchSize, agents.length);
+          const percentage = (processed / agents.length) * 100;
+          onProgress({
+            processed,
+            total: agents.length,
+            percentage: Math.round(percentage * 100) / 100,
+            batch: batchNumber,
+            totalBatches,
+          });
+        }
+
         // Small delay between batches to prevent overwhelming the database
         if (i + batchSize < agents.length) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await new Promise((resolve) =>
+            setTimeout(resolve, COMMISSION_DEFAULTS.BATCH_DELAY_MS)
+          );
         }
       }
 
@@ -663,22 +786,33 @@ class CommissionService {
       ).length;
       const errors = results.filter((r) => r.status === "error").length;
 
+      const summary = {
+        totalAgents: agents.length,
+        created: successful,
+        exists: existing,
+        noCommission,
+        errors,
+        successRate:
+          agents.length > 0
+            ? `${((successful / agents.length) * 100).toFixed(1)}%`
+            : "0%",
+      };
+
       logger.info(
         `Commission generation completed in ${duration.toFixed(2)}s:`,
-        {
-          totalAgents: agents.length,
-          successful,
-          existing,
-          noCommission,
-          errors,
-          successRate: `${((successful / agents.length) * 100).toFixed(1)}%`,
-        }
+        summary
       );
 
-      return results;
+      return {
+        summary,
+        results,
+        month: monthName,
+        duration: duration.toFixed(2),
+        force,
+      };
     } catch (error) {
       logger.error(`Commission generation error: ${error.message}`);
-      throw new Error("Failed to generate monthly commissions");
+      throw error;
     }
   }
 
@@ -745,13 +879,13 @@ class CommissionService {
               amount: commission.amount,
               period: commission.period,
               expiredDate: new Date().toISOString(),
-              type: "commission_expired",
+              type: COMMISSION_EVENTS.EXPIRED,
             }
           );
 
           // Send WebSocket notification for expired commission
           websocketService.sendToUser(commission.agentId._id.toString(), {
-            type: "commission_expired",
+            type: COMMISSION_EVENTS.EXPIRED,
             commissionId: commission._id.toString(),
             amount: commission.amount,
             period: commission.period,

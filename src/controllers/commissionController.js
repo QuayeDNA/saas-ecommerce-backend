@@ -424,19 +424,23 @@ class CommissionController {
         targetDate
       );
 
-      const successful = results.filter((r) => r.status === "created").length;
-      const existing = results.filter((r) => r.status === "exists").length;
-      const noCommission = results.filter(
+      const successful = results.results.filter(
+        (r) => r.status === "created"
+      ).length;
+      const existing = results.results.filter(
+        (r) => r.status === "exists"
+      ).length;
+      const noCommission = results.results.filter(
         (r) => r.status === "no_commission"
       ).length;
-      const errors = results.filter((r) => r.status === "error").length;
+      const errors = results.results.filter((r) => r.status === "error").length;
 
       res.json({
         success: true,
         data: {
-          results,
+          results: results.results,
           summary: {
-            total: results.length,
+            total: results.results.length,
             successful,
             existing,
             noCommission,
@@ -447,6 +451,22 @@ class CommissionController {
       });
     } catch (error) {
       logger.error("Generate monthly commissions error:", error);
+
+      // Check if this is a duplicate generation error (expected behavior)
+      if (
+        error.message.includes("Commissions already generated for this period")
+      ) {
+        return res.json({
+          success: true,
+          warning: true,
+          message: error.message,
+          data: {
+            existingRecords: true,
+          },
+        });
+      }
+
+      // For other errors, return 500
       res.status(500).json({
         success: false,
         message: "Failed to generate monthly commissions",
@@ -529,6 +549,52 @@ class CommissionController {
       res.status(500).json({
         success: false,
         message: "Failed to fetch commission statistics",
+      });
+    }
+  }
+
+  /**
+   * Manually expire old commissions
+   * This endpoint allows super admins to manually trigger the expiry job
+   * Useful for testing or forcing expiry outside the scheduled cron time
+   */
+  async expireOldCommissions(req, res) {
+    try {
+      logger.info(
+        `Manual commission expiry triggered by user ${req.user.userId}`
+      );
+
+      // Import the cleanup function
+      const { runCommissionCleanupManually } = await import(
+        "../jobs/commissionCleanup.js"
+      );
+
+      // Run the cleanup
+      const result = await runCommissionCleanupManually();
+
+      if (result.success) {
+        res.json({
+          success: true,
+          message: `Successfully expired ${result.expired} commission(s)`,
+          data: {
+            expiredCount: result.expired,
+            totalAmount: result.totalAmount,
+            duration: result.duration,
+          },
+        });
+      } else {
+        res.status(500).json({
+          success: false,
+          message: "Commission expiry job failed",
+          error: result.error,
+        });
+      }
+    } catch (error) {
+      logger.error("Manual commission expiry error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to expire commissions",
+        error: error.message,
       });
     }
   }

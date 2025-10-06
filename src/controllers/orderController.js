@@ -148,12 +148,14 @@ class OrderController {
         status: req.query.status,
         orderType: req.query.orderType,
         paymentStatus: req.query.paymentStatus,
+        receptionStatus: req.query.receptionStatus,
         startDate: req.query.startDate,
         endDate: req.query.endDate,
         search: req.query.search,
         createdBy: req.query.createdBy,
         provider: req.query.provider,
         reported: true, // Always filter for reported orders
+        excludeResolvedAfter3Days: true, // Exclude orders resolved more than 3 days ago
       };
 
       const pagination = {
@@ -990,6 +992,80 @@ class OrderController {
       res.status(500).json({
         success: false,
         message: "Failed to process orders",
+      });
+    }
+  }
+
+  // Bulk update reception status for reported orders (admin only)
+  async bulkUpdateReceptionStatus(req, res) {
+    try {
+      const { tenantId, userId, userType } = req.user;
+      const { orderIds, receptionStatus } = req.body;
+
+      if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Order IDs array is required",
+        });
+      }
+
+      const validStatuses = [
+        "not_received",
+        "received",
+        "checking",
+        "resolved",
+      ];
+      if (!validStatuses.includes(receptionStatus)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid reception status. Must be one of: ${validStatuses.join(
+            ", "
+          )}`,
+        });
+      }
+
+      const results = {
+        successful: [],
+        failed: [],
+        total: orderIds.length,
+      };
+
+      for (const orderId of orderIds) {
+        try {
+          // For super admins, allow updating any order (no tenant restriction)
+          const effectiveTenantId =
+            userType === "super_admin" ? null : tenantId;
+
+          const updatedOrder = await orderService.updateReceptionStatus(
+            orderId,
+            receptionStatus,
+            userId,
+            effectiveTenantId
+          );
+
+          results.successful.push({
+            orderId,
+            orderNumber: updatedOrder.orderNumber,
+            newReceptionStatus: receptionStatus,
+          });
+        } catch (error) {
+          results.failed.push({
+            orderId,
+            reason: error.message,
+          });
+        }
+      }
+
+      res.json({
+        success: true,
+        message: `Bulk reception status update completed. ${results.successful.length} successful, ${results.failed.length} failed.`,
+        results,
+      });
+    } catch (error) {
+      logger.error(`Bulk update reception status failed: ${error.message}`);
+      res.status(500).json({
+        success: false,
+        message: "Failed to update reception status",
       });
     }
   }

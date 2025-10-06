@@ -113,6 +113,14 @@ router.post(
   commissionController.manualCommissionReset
 );
 
+// Expire old commissions (manual trigger)
+router.post(
+  "/expire-old",
+  authenticate,
+  authorize("super_admin"),
+  commissionController.expireOldCommissions
+);
+
 // Get commission statistics
 router.get(
   "/statistics",
