@@ -820,11 +820,11 @@ class OrderService {
       if (createdBy) query.createdBy = createdBy;
       if (reported !== undefined) query.reported = reported;
 
-      // Exclude orders that are resolved and more than 3 days have passed
+      // Exclude orders that are resolved and more than 1 hour has passed
       // Also exclude reported orders (not_received/checking) that are more than 2 days old
       if (excludeResolvedAfter3Days) {
-        const threeDaysAgo = new Date();
-        threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+        const oneHourAgo = new Date();
+        oneHourAgo.setHours(oneHourAgo.getHours() - 1);
         
         const twoDaysAgo = new Date();
         twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
@@ -834,15 +834,15 @@ class OrderService {
           $or: [
             { receptionStatus: { $ne: "resolved" } }, // Not resolved - show it
             {
-              // Resolved with resolvedAt timestamp and within 3 days - show it
+              // Resolved with resolvedAt timestamp and within 1 hour - show it
               receptionStatus: "resolved",
-              resolvedAt: { $exists: true, $gte: threeDaysAgo },
+              resolvedAt: { $exists: true, $gte: oneHourAgo },
             },
             {
-              // Resolved without resolvedAt (legacy), use updatedAt as fallback and within 3 days - show it
+              // Resolved without resolvedAt (legacy), use updatedAt as fallback and within 1 hour - show it
               receptionStatus: "resolved",
               resolvedAt: { $exists: false },
-              updatedAt: { $gte: threeDaysAgo },
+              updatedAt: { $gte: oneHourAgo },
             },
           ],
         });
@@ -851,7 +851,7 @@ class OrderService {
         query.$and.push({
           $or: [
             { reported: { $ne: true } }, // Not reported - show it
-            { receptionStatus: "resolved" }, // Resolved reports - already handled above
+            { receptionStatus: "resolved" }, // Resolved reports - already handled above (1 hour window)
             {
               // Reported orders (not_received/checking) within 2 days - show it
               reported: true,
