@@ -3,13 +3,13 @@ import Joi from 'joi';
 const bundleSchema = Joi.object({
   name: Joi.string().required().min(2).max(100),
   description: Joi.string().optional().max(500),
-  dataVolume: Joi.number().required().min(0.1),
-  dataUnit: Joi.string().valid('MB', 'GB', 'TB').required(),
+  dataVolume: Joi.number().optional().min(0.1),
+  dataUnit: Joi.string().valid('MB', 'GB', 'TB').optional(),
   validity: Joi.alternatives().try(
     Joi.number().min(1),
     Joi.string().valid('unlimited')
-  ).required(),
-  validityUnit: Joi.string().valid('hours', 'days', 'weeks', 'months', 'unlimited').required(),
+  ).optional(),
+  validityUnit: Joi.string().valid('hours', 'days', 'weeks', 'months', 'unlimited').optional(),
   price: Joi.number().required().min(0),
   currency: Joi.string().default('GHS'),
   features: Joi.array().items(Joi.string()).optional(),
@@ -19,7 +19,10 @@ const bundleSchema = Joi.object({
   providerCode: Joi.string().optional(),
   bundleCode: Joi.string().optional().max(20),
   category: Joi.string().optional().max(50),
-  tags: Joi.array().items(Joi.string()).optional()
+  tags: Joi.array().items(Joi.string()).optional(),
+  // AFA-specific fields
+  requiresGhanaCard: Joi.boolean().optional().default(false),
+  afaRequirements: Joi.array().items(Joi.string()).optional().default([])
 }).or('providerId', 'providerCode');
 
 const bundleUpdateSchema = Joi.object({
@@ -41,7 +44,10 @@ const bundleUpdateSchema = Joi.object({
   providerCode: Joi.string().optional(),
   bundleCode: Joi.string().optional().max(20),
   category: Joi.string().optional().max(50),
-  tags: Joi.array().items(Joi.string()).optional()
+  tags: Joi.array().items(Joi.string()).optional(),
+  // AFA-specific fields
+  requiresGhanaCard: Joi.boolean().optional(),
+  afaRequirements: Joi.array().items(Joi.string()).optional()
 });
 
 const bulkBundleSchema = Joi.object({

@@ -847,21 +847,21 @@ class UserController {
     }
   }
 
-  // AFA Registration endpoint - Now creates orders
+  // AFA Registration endpoint - Now uses bundles
   async afaRegistration(req, res) {
     try {
-      const { fullName, phone, userType } = req.body;
+      const { fullName, phone, bundleId, ghanaCardNumber } = req.body;
       const userId = req.user.userId;
 
       // Validate required fields
-      if (!fullName || !phone || !userType) {
+      if (!fullName || !phone || !bundleId) {
         return res.status(400).json({
           success: false,
-          message: "Full name, phone number, and user type are required",
+          message: "Full name, phone number, and bundle selection are required",
         });
       }
 
-      // Validate phone number (same as order validation)
+      // Validate phone number
       const phoneRegex = /^0\d{9}$/;
       if (!phoneRegex.test(phone)) {
         return res.status(400).json({
@@ -870,21 +870,49 @@ class UserController {
         });
       }
 
-      // Set registration fees
-      const registrationFees = {
-        agent: 3.0, // GH¢3
-        subscriber: 5.5, // GH¢5.5
-      };
-
-      const fee = registrationFees[userType] || registrationFees.subscriber;
-
-      // Create AFA order directly in the database
+      // Import required models
       const Order = (await import("../models/Order.js")).default;
       const User = (await import("../models/User.js")).default;
-      const WalletTransaction = (await import("../models/WalletTransaction.js"))
-        .default;
+      const WalletTransaction = (await import("../models/WalletTransaction.js")).default;
+      const Bundle = (await import("../models/Bundle.js")).default;
 
-      // Check wallet balance
+      // Get the selected bundle
+      const bundle = await Bundle.findById(bundleId).populate('packageId providerId');
+      if (!bundle || !bundle.isActive || bundle.isDeleted) {
+        return res.status(400).json({
+          success: false,
+          message: "Selected bundle is not available",
+        });
+      }
+
+      // Verify bundle is for AFA provider
+      if (!bundle.providerId || bundle.providerId.code !== 'AFA') {
+        return res.status(400).json({
+          success: false,
+          message: "Selected bundle is not an AFA bundle",
+        });
+      }
+
+      // Check if Ghana Card is required
+      if (bundle.requiresGhanaCard && !ghanaCardNumber) {
+        return res.status(400).json({
+          success: false,
+          message: "Ghana Card number is required for this bundle",
+        });
+      }
+
+      // Validate Ghana Card number if provided
+      if (ghanaCardNumber) {
+        const ghanaCardRegex = /^GHA-\d{10}-[A-Z0-9]$/;
+        if (!ghanaCardRegex.test(ghanaCardNumber.toUpperCase())) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid Ghana Card number format",
+          });
+        }
+      }
+
+      // Get user and determine pricing
       const user = await User.findById(userId);
       if (!user) {
         return res.status(404).json({
@@ -892,6 +920,9 @@ class UserController {
           message: "User not found",
         });
       }
+
+      // Get price based on user type
+      const fee = bundle.getPriceForUserType(user.userType || 'default');
 
       // Determine order status based on wallet balance
       let orderStatus = "pending";
@@ -908,8 +939,8 @@ class UserController {
           type: "debit",
           amount: fee,
           balanceAfter: user.walletBalance,
-          description: `AFA Registration - ${userType} for ${fullName}`,
-          metadata: { orderType: "afa_registration" },
+          description: `AFA Registration - ${bundle.name} for ${fullName}`,
+          metadata: { orderType: "afa_registration", bundleId: bundle._id },
         });
         await transaction.save();
 
@@ -922,50 +953,38 @@ class UserController {
       // Create the AFA order
       const orderNumber = await generateSpecialOrderNumber("AFA");
 
-      // Create a dummy package for AFA orders
-      const Package = (await import("../models/Package.js")).default;
-      let afaPackage = await Package.findOne({
-        name: "AFA Registration Package",
-      });
-
-      if (!afaPackage) {
-        afaPackage = new Package({
-          name: "AFA Registration Package",
-          description: "AFA Registration Services",
-          isActive: true,
-          isDeleted: false,
-          createdBy: userId,
-          tenantId: userId,
-          category: "custom",
-          provider: "AFA",
-        });
-        await afaPackage.save();
-      }
-
       const order = new Order({
         orderNumber,
         orderType: "single",
         customerInfo: {
           name: fullName,
           phone: phone,
+          ...(ghanaCardNumber && { ghanaCardNumber: ghanaCardNumber.toUpperCase() }),
         },
         items: [
           {
-            packageGroup: afaPackage._id,
-            packageItem: afaPackage._id, // Use package as item
+            packageGroup: bundle.packageId._id,
+            packageItem: bundle._id,
             packageDetails: {
-              name: `AFA Registration - ${userType}`,
-              code: "AFA",
+              name: bundle.name,
+              code: bundle.bundleCode || "AFA",
               price: fee,
               provider: "AFA",
+              bundleDetails: {
+                dataVolume: bundle.dataVolume,
+                dataUnit: bundle.dataUnit,
+                validity: bundle.validity,
+                validityUnit: bundle.validityUnit,
+                requiresGhanaCard: bundle.requiresGhanaCard,
+              },
             },
             quantity: 1,
             unitPrice: fee,
             totalPrice: fee,
             customerPhone: phone,
             bundleSize: {
-              value: 0,
-              unit: "GB",
+              value: bundle.dataVolume,
+              unit: bundle.dataUnit,
             },
           },
         ],
@@ -976,13 +995,13 @@ class UserController {
         paymentMethod: "wallet",
         tenantId: userId,
         createdBy: userId,
-        notes: `AFA Registration for ${userType} - ${fullName} (${phone})`,
+        notes: `AFA Registration - ${bundle.name} for ${fullName} (${phone})${ghanaCardNumber ? ` - Ghana Card: ${ghanaCardNumber.toUpperCase()}` : ''}`,
       });
 
       await order.save();
 
       logger.info(
-        `AFA registration order created: ${order.orderNumber} for user: ${userId}`
+        `AFA registration order created: ${order.orderNumber} for user: ${userId} using bundle: ${bundle.name}`
       );
 
       res.json({
@@ -992,8 +1011,10 @@ class UserController {
           orderNumber: order.orderNumber,
           totalAmount: order.total,
           status: order.status,
-          customerName: order.customerName,
-          customerPhone: order.customerPhone,
+          customerName: order.customerInfo.name,
+          customerPhone: order.customerInfo.phone,
+          bundleName: bundle.name,
+          requiresGhanaCard: bundle.requiresGhanaCard,
         },
       });
     } catch (error) {
@@ -1040,6 +1061,44 @@ class UserController {
       });
     }
   }
+
+  // Get available AFA bundles
+  async getAfaBundles(req, res) {
+    try {
+      const Bundle = (await import("../models/Bundle.js")).default;
+      const Provider = (await import("../models/Provider.js")).default;
+
+      // Get AFA provider
+      const afaProvider = await Provider.findOne({ code: "AFA", isActive: true });
+      if (!afaProvider) {
+        return res.status(404).json({
+          success: false,
+          message: "AFA provider not found or inactive",
+        });
+      }
+
+      // Get active AFA bundles
+      const afaBundles = await Bundle.find({
+        providerId: afaProvider._id,
+        isActive: true,
+        isDeleted: false,
+      })
+        .populate("packageId", "name description")
+        .sort({ createdAt: -1 })
+        .lean();
+
+      res.json({
+        success: true,
+        bundles: afaBundles || [],
+      });
+    } catch (error) {
+      logger.error(`Get AFA bundles error: ${error.message}`);
+      res.status(500).json({
+        success: false,
+        message: "Failed to get AFA bundles",
+      });
+    }
+  }
 }
 
 const userController = new UserController();
@@ -1055,6 +1114,7 @@ export default {
   getUserStats: userController.getUserStats.bind(userController),
   afaRegistration: userController.afaRegistration.bind(userController),
   getAfaRegistration: userController.getAfaRegistration.bind(userController),
+  getAfaBundles: userController.getAfaBundles.bind(userController),
   getDashboardStats: userController.getDashboardStats.bind(userController),
   getChartData: userController.getChartData.bind(userController),
 };

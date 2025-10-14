@@ -14,18 +14,18 @@ const bundleSchema = new mongoose.Schema(
     },
     dataVolume: {
       type: Number,
-      required: true,
+      required: false,
       min: 0.1,
     },
     dataUnit: {
       type: String,
-      required: true,
+      required: false,
       enum: ["MB", "GB", "TB"],
       default: "GB",
     },
     validity: {
       type: mongoose.Schema.Types.Mixed,
-      required: true,
+      required: false,
       validate: {
         validator: function (value) {
           // Allow numbers >= 1 or string 'unlimited'
@@ -39,7 +39,7 @@ const bundleSchema = new mongoose.Schema(
     },
     validityUnit: {
       type: String,
-      required: true,
+      required: false,
       enum: ["hours", "days", "weeks", "months", "unlimited"],
       default: "days",
     },
@@ -118,6 +118,16 @@ const bundleSchema = new mongoose.Schema(
         trim: true,
       },
     ],
+
+    // AFA-specific fields
+    requiresGhanaCard: {
+      type: Boolean,
+      default: false,
+    },
+    afaRequirements: {
+      type: [String], // Array of additional requirements like ['ghana_card', 'proof_of_address', etc.]
+      default: [],
+    },
 
     // Relationships
     packageId: {

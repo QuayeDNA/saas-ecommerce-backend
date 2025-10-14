@@ -34,19 +34,22 @@ export const userValidation = {
       "any.required": "Full name is required",
     }),
     phone: Joi.string()
-      .pattern(/^\+?[\d\s-()]{10,}$/)
+      .pattern(/^0\d{9}$/)
       .required()
       .messages({
-        "string.pattern.base": "Please enter a valid phone number",
+        "string.pattern.base": "Phone number must be 10 digits starting with 0",
         "any.required": "Phone number is required",
       }),
-    userType: Joi.string()
-      .valid(...getBusinessUserTypes(), "subscriber")
-      .required()
+    bundleId: Joi.string().hex().length(24).required().messages({
+      "string.hex": "Invalid bundle ID format",
+      "string.length": "Invalid bundle ID format",
+      "any.required": "Bundle selection is required",
+    }),
+    ghanaCardNumber: Joi.string()
+      .pattern(/^GHA-\d{10}-[A-Z0-9]$/)
+      .optional()
       .messages({
-        "any.only":
-          "User type must be a valid business user type or subscriber",
-        "any.required": "User type is required",
+        "string.pattern.base": "Ghana Card number must be in format GHA-XXXXXXXXXX-X",
       }),
   }),
 };

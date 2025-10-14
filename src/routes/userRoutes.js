@@ -34,6 +34,11 @@ router.get(
   authenticate,
   userController.getAfaRegistration
 );
+router.get(
+  "/afa-bundles",
+  authenticate,
+  userController.getAfaBundles
+);
 
 // User management (All agent types can view their subordinates, Super admin can view all)
 router.get(

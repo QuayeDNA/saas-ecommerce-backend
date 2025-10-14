@@ -821,9 +821,13 @@ class OrderService {
       if (reported !== undefined) query.reported = reported;
 
       // Exclude orders that are resolved and more than 3 days have passed
+      // Also exclude reported orders (not_received/checking) that are more than 2 days old
       if (excludeResolvedAfter3Days) {
         const threeDaysAgo = new Date();
         threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+        
+        const twoDaysAgo = new Date();
+        twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
 
         query.$and = query.$and || [];
         query.$and.push({
@@ -839,6 +843,20 @@ class OrderService {
               receptionStatus: "resolved",
               resolvedAt: { $exists: false },
               updatedAt: { $gte: threeDaysAgo },
+            },
+          ],
+        });
+        
+        // Exclude reported orders (not_received/checking) older than 2 days
+        query.$and.push({
+          $or: [
+            { reported: { $ne: true } }, // Not reported - show it
+            { receptionStatus: "resolved" }, // Resolved reports - already handled above
+            {
+              // Reported orders (not_received/checking) within 2 days - show it
+              reported: true,
+              receptionStatus: { $in: ["not_received", "checking"] },
+              reportedAt: { $exists: true, $gte: twoDaysAgo },
             },
           ],
         });
@@ -1809,13 +1827,13 @@ class OrderService {
       throw new Error("Can only report issues on completed orders");
     }
 
-    // Check if order is older than 3 days
+    // Check if order is older than 1 hour
     const orderDate = new Date(order.createdAt);
-    const threeDaysAgo = new Date();
-    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+    const oneHourAgo = new Date();
+    oneHourAgo.setHours(oneHourAgo.getHours() - 1);
 
-    if (orderDate < threeDaysAgo) {
-      throw new Error("Cannot report issues on orders older than 3 days");
+    if (orderDate < oneHourAgo) {
+      throw new Error("Cannot report issues on orders older than 1 hour");
     }
 
     // Get the reporter user info

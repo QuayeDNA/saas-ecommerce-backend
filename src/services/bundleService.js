@@ -129,6 +129,9 @@ const bundleService = {
           bundleCode: enhancedBundle.bundleCode,
           category: enhancedBundle.category,
           tags: enhancedBundle.tags,
+          // AFA-specific fields
+          requiresGhanaCard: enhancedBundle.requiresGhanaCard,
+          afaRequirements: enhancedBundle.afaRequirements,
           packageId: enhancedBundle.packageId,
           providerId: enhancedBundle.providerId,
           createdAt: enhancedBundle.createdAt,
@@ -329,6 +332,17 @@ const bundleService = {
         throw new Error("Package not found");
       }
 
+      // Validate required fields based on provider type
+      if (provider.code !== 'AFA') {
+        // For non-AFA bundles, data fields are required
+        if (bundleData.dataVolume === undefined || bundleData.dataVolume === null) {
+          throw new Error("Data volume is required for this bundle type");
+        }
+        if (bundleData.validity === undefined || bundleData.validity === null) {
+          throw new Error("Validity is required for this bundle type");
+        }
+      }
+
       // Generate bundle code if not provided
       if (!bundleData.bundleCode) {
         bundleData.bundleCode = await generateBundleCode(bundleData.providerId);
@@ -358,6 +372,9 @@ const bundleService = {
         bundleCode: populatedBundle.bundleCode,
         category: populatedBundle.category,
         tags: populatedBundle.tags,
+        // AFA-specific fields
+        requiresGhanaCard: populatedBundle.requiresGhanaCard,
+        afaRequirements: populatedBundle.afaRequirements,
         packageId: populatedBundle.packageId,
         providerId: populatedBundle.providerId,
         createdAt: populatedBundle.createdAt,
@@ -421,6 +438,28 @@ const bundleService = {
         }
       }
 
+      // Get current bundle to check provider type for validation
+      const currentBundle = await Bundle.findById(id).populate('providerId', 'code');
+      if (!currentBundle) {
+        throw new Error("Bundle not found");
+      }
+
+      // Determine provider code (use updated provider if provided, otherwise current)
+      const providerCode = updateData.providerId
+        ? (await Provider.findById(updateData.providerId)).code
+        : currentBundle.providerId?.code;
+
+      // Validate required fields based on provider type
+      if (providerCode !== 'AFA') {
+        // For non-AFA bundles, data fields are required
+        if (updateData.dataVolume !== undefined && (updateData.dataVolume === null || updateData.dataVolume === '')) {
+          throw new Error("Data volume cannot be empty for this bundle type");
+        }
+        if (updateData.validity !== undefined && (updateData.validity === null || updateData.validity === '')) {
+          throw new Error("Validity cannot be empty for this bundle type");
+        }
+      }
+
       const bundle = await Bundle.findByIdAndUpdate(
         id,
         { ...updateData, updatedAt: new Date() },
@@ -449,6 +488,9 @@ const bundleService = {
         bundleCode: bundle.bundleCode,
         category: bundle.category,
         tags: bundle.tags,
+        // AFA-specific fields
+        requiresGhanaCard: bundle.requiresGhanaCard,
+        afaRequirements: bundle.afaRequirements,
         packageId: bundle.packageId,
         providerId: bundle.providerId,
         createdAt: bundle.createdAt,
