@@ -46,10 +46,10 @@ export const userValidation = {
       "any.required": "Bundle selection is required",
     }),
     ghanaCardNumber: Joi.string()
-      .pattern(/^GHA-\d{10}-[A-Z0-9]$/)
+      .pattern(/^GHA-\d{9}-\d$/i)
       .optional()
       .messages({
-        "string.pattern.base": "Ghana Card number must be in format GHA-XXXXXXXXXX-X",
+        "string.pattern.base": "Ghana Card number must be in format GHA-XXXXXXXXX-X (9 digits in middle, 1 at end)",
       }),
   }),
 };

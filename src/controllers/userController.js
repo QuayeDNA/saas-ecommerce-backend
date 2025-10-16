@@ -903,11 +903,11 @@ class UserController {
 
       // Validate Ghana Card number if provided
       if (ghanaCardNumber) {
-        const ghanaCardRegex = /^GHA-\d{10}-[A-Z0-9]$/;
+        const ghanaCardRegex = /^GHA-\d{9}-\d$/i;
         if (!ghanaCardRegex.test(ghanaCardNumber.toUpperCase())) {
           return res.status(400).json({
             success: false,
-            message: "Invalid Ghana Card number format",
+            message: "Invalid Ghana Card number format. Must be in format GHA-XXXXXXXXX-X (9 digits in middle, 1 at end)",
           });
         }
       }
