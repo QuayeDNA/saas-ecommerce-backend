@@ -820,43 +820,43 @@ class OrderService {
       if (createdBy) query.createdBy = createdBy;
       if (reported !== undefined) query.reported = reported;
 
-      // Exclude orders that are resolved and more than 1 hour has passed
-      // Also exclude reported orders (not_received/checking) that are more than 2 days old
+      // Exclude orders that are resolved and more than 10 minutes has passed
+      // Also exclude reported orders (not_received/checking) that are more than 24 hours old
       if (excludeResolvedAfter3Days) {
-        const oneHourAgo = new Date();
-        oneHourAgo.setHours(oneHourAgo.getHours() - 1);
+        const tenMinutesAgo = new Date();
+        tenMinutesAgo.setMinutes(tenMinutesAgo.getMinutes() - 10);
         
-        const twoDaysAgo = new Date();
-        twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+        const twentyFourHoursAgo = new Date();
+        twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
 
         query.$and = query.$and || [];
         query.$and.push({
           $or: [
             { receptionStatus: { $ne: "resolved" } }, // Not resolved - show it
             {
-              // Resolved with resolvedAt timestamp and within 1 hour - show it
+              // Resolved with resolvedAt timestamp and within 10 minutes - show it
               receptionStatus: "resolved",
-              resolvedAt: { $exists: true, $gte: oneHourAgo },
+              resolvedAt: { $exists: true, $gte: tenMinutesAgo },
             },
             {
-              // Resolved without resolvedAt (legacy), use updatedAt as fallback and within 1 hour - show it
+              // Resolved without resolvedAt (legacy), use updatedAt as fallback and within 10 minutes - show it
               receptionStatus: "resolved",
               resolvedAt: { $exists: false },
-              updatedAt: { $gte: oneHourAgo },
+              updatedAt: { $gte: tenMinutesAgo },
             },
           ],
         });
         
-        // Exclude reported orders (not_received/checking) older than 2 days
+        // Exclude reported orders (not_received/checking) older than 24 hours
         query.$and.push({
           $or: [
             { reported: { $ne: true } }, // Not reported - show it
-            { receptionStatus: "resolved" }, // Resolved reports - already handled above (1 hour window)
+            { receptionStatus: "resolved" }, // Resolved reports - already handled above (10 minute window)
             {
-              // Reported orders (not_received/checking) within 2 days - show it
+              // Reported orders (not_received/checking) within 24 hours - show it
               reported: true,
               receptionStatus: { $in: ["not_received", "checking"] },
-              reportedAt: { $exists: true, $gte: twoDaysAgo },
+              reportedAt: { $exists: true, $gte: twentyFourHoursAgo },
             },
           ],
         });
@@ -1827,13 +1827,13 @@ class OrderService {
       throw new Error("Can only report issues on completed orders");
     }
 
-    // Check if order is older than 1 hour
+    // Check if order is older than 2 hours
     const orderDate = new Date(order.createdAt);
-    const oneHourAgo = new Date();
-    oneHourAgo.setHours(oneHourAgo.getHours() - 1);
+    const twoHoursAgo = new Date();
+    twoHoursAgo.setHours(twoHoursAgo.getHours() - 2);
 
-    if (orderDate < oneHourAgo) {
-      throw new Error("Cannot report issues on orders older than 1 hour");
+    if (orderDate < twoHoursAgo) {
+      throw new Error("Cannot report issues on orders older than 2 hours");
     }
 
     // Get the reporter user info

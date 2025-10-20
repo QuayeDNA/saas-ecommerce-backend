@@ -10,6 +10,7 @@ import websocketService from "./src/services/websocketService.js";
 import { scheduleNotificationCleanup } from "./src/jobs/clearOldNotifications.js";
 import { scheduleCommissionGeneration } from "./src/jobs/commissionGeneration.js";
 import { initializeCommissionCleanupJob } from "./src/jobs/commissionCleanup.js";
+import { initializeReportedOrdersCleanupJob } from "./src/jobs/reportedOrdersCleanup.js";
 import authRoutes from "./src/routes/authRoutes.js";
 import orderRouter from "./src/routes/orderRoutes.js";
 import packageRoutes from "./src/routes/packageRoutes.js";
@@ -54,6 +55,9 @@ scheduleCommissionGeneration();
 
 // Start commission expiry cleanup job
 initializeCommissionCleanupJob();
+
+// Start reported orders cleanup job (24hr auto-mark + 10min resolved cleanup)
+initializeReportedOrdersCleanupJob();
 
 // Security middleware
 app.use(helmet());
