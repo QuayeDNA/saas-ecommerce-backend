@@ -201,6 +201,52 @@ class WebSocketService {
     }
   }
 
+  // Send commission real-time update notification (for accumulating commissions)
+  sendCommissionUpdatedToUser(userId, commissionData) {
+    const ws = this.clients.get(userId);
+    if (ws && ws.readyState === 1) {
+      try {
+        ws.send(
+          JSON.stringify({
+            type: "commission_updated",
+            commission: commissionData,
+          })
+        );
+        logger.info(
+          `Commission updated notification sent to user ${userId} via WebSocket`
+        );
+      } catch (error) {
+        logger.error(
+          `Failed to send WebSocket commission updated to user ${userId}:`,
+          error
+        );
+      }
+    }
+  }
+
+  // Send commission finalization notification (month-end)
+  sendCommissionFinalizedToUser(userId, commissionData) {
+    const ws = this.clients.get(userId);
+    if (ws && ws.readyState === 1) {
+      try {
+        ws.send(
+          JSON.stringify({
+            type: "commission_finalized",
+            commission: commissionData,
+          })
+        );
+        logger.info(
+          `Commission finalized notification sent to user ${userId} via WebSocket`
+        );
+      } catch (error) {
+        logger.error(
+          `Failed to send WebSocket commission finalized to user ${userId}:`,
+          error
+        );
+      }
+    }
+  }
+
   // Send notification to multiple users
   sendNotificationToUsers(userIds, notification) {
     userIds.forEach((userId) => {

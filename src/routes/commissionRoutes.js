@@ -121,7 +121,39 @@ router.post(
   commissionController.expireOldCommissions
 );
 
-// Get commission statistics
+// Archive month commissions
+router.post(
+  "/archive-month",
+  authenticate,
+  authorize("super_admin"),
+  commissionController.archiveMonthCommissions
+);
+
+// Get agent monthly summaries
+router.get(
+  "/monthly-summaries/agent",
+  authenticate,
+  authorizeBusinessUser,
+  commissionController.getAgentMonthlySummaries
+);
+
+// Get all monthly summaries (super admin)
+router.get(
+  "/monthly-summaries",
+  authenticate,
+  authorize("super_admin"),
+  commissionController.getAllMonthlySummaries
+);
+
+// Get current month statistics
+router.get(
+  "/current-month-stats",
+  authenticate,
+  authorizeBusinessUser,
+  commissionController.getCurrentMonthStatistics
+);
+
+// Get commission statistics (legacy - keeping for backwards compatibility)
 router.get(
   "/statistics",
   authenticate,

@@ -1,5 +1,6 @@
 // src/services/commissionService.js
 import CommissionRecord from "../models/CommissionRecord.js";
+import CommissionMonthlySummary from "../models/CommissionMonthlySummary.js";
 import Order from "../models/Order.js";
 import User from "../models/User.js";
 import Settings from "../models/Settings.js";
@@ -193,10 +194,27 @@ class CommissionService {
         query.periodEnd = { $lte: new Date(filters.endDate) };
       }
 
-      const commissions = await CommissionRecord.find(query)
+      // Populate first to enable search on agent details
+      let commissions = await CommissionRecord.find(query)
         .sort({ periodStart: -1 })
-        .populate("agentId", "fullName email businessName userType")
+        .populate("agentId", "fullName email businessName userType agentCode")
         .populate("paidBy", "fullName email");
+
+      // Apply text search filter on populated agent data
+      if (filters.search) {
+        const searchLower = filters.search.toLowerCase();
+        commissions = commissions.filter((commission) => {
+          const agent = commission.agentId;
+          return (
+            agent.fullName.toLowerCase().includes(searchLower) ||
+            agent.email.toLowerCase().includes(searchLower) ||
+            (agent.businessName &&
+              agent.businessName.toLowerCase().includes(searchLower)) ||
+            (agent.agentCode &&
+              agent.agentCode.toLowerCase().includes(searchLower))
+          );
+        });
+      }
 
       return commissions;
     } catch (error) {
@@ -290,6 +308,12 @@ class CommissionService {
       // This is outside transaction to avoid blocking if notifications fail
       setImmediate(async () => {
         try {
+          // Get updated statistics for real-time updates
+          const updatedStats = await this.getCurrentMonthStatistics(
+            commission.tenantId,
+            commission.agentId
+          );
+
           await notificationService.createInAppNotification(
             commission.agentId.toString(),
             "Commission Paid",
@@ -305,7 +329,7 @@ class CommissionService {
             }
           );
 
-          // Send WebSocket notification
+          // Send WebSocket notification with updated stats
           websocketService.sendCommissionPaidToUser(
             commission.agentId.toString(),
             {
@@ -319,6 +343,8 @@ class CommissionService {
               paidAt: commission.paidAt,
               paidBy: commission.paidBy,
               paymentReference: commission.paymentReference,
+              // Include updated statistics for real-time frontend updates
+              updatedStats: updatedStats.currentMonth,
             }
           );
         } catch (notificationError) {
@@ -502,6 +528,12 @@ class CommissionService {
    */
   async sendCommissionNotification(agent, commissionRecord, periodStart) {
     try {
+      // Get updated statistics for real-time updates
+      const updatedStats = await this.getCurrentMonthStatistics(
+        agent.tenantId || agent._id,
+        agent._id
+      );
+
       // Send in-app notification
       await notificationService.createInAppNotification(
         agent._id.toString(),
@@ -524,7 +556,7 @@ class CommissionService {
         }
       );
 
-      // Send WebSocket notification
+      // Send WebSocket notification with updated stats
       websocketService.sendToUser(agent._id.toString(), {
         type: COMMISSION_EVENTS.GENERATED,
         commissionId: commissionRecord._id.toString(),
@@ -539,6 +571,8 @@ class CommissionService {
           year: "numeric",
         })}!`,
         timestamp: new Date().toISOString(),
+        // Include updated statistics for real-time frontend updates
+        updatedStats: updatedStats.currentMonth,
       });
     } catch (error) {
       logger.error(
@@ -1071,6 +1105,581 @@ class CommissionService {
     } catch (error) {
       logger.error(`Get commission settings error: ${error.message}`);
       throw new Error("Failed to get commission settings");
+    }
+  }
+
+  /**
+   * Archive commissions for a specific month
+   *
+   * Creates a CommissionMonthlySummary for each agent and marks
+   * commission records as archived.
+   *
+   * @param {number} year - Year to archive (e.g., 2025)
+   * @param {number} monthNumber - Month number (1-12)
+   * @param {string|null} archivedBy - User ID who triggered archival (null for automatic)
+   * @returns {Promise<Object>} Archival results
+   */
+  async archiveMonthCommissions(year, monthNumber, archivedBy = null) {
+    try {
+      const startTime = Date.now();
+
+      // Create date range for the month
+      const startOfMonth = new Date(year, monthNumber - 1, 1);
+      const endOfMonth = new Date(year, monthNumber, 0, 23, 59, 59, 999);
+      const monthStr = `${year}-${String(monthNumber).padStart(2, "0")}`;
+      const monthName = startOfMonth.toLocaleDateString("en-US", {
+        month: "long",
+        year: "numeric",
+      });
+
+      logger.info(`Starting archival for ${monthName}...`);
+
+      // Find all commission records for this month
+      const commissionRecords = await CommissionRecord.find({
+        period: COMMISSION_PERIOD.MONTHLY,
+        periodStart: { $gte: startOfMonth },
+        periodEnd: { $lte: endOfMonth },
+      }).populate("agentId", "fullName email");
+
+      if (commissionRecords.length === 0) {
+        logger.info(`No commission records found for ${monthName}`);
+        return {
+          success: true,
+          month: monthName,
+          summariesCreated: 0,
+          recordsArchived: 0,
+          message: "No records to archive",
+        };
+      }
+
+      // Group records by agent
+      const recordsByAgent = {};
+      for (const record of commissionRecords) {
+        const agentId = record.agentId._id.toString();
+        if (!recordsByAgent[agentId]) {
+          recordsByAgent[agentId] = {
+            agent: record.agentId,
+            tenantId: record.tenantId,
+            records: [],
+          };
+        }
+        recordsByAgent[agentId].records.push(record);
+      }
+
+      const summariesCreated = [];
+      let recordsArchived = 0;
+
+      // Create summary for each agent
+      for (const [agentId, data] of Object.entries(recordsByAgent)) {
+        try {
+          const { agent, tenantId, records } = data;
+
+          // Calculate aggregates
+          const totalEarned = records.reduce((sum, r) => sum + r.amount, 0);
+          const totalPaid = records
+            .filter((r) => r.status === COMMISSION_STATUS.PAID)
+            .reduce((sum, r) => sum + r.amount, 0);
+          const totalPending = records
+            .filter((r) => r.status === COMMISSION_STATUS.PENDING)
+            .reduce((sum, r) => sum + r.amount, 0);
+          const totalRejected = records
+            .filter((r) => r.status === COMMISSION_STATUS.REJECTED)
+            .reduce((sum, r) => sum + r.amount, 0);
+          const totalExpired = records
+            .filter((r) => r.status === COMMISSION_STATUS.EXPIRED)
+            .reduce((sum, r) => sum + r.amount, 0);
+          const orderCount = records.reduce((sum, r) => sum + r.totalOrders, 0);
+          const revenue = records.reduce((sum, r) => sum + r.totalRevenue, 0);
+          const avgCommissionRate =
+            records.reduce((sum, r) => sum + r.commissionRate, 0) /
+            records.length;
+
+          // Create or update summary
+          let summary = await CommissionMonthlySummary.findOne({
+            agentId: agentId,
+            month: monthStr,
+          });
+
+          if (!summary) {
+            summary = new CommissionMonthlySummary({
+              month: monthStr,
+              year,
+              monthNumber,
+              monthName,
+              agentId,
+              tenantId,
+              totalEarned,
+              totalPaid,
+              totalPending,
+              totalRejected,
+              totalExpired,
+              orderCount,
+              revenue,
+              commissionRate: Math.round(avgCommissionRate * 100) / 100,
+              recordIds: records.map((r) => r._id),
+              recordCount: records.length,
+              isArchived: true,
+              archivedAt: new Date(),
+              archivedBy: archivedBy,
+            });
+          } else {
+            // Update existing summary
+            summary.totalEarned = totalEarned;
+            summary.totalPaid = totalPaid;
+            summary.totalPending = totalPending;
+            summary.totalRejected = totalRejected;
+            summary.totalExpired = totalExpired;
+            summary.orderCount = orderCount;
+            summary.revenue = revenue;
+            summary.commissionRate = Math.round(avgCommissionRate * 100) / 100;
+            summary.recordIds = records.map((r) => r._id);
+            summary.recordCount = records.length;
+            summary.isArchived = true;
+            summary.archivedAt = new Date();
+            summary.archivedBy = archivedBy;
+          }
+
+          // Update payment status
+          summary.updatePaymentStatus();
+          await summary.save();
+
+          summariesCreated.push(summary);
+          recordsArchived += records.length;
+
+          logger.info(
+            `Created summary for ${agent.fullName}: ${records.length} records, GH₵${totalEarned}`
+          );
+        } catch (error) {
+          logger.error(
+            `Failed to create summary for agent ${agentId}: ${error.message}`
+          );
+        }
+      }
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+      logger.info(
+        `Archival completed for ${monthName} in ${duration}s: ${summariesCreated.length} summaries, ${recordsArchived} records`
+      );
+
+      return {
+        success: true,
+        month: monthName,
+        monthStr,
+        summariesCreated: summariesCreated.length,
+        recordsArchived,
+        summaries: summariesCreated,
+        duration,
+      };
+    } catch (error) {
+      logger.error(`Archive month commissions error: ${error.message}`);
+      throw new Error("Failed to archive month commissions");
+    }
+  }
+
+  /**
+   * Get monthly summaries for an agent
+   *
+   * @param {string} agentId - Agent ID
+   * @param {Object} options - Query options
+   * @returns {Promise<Array>} Monthly summaries
+   */
+  async getAgentMonthlySummaries(agentId, options = {}) {
+    try {
+      return await CommissionMonthlySummary.getAgentSummaries(agentId, options);
+    } catch (error) {
+      logger.error(`Get agent monthly summaries error: ${error.message}`);
+      throw new Error("Failed to get agent monthly summaries");
+    }
+  }
+
+  /**
+   * Get monthly summaries for all agents (tenant/super admin)
+   *
+   * @param {string|null} tenantId - Tenant ID (null for super admin)
+   * @param {Object} options - Query options
+   * @returns {Promise<Array>} Monthly summaries
+   */
+  async getAllMonthlySummaries(tenantId = null, options = {}) {
+    try {
+      if (tenantId) {
+        return await CommissionMonthlySummary.getTenantSummaries(
+          tenantId,
+          options
+        );
+      } else {
+        // Super admin - get all summaries
+        const query = {};
+
+        if (options.paymentStatus) {
+          query.paymentStatus = options.paymentStatus;
+        }
+
+        if (options.month) {
+          query.month = options.month;
+        }
+
+        return await CommissionMonthlySummary.find(query)
+          .sort({ year: -1, monthNumber: -1 })
+          .limit(options.limit || 100)
+          .populate("agentId", "fullName email agentCode userType");
+      }
+    } catch (error) {
+      logger.error(`Get all monthly summaries error: ${error.message}`);
+      throw new Error("Failed to get monthly summaries");
+    }
+  }
+
+  /**
+   * Get current month commission statistics (separated from historical)
+   *
+   * @param {string|null} tenantId - Tenant ID (null for super admin)
+   * @param {string|null} agentId - Agent ID (for agent-specific stats)
+   * @returns {Promise<Object>} Current month statistics
+   */
+  async getCurrentMonthStatistics(tenantId = null, agentId = null) {
+    try {
+      const currentDate = new Date();
+      const startOfMonth = new Date(
+        currentDate.getFullYear(),
+        currentDate.getMonth(),
+        1
+      );
+      const endOfMonth = new Date(
+        currentDate.getFullYear(),
+        currentDate.getMonth() + 1,
+        0,
+        23,
+        59,
+        59,
+        999
+      );
+
+      // Only get non-finalized records (current month's accumulating commissions)
+      const baseQuery = {
+        period: COMMISSION_PERIOD.MONTHLY,
+        periodStart: { $gte: startOfMonth },
+        periodEnd: { $lte: endOfMonth },
+        isFinal: false, // Only current month's real-time records
+      };
+
+      if (tenantId) baseQuery.tenantId = tenantId;
+      if (agentId) baseQuery.agentId = agentId;
+
+      const [currentMonthRecords] = await Promise.all([
+        CommissionRecord.find(baseQuery),
+      ]);
+
+      // Calculate current month stats (real-time accumulation)
+      const totalEarned = currentMonthRecords.reduce(
+        (sum, r) => sum + r.amount,
+        0
+      );
+      const totalPaid = currentMonthRecords
+        .filter((r) => r.status === COMMISSION_STATUS.PAID)
+        .reduce((sum, r) => sum + r.amount, 0);
+      const totalPending = currentMonthRecords
+        .filter((r) => r.status === COMMISSION_STATUS.PENDING)
+        .reduce((sum, r) => sum + r.amount, 0);
+      const totalRejected = currentMonthRecords
+        .filter((r) => r.status === COMMISSION_STATUS.REJECTED)
+        .reduce((sum, r) => sum + r.amount, 0);
+
+      const pendingCount = currentMonthRecords.filter(
+        (r) => r.status === COMMISSION_STATUS.PENDING
+      ).length;
+      const uniqueAgents = new Set(
+        currentMonthRecords.map((r) => r.agentId.toString())
+      ).size;
+
+      return {
+        currentMonth: {
+          month: currentDate.toLocaleDateString("en-US", {
+            month: "long",
+            year: "numeric",
+          }),
+          totalEarned: Math.round(totalEarned * 100) / 100,
+          totalPaid: Math.round(totalPaid * 100) / 100,
+          totalPending: Math.round(totalPending * 100) / 100,
+          totalRejected: Math.round(totalRejected * 100) / 100,
+          pendingCount,
+          totalRecords: currentMonthRecords.length,
+          agentCount: uniqueAgents,
+        },
+      };
+    } catch (error) {
+      logger.error(`Get current month statistics error: ${error.message}`);
+      return {
+        currentMonth: {
+          totalEarned: 0,
+          totalPaid: 0,
+          totalPending: 0,
+          totalRejected: 0,
+          pendingCount: 0,
+          totalRecords: 0,
+          agentCount: 0,
+        },
+      };
+    }
+  }
+
+  /**
+   * Update or create commission record in real-time when order is completed
+   * This replaces the old batch generation system
+   * @param {string} orderId - Completed order ID
+   * @returns {Promise<Object>} Updated/created commission record
+   */
+  async updateCommissionRealTime(orderId) {
+    try {
+      const order = await Order.findById(orderId)
+        .populate("createdBy", "userType fullName email")
+        .populate("tenantId", "_id");
+
+      if (!order || order.status !== "completed") {
+        logger.warn(`Order ${orderId} not found or not completed`);
+        return null;
+      }
+
+      const agentId = order.createdBy._id;
+      const tenantId = order.tenantId._id;
+
+      // Get current month period
+      const now = new Date();
+      const periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const periodEnd = new Date(
+        now.getFullYear(),
+        now.getMonth() + 1,
+        0,
+        23,
+        59,
+        59,
+        999
+      );
+
+      // Find or create current month commission record for this agent
+      let commissionRecord = await CommissionRecord.findOne({
+        agentId,
+        tenantId,
+        periodStart: { $gte: periodStart, $lte: periodEnd },
+        isFinal: false, // Only update non-finalized records
+      });
+
+      // Get commission rate
+      const settings = await Settings.getInstance();
+      const rateField = getCommissionRateField(order.createdBy.userType);
+      const defaultRate = getDefaultRate(order.createdBy.userType);
+      const commissionRate =
+        settings[rateField] || settings.defaultCommissionRate || defaultRate;
+
+      // Calculate commission for this order
+      const orderCommission = (order.total * commissionRate) / 100;
+
+      if (commissionRecord) {
+        // Update existing record
+        commissionRecord.totalOrders += 1;
+        commissionRecord.totalRevenue += order.total;
+        commissionRecord.amount += orderCommission;
+        commissionRecord.amount =
+          Math.round(commissionRecord.amount * 100) / 100;
+        await commissionRecord.save();
+
+        logger.info(
+          `Updated commission for agent ${
+            order.createdBy.fullName
+          }: +${orderCommission.toFixed(2)} (Total: ${commissionRecord.amount})`
+        );
+      } else {
+        // Create new record for current month
+        commissionRecord = await this.createCommissionRecord({
+          agentId,
+          tenantId,
+          period: COMMISSION_PERIOD.MONTHLY,
+          periodStart,
+          periodEnd,
+          totalOrders: 1,
+          totalRevenue: order.total,
+          commissionRate,
+          amount: Math.round(orderCommission * 100) / 100,
+          status: COMMISSION_STATUS.PENDING,
+          isFinal: false,
+        });
+
+        logger.info(
+          `Created new commission record for agent ${
+            order.createdBy.fullName
+          }: ${orderCommission.toFixed(2)}`
+        );
+      }
+
+      // Send real-time WebSocket update to agent
+      try {
+        websocketService.sendCommissionUpdatedToUser(agentId.toString(), {
+          _id: commissionRecord._id.toString(),
+          amount: commissionRecord.amount,
+          totalOrders: commissionRecord.totalOrders,
+          totalRevenue: commissionRecord.totalRevenue,
+          status: commissionRecord.status,
+          periodStart: commissionRecord.periodStart,
+          periodEnd: commissionRecord.periodEnd,
+        });
+
+        // Also notify super admins of the update
+        const superAdmins = await User.find({ userType: "super_admin" });
+        for (const admin of superAdmins) {
+          websocketService.sendCommissionUpdatedToUser(admin._id.toString(), {
+            agentId: agentId.toString(),
+            agentName: order.createdBy.fullName,
+            _id: commissionRecord._id.toString(),
+            amount: commissionRecord.amount,
+            totalOrders: commissionRecord.totalOrders,
+            totalRevenue: commissionRecord.totalRevenue,
+          });
+        }
+      } catch (wsError) {
+        logger.error(`Failed to send WebSocket update: ${wsError.message}`);
+      }
+
+      return commissionRecord;
+    } catch (error) {
+      logger.error(`Real-time commission update error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Finalize all commissions for the previous month
+   * Run on 1st of each month via cron job
+   * @returns {Promise<Object>} Finalization result
+   */
+  async finalizeMonthCommissions() {
+    try {
+      const now = new Date();
+      const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const lastMonthEnd = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        0,
+        23,
+        59,
+        59,
+        999
+      );
+
+      // Find all non-finalized commissions from last month
+      const commissionsToFinalize = await CommissionRecord.find({
+        periodStart: { $gte: lastMonth, $lte: lastMonthEnd },
+        isFinal: false,
+      }).populate("agentId", "fullName email");
+
+      if (commissionsToFinalize.length === 0) {
+        logger.info("No commissions to finalize for last month");
+        return {
+          success: true,
+          count: 0,
+          message: "No commissions to finalize",
+        };
+      }
+
+      // Mark all as final
+      const finalizedCount = await CommissionRecord.updateMany(
+        {
+          periodStart: { $gte: lastMonth, $lte: lastMonthEnd },
+          isFinal: false,
+        },
+        {
+          $set: {
+            isFinal: true,
+            finalizedAt: now,
+          },
+        }
+      );
+
+      // Send notifications to agents and super admins
+      const totalPending = commissionsToFinalize
+        .filter((c) => c.status === COMMISSION_STATUS.PENDING)
+        .reduce((sum, c) => sum + c.amount, 0);
+
+      // Notify each agent
+      for (const commission of commissionsToFinalize) {
+        try {
+          await notificationService.createNotification({
+            userId: commission.agentId._id,
+            type: "commission",
+            title: "Monthly Commission Finalized",
+            message: `Your commission for ${lastMonth.toLocaleDateString(
+              "en-US",
+              { month: "long", year: "numeric" }
+            )} has been finalized: GHS ${commission.amount.toFixed(2)} (${
+              commission.status
+            })`,
+            relatedId: commission._id,
+            relatedModel: "CommissionRecord",
+          });
+
+          websocketService.sendCommissionFinalizedToUser(
+            commission.agentId._id.toString(),
+            {
+              _id: commission._id.toString(),
+              amount: commission.amount,
+              status: commission.status,
+              month: lastMonth.toLocaleDateString("en-US", {
+                month: "long",
+                year: "numeric",
+              }),
+            }
+          );
+        } catch (notifError) {
+          logger.error(
+            `Failed to notify agent ${commission.agentId._id}: ${notifError.message}`
+          );
+        }
+      }
+
+      // Notify super admins
+      const superAdmins = await User.find({ userType: "super_admin" });
+      for (const admin of superAdmins) {
+        try {
+          await notificationService.createNotification({
+            userId: admin._id,
+            type: "commission",
+            title: "Monthly Commissions Finalized",
+            message: `${
+              commissionsToFinalize.length
+            } commissions finalized for ${lastMonth.toLocaleDateString(
+              "en-US",
+              { month: "long", year: "numeric" }
+            )}. Total pending payment: GHS ${totalPending.toFixed(2)}`,
+            priority: "high",
+          });
+        } catch (notifError) {
+          logger.error(
+            `Failed to notify admin ${admin._id}: ${notifError.message}`
+          );
+        }
+      }
+
+      logger.info(
+        `Finalized ${
+          finalizedCount.modifiedCount
+        } commissions for ${lastMonth.toLocaleDateString("en-US", {
+          month: "long",
+          year: "numeric",
+        })}`
+      );
+
+      return {
+        success: true,
+        count: finalizedCount.modifiedCount,
+        totalAmount: commissionsToFinalize.reduce(
+          (sum, c) => sum + c.amount,
+          0
+        ),
+        totalPending,
+        message: `Successfully finalized ${finalizedCount.modifiedCount} commission records`,
+      };
+    } catch (error) {
+      logger.error(`Finalize month commissions error: ${error.message}`);
+      throw error;
     }
   }
 }

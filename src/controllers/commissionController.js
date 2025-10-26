@@ -149,6 +149,7 @@ class CommissionController {
         startDate,
         endDate,
         month,
+        search,
         page = 1,
         limit = 20,
       } = req.query;
@@ -158,6 +159,7 @@ class CommissionController {
       if (agentId) filters.agentId = agentId;
       if (period) filters.period = period;
       if (month) filters.month = month;
+      if (search) filters.search = search;
       if (startDate && endDate) {
         filters.startDate = new Date(startDate);
         filters.endDate = new Date(endDate);
@@ -595,6 +597,146 @@ class CommissionController {
         success: false,
         message: "Failed to expire commissions",
         error: error.message,
+      });
+    }
+  }
+
+  /**
+   * Archive commissions for a specific month
+   */
+  async archiveMonthCommissions(req, res) {
+    try {
+      const { year, month } = req.body;
+      const { userId } = req.user;
+
+      if (!year || !month) {
+        return res.status(400).json({
+          success: false,
+          message: "Year and month are required",
+        });
+      }
+
+      if (month < 1 || month > 12) {
+        return res.status(400).json({
+          success: false,
+          message: "Month must be between 1 and 12",
+        });
+      }
+
+      logger.info(
+        `Manual archival triggered for ${year}-${month} by user ${userId}`
+      );
+
+      const result = await commissionService.archiveMonthCommissions(
+        year,
+        month,
+        userId
+      );
+
+      res.json({
+        success: true,
+        message: `Successfully archived ${result.summariesCreated} summaries for ${result.month}`,
+        data: result,
+      });
+    } catch (error) {
+      logger.error("Archive month commissions error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to archive month commissions",
+        error: error.message,
+      });
+    }
+  }
+
+  /**
+   * Get monthly summaries for an agent
+   */
+  async getAgentMonthlySummaries(req, res) {
+    try {
+      const { userId } = req.user;
+      const { limit, paymentStatus } = req.query;
+
+      const options = {};
+      if (limit) options.limit = parseInt(limit);
+      if (paymentStatus) options.paymentStatus = paymentStatus;
+
+      const summaries = await commissionService.getAgentMonthlySummaries(
+        userId,
+        options
+      );
+
+      res.json({
+        success: true,
+        data: summaries,
+      });
+    } catch (error) {
+      logger.error("Get agent monthly summaries error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to get monthly summaries",
+      });
+    }
+  }
+
+  /**
+   * Get all monthly summaries (super admin)
+   */
+  async getAllMonthlySummaries(req, res) {
+    try {
+      const { tenantId, userType } = req.user;
+      const { limit, paymentStatus, month } = req.query;
+
+      const options = {};
+      if (limit) options.limit = parseInt(limit);
+      if (paymentStatus) options.paymentStatus = paymentStatus;
+      if (month) options.month = month;
+
+      // For super admin, don't filter by tenant
+      const filterTenantId = userType === "super_admin" ? null : tenantId;
+
+      const summaries = await commissionService.getAllMonthlySummaries(
+        filterTenantId,
+        options
+      );
+
+      res.json({
+        success: true,
+        data: summaries,
+      });
+    } catch (error) {
+      logger.error("Get all monthly summaries error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to get monthly summaries",
+      });
+    }
+  }
+
+  /**
+   * Get current month statistics
+   */
+  async getCurrentMonthStatistics(req, res) {
+    try {
+      const { tenantId, userType, userId } = req.user;
+
+      // For super admin, show all; for agents, show only their own
+      const filterTenantId = userType === "super_admin" ? null : tenantId;
+      const filterAgentId = userType === "super_admin" ? null : userId;
+
+      const stats = await commissionService.getCurrentMonthStatistics(
+        filterTenantId,
+        filterAgentId
+      );
+
+      res.json({
+        success: true,
+        data: stats,
+      });
+    } catch (error) {
+      logger.error("Get current month statistics error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to get current month statistics",
       });
     }
   }

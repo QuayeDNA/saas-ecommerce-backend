@@ -825,7 +825,7 @@ class OrderService {
       if (excludeResolvedAfter3Days) {
         const tenMinutesAgo = new Date();
         tenMinutesAgo.setMinutes(tenMinutesAgo.getMinutes() - 10);
-        
+
         const twentyFourHoursAgo = new Date();
         twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
 
@@ -846,7 +846,7 @@ class OrderService {
             },
           ],
         });
-        
+
         // Exclude reported orders (not_received/checking) older than 24 hours
         query.$and.push({
           $or: [
@@ -993,7 +993,7 @@ class OrderService {
         await order.save();
       }
 
-      // Calculate commission if order is completed and created by a business user
+      // Update commission in real-time if order is completed and created by a business user
       if (
         processedSuccessfully &&
         order.status === "completed" &&
@@ -1002,66 +1002,17 @@ class OrderService {
         try {
           const agent = await User.findById(order.createdBy);
           if (agent && isBusinessUser(agent.userType)) {
-            // Calculate commission for the current month
-            const currentDate = new Date();
-            const startOfMonth = new Date(
-              currentDate.getFullYear(),
-              currentDate.getMonth(),
-              1
+            // Update commission record in real-time for current month
+            await commissionService.updateCommissionRealTime(order._id);
+            logger.info(
+              `Real-time commission updated for agent ${agent.fullName} after order ${order.orderNumber} completion`
             );
-            const endOfMonth = new Date(
-              currentDate.getFullYear(),
-              currentDate.getMonth() + 1,
-              0,
-              23,
-              59,
-              59,
-              999
-            );
-
-            // Check if commission record already exists for this agent and month
-            const existingCommission = await mongoose.connection.db
-              .collection("commissionrecords")
-              .findOne({
-                agentId: order.createdBy,
-                tenantId: order.tenantId,
-                period: "monthly",
-                periodStart: startOfMonth,
-                periodEnd: endOfMonth,
-              });
-
-            if (!existingCommission) {
-              // Calculate commission for this order's month
-              const calculation = await commissionService.calculateCommission(
-                order.createdBy,
-                order.tenantId,
-                startOfMonth,
-                endOfMonth
-              );
-
-              // Create commission record
-              await commissionService.createCommissionRecord({
-                ...calculation,
-                period: "monthly",
-                periodStart: startOfMonth,
-                periodEnd: endOfMonth,
-              });
-
-              logger.info(
-                `Commission record created for agent ${
-                  agent.fullName
-                } for ${currentDate.toLocaleString("default", {
-                  month: "long",
-                  year: "numeric",
-                })}`
-              );
-            }
           }
         } catch (commissionError) {
           logger.error(
-            `Failed to calculate commission for order ${order._id}: ${commissionError.message}`
+            `Failed to update commission for order ${order._id}: ${commissionError.message}`
           );
-          // Don't fail the order processing if commission calculation fails
+          // Don't fail the order processing if commission update fails
         }
       }
 
