@@ -97,6 +97,14 @@ router.post(
   commissionController.generateMonthlyCommissions
 );
 
+// Generate daily commissions (manual trigger)
+router.post(
+  "/generate-daily",
+  authenticate,
+  authorize("super_admin"),
+  commissionController.generateDailyCommissions
+);
+
 // Reset monthly commissions
 router.post(
   "/reset-monthly",

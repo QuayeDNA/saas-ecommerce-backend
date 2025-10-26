@@ -103,9 +103,22 @@ class CommissionController {
         filters.endDate = new Date(endDate);
       }
 
-      // For non-super-admin users, only show paid commissions
+      // For non-super-admin users, only show paid commissions and their own pending daily commissions
       if (userType !== "super_admin") {
-        filters.status = "paid";
+        // Allow agents to see their own pending daily commissions for current month accumulation
+        // But hide pending monthly commissions (which are finalized at month-end)
+        if (!status) {
+          // If no specific status filter, show paid + pending daily commissions
+          filters.$or = [
+            { status: "paid" },
+            { status: "pending", period: "daily" },
+          ];
+        } else if (status === "pending") {
+          // If specifically filtering for pending, only show daily pending commissions
+          filters.status = "pending";
+          filters.period = "daily";
+        }
+        // If status is "paid", it will work as before
       }
 
       const commissions = await commissionService.getAgentCommissions(
@@ -737,6 +750,32 @@ class CommissionController {
       res.status(500).json({
         success: false,
         message: "Failed to get current month statistics",
+      });
+    }
+  }
+
+  /**
+   * Generate daily commissions (manual trigger for testing)
+   */
+  async generateDailyCommissions(req, res) {
+    try {
+      const { targetDate } = req.body;
+      const targetDateObj = targetDate ? new Date(targetDate) : new Date();
+
+      const results = await commissionService.generateDailyCommissions(
+        targetDateObj
+      );
+
+      res.json({
+        success: true,
+        data: results,
+        message: `Generated ${results.summary.created} daily commission records`,
+      });
+    } catch (error) {
+      logger.error("Generate daily commissions error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to generate daily commissions",
       });
     }
   }

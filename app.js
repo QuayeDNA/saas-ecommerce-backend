@@ -9,6 +9,7 @@ import logger from "./src/utils/logger.js";
 import websocketService from "./src/services/websocketService.js";
 import { scheduleNotificationCleanup } from "./src/jobs/clearOldNotifications.js";
 import commissionFinalizationJob from "./src/jobs/commissionFinalization.js";
+import { scheduleDailyCommissionGeneration } from "./src/jobs/dailyCommissionGeneration.js";
 import { initializeReportedOrdersCleanupJob } from "./src/jobs/reportedOrdersCleanup.js";
 import authRoutes from "./src/routes/authRoutes.js";
 import orderRouter from "./src/routes/orderRoutes.js";
@@ -52,6 +53,10 @@ scheduleNotificationCleanup();
 // Start commission finalization job (1 minute after midnight on 1st of each month)
 // This replaces the old generation/archive/expire workflow with real-time commission tracking
 commissionFinalizationJob.start();
+
+// Start daily commission generation job (every day at 2:00 AM)
+// This creates daily commission records for users to see accumulation throughout the month
+scheduleDailyCommissionGeneration();
 
 // Start reported orders cleanup job (24hr auto-mark + 10min resolved cleanup)
 initializeReportedOrdersCleanupJob();
