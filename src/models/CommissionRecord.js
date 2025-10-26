@@ -87,6 +87,8 @@ const commissionRecordSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
   }
 );
 
@@ -101,6 +103,11 @@ commissionRecordSchema.virtual("formattedPeriod").get(function () {
   const start = this.periodStart.toLocaleDateString();
   const end = this.periodEnd.toLocaleDateString();
   return `${start} - ${end}`;
+});
+
+// Virtual for formatted rate
+commissionRecordSchema.virtual("formattedRate").get(function () {
+  return `${(this.commissionRate * 100).toFixed(1)}%`;
 });
 
 // Method to mark as paid
