@@ -1592,11 +1592,10 @@ class CommissionService {
         999
       );
 
-      // Only get non-finalized records (current month's accumulating commissions)
+      // Get all non-finalized records within current month (regardless of period type)
+      // This allows for daily, weekly, or monthly period records to be included
       const baseQuery = {
-        period: COMMISSION_PERIOD.MONTHLY,
-        periodStart: { $gte: startOfMonth },
-        periodEnd: { $lte: endOfMonth },
+        periodStart: { $gte: startOfMonth, $lte: endOfMonth },
         isFinal: false, // Only current month's real-time records
       };
 
