@@ -265,10 +265,10 @@ class AnalyticsService {
     const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const thisMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
-    const [periodStats, todayStats, thisMonthStats] = await Promise.all([
-      // Period stats (existing logic)
+    const [allTimeStats, todayStats, thisMonthStats] = await Promise.all([
+      // ALL TIME stats (not limited by date range)
       Order.aggregate([
-        { $match: { createdAt: { $gte: startDate, $lte: endDate } } },
+        { $match: {} }, // Get all orders
         {
           $group: {
             _id: null,
@@ -341,7 +341,7 @@ class AnalyticsService {
       ]),
     ]);
 
-    const periodData = periodStats[0] || {
+    const allTimeData = allTimeStats[0] || {
       total: 0,
       completed: 0,
       pending: 0,
@@ -371,17 +371,17 @@ class AnalyticsService {
     };
 
     const successRate =
-      periodData.total > 0
-        ? (periodData.completed / periodData.total) * 100
+      allTimeData.total > 0
+        ? (allTimeData.completed / allTimeData.total) * 100
         : 0;
 
     return {
-      total: periodData.total,
-      completed: periodData.completed,
-      pending: periodData.pending,
-      processing: periodData.processing,
-      failed: periodData.failed,
-      cancelled: periodData.cancelled,
+      total: allTimeData.total,
+      completed: allTimeData.completed,
+      pending: allTimeData.pending,
+      processing: allTimeData.processing,
+      failed: allTimeData.failed,
+      cancelled: allTimeData.cancelled,
       successRate: Math.round(successRate * 100) / 100,
       today: {
         total: todayData.total,
@@ -400,8 +400,8 @@ class AnalyticsService {
         cancelled: monthData.cancelled,
       },
       byType: {
-        bulk: periodData.bulk,
-        single: periodData.single,
+        bulk: allTimeData.bulk,
+        single: allTimeData.single,
       },
     };
   }
@@ -427,13 +427,13 @@ class AnalyticsService {
     );
     const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
 
-    const [totalRevenueStats, thisMonthRevenueStats, todayRevenueStats] =
+    const [allTimeRevenueStats, thisMonthRevenueStats, todayRevenueStats] =
       await Promise.all([
+        // ALL TIME revenue (not limited by date range)
         Order.aggregate([
           {
             $match: {
               status: "completed",
-              createdAt: { $gte: startDate, $lte: endDate },
             },
           },
           {
@@ -476,17 +476,17 @@ class AnalyticsService {
         ]),
       ]);
 
-    const totalStats = totalRevenueStats[0] || { total: 0, count: 0 };
+    const allTimeStats = allTimeRevenueStats[0] || { total: 0, count: 0 };
     const monthStats = thisMonthRevenueStats[0] || { total: 0, count: 0 };
     const todayStats = todayRevenueStats[0] || { total: 0, count: 0 };
     const averageOrderValue =
-      totalStats.count > 0 ? totalStats.total / totalStats.count : 0;
+      allTimeStats.count > 0 ? allTimeStats.total / allTimeStats.count : 0;
 
     return {
-      total: totalStats.total,
+      total: allTimeStats.total,
       thisMonth: monthStats.total,
       today: todayStats.total,
-      orderCount: totalStats.count,
+      orderCount: allTimeStats.count,
       averageOrderValue: Math.round(averageOrderValue * 100) / 100,
     };
   }
