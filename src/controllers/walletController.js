@@ -197,6 +197,33 @@ class WalletController {
   }
 
   /**
+   * Check if user has a pending top-up request
+   */
+  async checkPendingTopUpRequest(req, res) {
+    try {
+      const userId = req.user.userId;
+
+      // Check for existing pending top-up request
+      const pendingRequest = await WalletTransaction.findOne({
+        user: userId,
+        type: "credit",
+        status: "pending",
+      });
+
+      res.status(200).json({
+        success: true,
+        hasPendingRequest: !!pendingRequest,
+      });
+    } catch (error) {
+      logger.error(`Check pending top-up request error: ${error.message}`);
+      res.status(500).json({
+        success: false,
+        message: "Failed to check pending request status",
+      });
+    }
+  }
+
+  /**
    * Request wallet top-up (for agents)
    */
   async requestWalletTopUp(req, res) {

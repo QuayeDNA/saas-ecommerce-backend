@@ -21,6 +21,12 @@ router.get(
 );
 
 // Routes for wallet-enabled users (can request top-up)
+router.get(
+  "/check-pending-topup",
+  authenticate,
+  authorizeWalletUser,
+  walletController.checkPendingTopUpRequest
+);
 router.post(
   "/request-top-up",
   authenticate,

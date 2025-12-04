@@ -211,6 +211,19 @@ class WalletService {
         throw new Error("User not found");
       }
 
+      // Check for existing pending top-up request
+      const existingPendingRequest = await WalletTransaction.findOne({
+        user: userId,
+        type: "credit",
+        status: "pending",
+      });
+
+      if (existingPendingRequest) {
+        throw new Error(
+          "You already have a pending top-up request. Please wait for it to be processed before making a new request."
+        );
+      }
+
       // Validate amount
       if (amount <= 0) {
         throw new Error("Top-up amount must be greater than zero");
@@ -254,7 +267,9 @@ class WalletService {
       }
 
       if (transaction.status !== "pending") {
-        throw new Error("Transaction is not in pending status");
+        throw new Error(
+          `Transaction is already ${transaction.status}. Only pending transactions can be processed.`
+        );
       }
 
       if (approve) {
@@ -272,26 +287,14 @@ class WalletService {
         transaction.status = "completed";
         transaction.approvedBy = adminId;
         transaction.balanceAfter = user.walletBalance;
+        transaction.description = `${transaction.description} - Approved by admin`;
 
         logger.info(
           `Wallet top-up approved: ${transaction.amount} GH₵ for user ${transaction.user}. New balance: ${user.walletBalance} GH₵`
         );
-      } else {
-        // Reject the transaction
-        transaction.status = "rejected";
-        transaction.approvedBy = adminId;
 
-        logger.info(
-          `Wallet top-up rejected: ${transaction.amount} GH₵ for user ${transaction.user}`
-        );
-      }
-
-      await transaction.save();
-
-      // Send WebSocket update if approved
-      if (approve) {
+        // Send WebSocket update for approval
         try {
-          const user = await User.findById(transaction.user);
           const recentTransactions = await WalletTransaction.find({
             user: transaction.user,
           })
@@ -314,7 +317,46 @@ class WalletService {
             `Failed to send WebSocket update for top-up approval: ${wsError.message}`
           );
         }
+      } else {
+        // Reject the transaction
+        transaction.status = "rejected";
+        transaction.approvedBy = adminId;
+        transaction.description = `${transaction.description} - Rejected by admin`;
+        // Keep the original balanceAfter to show what was requested
+        // But mark it clearly as rejected
+
+        logger.info(
+          `Wallet top-up rejected: ${transaction.amount} GH₵ for user ${transaction.user}`
+        );
+
+        // Send WebSocket update for rejection
+        try {
+          const user = await User.findById(transaction.user);
+          const recentTransactions = await WalletTransaction.find({
+            user: transaction.user,
+          })
+            .sort({ createdAt: -1 })
+            .limit(10)
+            .populate([
+              { path: "approvedBy", select: "fullName" },
+              { path: "relatedOrder", select: "orderNumber" },
+            ]);
+
+          websocketService.sendToUser(transaction.user.toString(), {
+            type: "wallet_update",
+            userId: transaction.user.toString(),
+            balance: user.walletBalance,
+            recentTransactions: recentTransactions,
+            message: `Your top-up request for GH₵${transaction.amount} has been rejected.`,
+          });
+        } catch (wsError) {
+          logger.warn(
+            `Failed to send WebSocket update for top-up rejection: ${wsError.message}`
+          );
+        }
       }
+
+      await transaction.save();
 
       // Send notification based on approval status
       if (approve) {
