@@ -65,7 +65,7 @@ The script uses these database URIs:
 **Production (Read Only)**:
 
 ```
-mongodb+srv://AnansE:AnansEDNA123@mongodbcluster.kjbxxoj.mongodb.net/saas-ecommerce
+mongodb+srv://XXXXX:XXXXXXXXX@mongodbcluster.XXXXXXXX.XXXXXXXXXXXX
 ```
 
 **Local (Will be overwritten)**:
