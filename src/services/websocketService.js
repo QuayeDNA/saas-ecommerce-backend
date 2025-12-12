@@ -21,6 +21,11 @@ class WebSocketService {
       if (userId) {
         this.clients.set(userId, ws);
         logger.info(`WebSocket client registered for user: ${userId}`);
+        console.log(
+          `📡 WebSocket registered: userId=${userId}, Total clients: ${this.clients.size}`
+        );
+      } else {
+        logger.warn("WebSocket connection without userId");
       }
 
       ws.on("close", () => {
@@ -30,6 +35,9 @@ class WebSocketService {
             this.clients.delete(clientUserId);
             logger.info(
               `WebSocket client disconnected for user: ${clientUserId}`
+            );
+            console.log(
+              `📡 WebSocket disconnected: userId=${clientUserId}, Total clients: ${this.clients.size}`
             );
             break;
           }
@@ -275,6 +283,77 @@ class WebSocketService {
   // Get connected clients count
   getConnectedClientsCount() {
     return this.clients.size;
+  }
+
+  // Send announcement to specific user
+  sendAnnouncementToUser(userId, announcement) {
+    const ws = this.clients.get(userId);
+    if (ws && ws.readyState === 1) {
+      try {
+        ws.send(
+          JSON.stringify({
+            type: "announcement",
+            data: announcement,
+          })
+        );
+        logger.info(`Announcement sent to user ${userId} via WebSocket`);
+      } catch (error) {
+        logger.error(
+          `Failed to send WebSocket announcement to user ${userId}:`,
+          error
+        );
+      }
+    }
+  }
+
+  // Broadcast announcement to specific list of users
+  broadcastAnnouncementToAll(announcement, userIds) {
+    if (!Array.isArray(userIds) || userIds.length === 0) {
+      logger.warn("No user IDs provided for announcement broadcast");
+      return;
+    }
+
+    console.log(`Broadcasting announcement to ${userIds.length} users`);
+    console.log(`Current WebSocket clients connected: ${this.clients.size}`);
+    console.log(`Connected user IDs:`, Array.from(this.clients.keys()));
+
+    let successCount = 0;
+    let failCount = 0;
+
+    userIds.forEach((userId) => {
+      const ws = this.clients.get(userId.toString());
+      console.log(
+        `Checking WebSocket for user ${userId}: ${
+          ws ? "FOUND" : "NOT FOUND"
+        }, readyState: ${ws?.readyState}`
+      );
+
+      if (ws && ws.readyState === 1) {
+        try {
+          ws.send(
+            JSON.stringify({
+              type: "announcement",
+              data: announcement,
+            })
+          );
+          console.log(`✅ Announcement sent to user ${userId}`);
+          successCount++;
+        } catch (error) {
+          console.error(
+            `❌ Failed to send announcement to user ${userId}:`,
+            error
+          );
+          failCount++;
+        }
+      } else {
+        console.log(`⚠️ No active WebSocket connection for user ${userId}`);
+        failCount++;
+      }
+    });
+
+    logger.info(
+      `Announcement broadcast completed: ${successCount} successful, ${failCount} failed out of ${userIds.length} target users`
+    );
   }
 }
 
