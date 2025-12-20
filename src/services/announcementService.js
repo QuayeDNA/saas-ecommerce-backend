@@ -154,8 +154,8 @@ class AnnouncementService {
 
       await announcement.save();
 
-      // If status changed to 'active', broadcast
-      if (updates.status === "active" && announcement.status === "active") {
+      // If status is active (either was active or became active), broadcast the updated announcement
+      if (announcement.status === "active") {
         await this.broadcastAnnouncement(announcement._id);
       }
 
@@ -269,6 +269,9 @@ class AnnouncementService {
       // Broadcast to eligible users
       const userIds = eligibleUsers.map((user) => user._id.toString());
       console.log(`Broadcasting to ${userIds.length} user(s)`);
+
+      // Actually broadcast via WebSocket
+      await websocketService.broadcastAnnouncementToAll(announcement, userIds);
 
       console.log(
         `Announcement ${announcementId} broadcast to ${userIds.length} users`
