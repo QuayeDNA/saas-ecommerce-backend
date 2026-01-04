@@ -15,6 +15,9 @@ router.get("/site/status", settingsController.getSiteStatus);
 router.use(authenticate);
 router.get("/wallet", settingsController.getWalletSettings);
 
+// Test User Cleanup - Available to test user and super admin
+router.post("/cleanup/test-user", settingsController.cleanupTestUser);
+
 // All other routes require super admin authorization
 router.use(authorize("super_admin"));
 
@@ -43,8 +46,5 @@ router.post("/admin/change-password", settingsController.changeAdminPassword);
 
 // Wallet Settings - PUT requires super admin
 router.put("/wallet", settingsController.updateWalletSettings);
-
-// Test User Cleanup - Manual trigger (super admin only)
-router.post("/cleanup/test-user", settingsController.cleanupTestUser);
 
 export default router;

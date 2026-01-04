@@ -201,8 +201,26 @@ class SettingsController {
   // Test User Cleanup
   async cleanupTestUser(req, res) {
     try {
+      const TEST_USER_ID = "689bae9e81b90ad7c5ad66d4";
+      const userId = req.user.id || req.user._id;
+      const isSuperAdmin = req.user.userType === "super_admin";
+      const isTestUser = userId.toString() === TEST_USER_ID;
+
+      // Only allow test user or super admin
+      if (!isTestUser && !isSuperAdmin) {
+        logger.warn(
+          `Unauthorized cleanup attempt by ${req.user.email} (userType: "${req.user.userType}")`
+        );
+        return res.status(403).json({
+          success: false,
+          error: "Only the test user or super admin can trigger this cleanup",
+        });
+      }
+
       logger.info(
-        `Manual test user cleanup triggered by admin: ${req.user.email}`
+        `Manual test user cleanup triggered by ${req.user.email} (${
+          isTestUser ? "test user" : "super admin"
+        })`
       );
       const result = await cleanupAllTestUserData();
       res.json({
