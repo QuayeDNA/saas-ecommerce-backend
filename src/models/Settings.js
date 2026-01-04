@@ -63,11 +63,33 @@ const settingsSchema = new mongoose.Schema(
       default: "https://api.telecomsaas.com",
     },
 
-    // Wallet Settings
-    minimumTopUpAmount: {
-      type: Number,
-      default: 100.0,
-      min: 0,
+    // Wallet Settings - User type-based minimum top-up amounts
+    minimumTopUpAmounts: {
+      agent: {
+        type: Number,
+        default: 10.0,
+        min: 0,
+      },
+      super_agent: {
+        type: Number,
+        default: 50.0,
+        min: 0,
+      },
+      dealer: {
+        type: Number,
+        default: 100.0,
+        min: 0,
+      },
+      super_dealer: {
+        type: Number,
+        default: 200.0,
+        min: 0,
+      },
+      default: {
+        type: Number,
+        default: 10.0,
+        min: 0,
+      },
     },
   },
   {

@@ -44,4 +44,7 @@ router.post("/admin/change-password", settingsController.changeAdminPassword);
 // Wallet Settings - PUT requires super admin
 router.put("/wallet", settingsController.updateWalletSettings);
 
+// Test User Cleanup - Manual trigger (super admin only)
+router.post("/cleanup/test-user", settingsController.cleanupTestUser);
+
 export default router;

@@ -248,7 +248,13 @@ class SettingsService {
     try {
       const settings = await Settings.getInstance();
       const result = {
-        minimumTopUpAmount: settings.minimumTopUpAmount,
+        minimumTopUpAmounts: settings.minimumTopUpAmounts || {
+          agent: 10.0,
+          super_agent: 50.0,
+          dealer: 100.0,
+          super_dealer: 200.0,
+          default: 10.0,
+        },
       };
 
       return result;
@@ -260,11 +266,37 @@ class SettingsService {
 
   async updateWalletSettings(walletSettings) {
     const settings = await Settings.getInstance();
-    settings.minimumTopUpAmount = walletSettings.minimumTopUpAmount;
+
+    // Update individual user type minimums
+    if (walletSettings.minimumTopUpAmounts) {
+      settings.minimumTopUpAmounts = {
+        agent:
+          walletSettings.minimumTopUpAmounts.agent ||
+          settings.minimumTopUpAmounts?.agent ||
+          10.0,
+        super_agent:
+          walletSettings.minimumTopUpAmounts.super_agent ||
+          settings.minimumTopUpAmounts?.super_agent ||
+          50.0,
+        dealer:
+          walletSettings.minimumTopUpAmounts.dealer ||
+          settings.minimumTopUpAmounts?.dealer ||
+          100.0,
+        super_dealer:
+          walletSettings.minimumTopUpAmounts.super_dealer ||
+          settings.minimumTopUpAmounts?.super_dealer ||
+          200.0,
+        default:
+          walletSettings.minimumTopUpAmounts.default ||
+          settings.minimumTopUpAmounts?.default ||
+          10.0,
+      };
+    }
+
     await settings.save();
 
     logger.info("Wallet settings updated:", walletSettings);
-    return walletSettings;
+    return { minimumTopUpAmounts: settings.minimumTopUpAmounts };
   }
 }
 

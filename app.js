@@ -11,6 +11,7 @@ import { scheduleNotificationCleanup } from "./src/jobs/clearOldNotifications.js
 import commissionFinalizationJob from "./src/jobs/commissionFinalization.js";
 import { scheduleDailyCommissionGeneration } from "./src/jobs/dailyCommissionGeneration.js";
 import { initializeReportedOrdersCleanupJob } from "./src/jobs/reportedOrdersCleanup.js";
+import { initTestUserCleanupJob } from "./src/jobs/testUserCleanup.js";
 import authRoutes from "./src/routes/authRoutes.js";
 import orderRouter from "./src/routes/orderRoutes.js";
 import packageRoutes from "./src/routes/packageRoutes.js";
@@ -61,6 +62,9 @@ scheduleDailyCommissionGeneration();
 
 // Start reported orders cleanup job (24hr auto-mark + 10min resolved cleanup)
 initializeReportedOrdersCleanupJob();
+
+// Start test user cleanup job (auto-delete test data)
+initTestUserCleanupJob();
 
 // Security middleware
 app.use(helmet());
