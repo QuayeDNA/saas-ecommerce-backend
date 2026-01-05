@@ -21,7 +21,7 @@ async function cleanupCompletedTestOrders() {
 
     // Find all completed/received orders by test user
     const completedOrders = await Order.find({
-      user: TEST_USER_ID,
+      createdBy: TEST_USER_ID,
       status: { $in: ["completed", "received"] },
     });
 
@@ -98,7 +98,7 @@ async function cleanupDelayedTestOrders() {
 
     // Find completed orders older than 10 minutes
     const ordersToDelete = await Order.find({
-      user: TEST_USER_ID,
+      createdBy: TEST_USER_ID,
       status: { $in: ["completed", "received"] },
       updatedAt: { $lte: tenMinutesAgo },
     });
@@ -153,7 +153,7 @@ export async function cleanupAllTestUserData() {
     logger.info("Starting manual cleanup of all test user data...");
 
     // Delete all orders
-    const orderResult = await Order.deleteMany({ user: TEST_USER_ID });
+    const orderResult = await Order.deleteMany({ createdBy: TEST_USER_ID });
     logger.info(`Deleted ${orderResult.deletedCount} test orders`);
 
     // Delete all transactions
