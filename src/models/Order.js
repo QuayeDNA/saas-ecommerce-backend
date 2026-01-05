@@ -79,6 +79,11 @@ const orderSchema = new mongoose.Schema(
       enum: ["single", "bulk", "regular"],
       required: true,
     },
+    // Version field for optimistic locking (prevents concurrent modification)
+    __v: {
+      type: Number,
+      select: false, // Don't include in queries by default
+    },
 
     // Customer information
     customer: {
@@ -138,7 +143,7 @@ const orderSchema = new mongoose.Schema(
     receptionStatus: {
       type: String,
       enum: ["not_received", "received", "checking", "resolved"],
-      default: "not_received",
+      default: "received", // Assume received unless user reports otherwise
     },
 
     // Track if order has been reported for data delivery issues
@@ -261,16 +266,6 @@ orderSchema.pre("save", async function (next) {
 
   // Calculate final total
   this.total = this.subtotal + this.tax - this.discount;
-
-  // Auto-set reception status to 'received' when order is completed
-  // But don't override if the order has been reported for data delivery issues
-  if (
-    this.status === "completed" &&
-    this.receptionStatus === "not_received" &&
-    !this.reported
-  ) {
-    this.receptionStatus = "received";
-  }
 
   next();
 });

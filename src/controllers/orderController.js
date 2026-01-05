@@ -5,6 +5,7 @@ import logger from "../utils/logger.js";
 import { orderValidation } from "../validators/orderValidator.js";
 import User from "../models/User.js"; // Added import for User
 import notificationService from "../services/notificationService.js"; // Added import for notificationService
+import walletService from "../services/walletService.js"; // Added import for walletService
 
 class OrderController {
   /**
@@ -431,6 +432,32 @@ class OrderController {
     }
   }
 
+  // Process single draft order
+  async processSingleDraftOrder(req, res) {
+    try {
+      const { tenantId, userId } = req.user;
+      const { orderId } = req.params;
+
+      const result = await orderService.processSingleDraftOrder(
+        orderId,
+        userId,
+        tenantId
+      );
+
+      res.json({
+        success: true,
+        message: result.message,
+        ...result,
+      });
+    } catch (error) {
+      logger.error(`Process single draft order failed: ${error.message}`);
+      res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+  }
+
   // Update order status manually
   async updateOrderStatus(req, res) {
     try {
@@ -460,28 +487,90 @@ class OrderController {
         });
       }
 
-      // No wallet checks needed - wallet was already checked and deducted when order was created
+      // Prepare update data
+      const updateData = {
+        status: status,
+        processedBy: userId,
+      };
 
-      // Update order status
-      order.status = status;
       if (notes) {
-        order.processingNotes = notes;
+        updateData.processingNotes = notes;
       }
-      order.processedBy = userId;
 
       // Set processing timestamps
       if (status === "processing" && !order.processingStartedAt) {
-        order.processingStartedAt = new Date();
+        updateData.processingStartedAt = new Date();
       } else if (status === "completed" && !order.processingCompletedAt) {
-        order.processingCompletedAt = new Date();
+        updateData.processingCompletedAt = new Date();
       }
 
-      await order.save();
+      // Update the order
+      const updatedOrder = await Order.findByIdAndUpdate(
+        order._id,
+        updateData,
+        { new: true }
+      );
+
+      // REFUND WALLET IF ORDER MARKED AS FAILED (wallet was already deducted at creation)
+      if (status === "failed" && updatedOrder.paymentStatus === "paid") {
+        try {
+          logger.info(
+            `Order ${updatedOrder.orderNumber} marked as failed, initiating refund`
+          );
+
+          // Calculate total for refund
+          const orderTotal = updatedOrder.items.reduce(
+            (sum, item) => sum + item.totalPrice,
+            0
+          );
+
+          // Refund wallet
+          await walletService.creditWallet(
+            updatedOrder.createdBy.toString(),
+            orderTotal,
+            `Refund for failed order ${updatedOrder.orderNumber}`,
+            updatedOrder._id,
+            { orderType: updatedOrder.orderType, reason: "order_failed" }
+          );
+
+          // Update payment status
+          await Order.findByIdAndUpdate(updatedOrder._id, {
+            paymentStatus: "refunded",
+          });
+
+          logger.info(
+            `✅ Refunded GH₵${orderTotal.toFixed(2)} for failed order ${
+              updatedOrder.orderNumber
+            }`
+          );
+
+          // Notify user about refund
+          await notificationService.createInAppNotification(
+            updatedOrder.createdBy.toString(),
+            "Order Failed - Wallet Refunded",
+            `Order ${updatedOrder.orderNumber} failed. GH₵${orderTotal.toFixed(
+              2
+            )} has been refunded to your wallet.`,
+            "info",
+            {
+              orderId: updatedOrder._id.toString(),
+              orderNumber: updatedOrder.orderNumber,
+              refundAmount: orderTotal,
+              type: "order_refunded",
+            }
+          );
+        } catch (refundError) {
+          logger.error(
+            `❌ Refund error for order ${updatedOrder.orderNumber}: ${refundError.message}`
+          );
+          // Don't fail the status update if refund fails
+        }
+      }
 
       res.json({
         success: true,
         message: "Order status updated successfully",
-        order,
+        order: updatedOrder,
       });
     } catch (error) {
       logger.error(`Update order status failed: ${error.message}`);

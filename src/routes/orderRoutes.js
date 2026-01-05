@@ -125,6 +125,14 @@ router.post(
   orderController.processDraftOrders
 );
 
+// Process single draft order
+router.post(
+  "/process-draft/:orderId",
+  authenticate,
+  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
+  orderController.processSingleDraftOrder
+);
+
 // Update reception status - RESTRICTED TO SUPER ADMIN ONLY
 router.patch(
   "/:id/reception-status",

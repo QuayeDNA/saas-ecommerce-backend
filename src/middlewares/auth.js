@@ -58,9 +58,10 @@ export const authenticate = async (req, res, next) => {
 
     req.user = userObject;
 
-    logger.debug(
-      `Authenticated user: ${user.email}, tenantId: ${userObject.tenantId}`
-    );
+    // Removed excessive debug logging
+    // logger.debug(
+    //   `Authenticated user: ${user.email}, tenantId: ${userObject.tenantId}`
+    // );
     next();
   } catch (err) {
     if (err.name === "TokenExpiredError") {
@@ -82,11 +83,12 @@ export const authenticate = async (req, res, next) => {
 
 export const authorize = (...roles) => {
   return (req, res, next) => {
-    logger.debug(
-      `Authorization check - User:`,
-      req.user,
-      `Required roles: [${roles.join(", ")}]`
-    );
+    // Removed excessive debug logging
+    // logger.debug(
+    //   `Authorization check - User:`,
+    //   req.user,
+    //   `Required roles: [${roles.join(", ")}]`
+    // );
     if (!roles.includes(req.user.userType)) {
       logger.warn(
         `Unauthorized access attempt by ${req.user.email} (userType: "${req.user.userType}") to ${req.originalUrl}`
@@ -105,9 +107,10 @@ export const authorize = (...roles) => {
 // Authorization middleware for business users (agent, super_agent, dealer, super_dealer)
 // Also allows super_admin for administrative access to agent commissions
 export const authorizeBusinessUser = (req, res, next) => {
-  logger.debug(
-    `Business user authorization check - User: ${req.user.email} (${req.user.userType})`
-  );
+  // Removed excessive debug logging
+  // logger.debug(
+  //   `Business user authorization check - User: ${req.user.email} (${req.user.userType})`
+  // );
   if (
     !isBusinessUser(req.user.userType) &&
     req.user.userType !== "super_admin"
@@ -126,9 +129,10 @@ export const authorizeBusinessUser = (req, res, next) => {
 
 // Authorization middleware for wallet-enabled users
 export const authorizeWalletUser = (req, res, next) => {
-  logger.debug(
-    `Wallet user authorization check - User: ${req.user.email} (${req.user.userType})`
-  );
+  // Removed excessive debug logging
+  // logger.debug(
+  //   `Wallet user authorization check - User: ${req.user.email} (${req.user.userType})`
+  // );
   if (!canHaveWallet(req.user.userType)) {
     logger.warn(
       `Unauthorized wallet access attempt by ${req.user.email} (userType: "${req.user.userType}") to ${req.originalUrl}`
@@ -144,9 +148,10 @@ export const authorizeWalletUser = (req, res, next) => {
 
 // Authorization middleware for tenant users (can manage others)
 export const authorizeTenantUser = (req, res, next) => {
-  logger.debug(
-    `Tenant user authorization check - User: ${req.user.email} (${req.user.userType})`
-  );
+  // Removed excessive debug logging
+  // logger.debug(
+  //   `Tenant user authorization check - User: ${req.user.email} (${req.user.userType})`
+  // );
   if (!isTenantUser(req.user.userType)) {
     logger.warn(
       `Unauthorized tenant access attempt by ${req.user.email} (userType: "${req.user.userType}") to ${req.originalUrl}`
@@ -162,9 +167,10 @@ export const authorizeTenantUser = (req, res, next) => {
 
 // Authorization middleware for admin users
 export const authorizeAdmin = (req, res, next) => {
-  logger.debug(
-    `Admin authorization check - User: ${req.user.email} (${req.user.userType})`
-  );
+  // Removed excessive debug logging
+  // logger.debug(
+  //   `Admin authorization check - User: ${req.user.email} (${req.user.userType})`
+  // );
   if (!isAdminUser(req.user.userType)) {
     logger.warn(
       `Unauthorized admin access attempt by ${req.user.email} (userType: "${req.user.userType}") to ${req.originalUrl}`

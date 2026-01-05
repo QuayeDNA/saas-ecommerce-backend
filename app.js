@@ -4,7 +4,6 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import connectDB from "./src/config/db.js";
-import redisClient from "./src/config/redis.js";
 import logger from "./src/utils/logger.js";
 import websocketService from "./src/services/websocketService.js";
 import { scheduleNotificationCleanup } from "./src/jobs/clearOldNotifications.js";
@@ -33,21 +32,6 @@ const PORT = process.env.PORT || 5050;
 
 // Database connection
 connectDB();
-
-// Redis connection
-const initializeRedis = async () => {
-  try {
-    await redisClient.connect();
-    logger.info("Redis initialized successfully");
-  } catch (error) {
-    logger.error("Failed to initialize Redis:", error);
-    // Don't exit the process, just log the error
-    // The app can still function without Redis (graceful degradation)
-  }
-};
-
-// Initialize Redis
-initializeRedis();
 
 // Start notification cleanup job
 scheduleNotificationCleanup();

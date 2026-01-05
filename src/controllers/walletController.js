@@ -13,12 +13,10 @@ class WalletController {
   async getWalletInfo(req, res) {
     try {
       const userId = req.user.userId;
-      logger.debug(`[getWalletInfo] userId: ${userId}`);
+      // Removed excessive debug logging
       // Get user with wallet balance
       const user = await User.findById(userId).select("walletBalance");
-      logger.debug(`[getWalletInfo] user: ${JSON.stringify(user)}`);
       if (!user) {
-        logger.debug(`[getWalletInfo] User not found for id: ${userId}`);
         return res.status(404).json({
           success: false,
           message: "User not found",
@@ -32,10 +30,6 @@ class WalletController {
         let basicTransactions = await WalletTransaction.find({ user: userId })
           .sort({ createdAt: -1 })
           .limit(10);
-
-        logger.debug(
-          `[getWalletInfo] Basic recent transactions found: ${basicTransactions.length}`
-        );
 
         // Now try to populate each transaction individually to handle any population errors
         recentTransactions = [];
@@ -55,13 +49,7 @@ class WalletController {
           }
         }
 
-        logger.debug(
-          `[getWalletInfo] Final recent transactions count: ${recentTransactions.length}`
-        );
         if (!Array.isArray(recentTransactions)) {
-          logger.debug(
-            `[getWalletInfo] recentTransactions is not an array, setting to []`
-          );
           recentTransactions = [];
         }
       } catch (txError) {
@@ -72,11 +60,6 @@ class WalletController {
         recentTransactions = [];
       }
 
-      logger.debug(
-        `[getWalletInfo] Sending response: balance=${
-          user.walletBalance || 0
-        }, recentTransactions.length=${recentTransactions.length}`
-      );
       res.json({
         success: true,
         wallet: {

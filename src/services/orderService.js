@@ -256,53 +256,39 @@ class OrderService {
       // Determine order status based on wallet balance and user type
       let orderStatus = "pending"; // Default to pending for agents
       let paymentStatus = "pending";
-      let walletDeducted = false;
 
       if (user.walletBalance >= orderTotal) {
-        // Sufficient balance - deduct wallet
-        if (session) {
-          const newBalance = user.walletBalance - orderTotal;
+        // Sufficient balance - DEDUCT WALLET IMMEDIATELY
+        await walletService.debitWallet(
+          userId.toString(),
+          orderTotal,
+          `Payment for order (${customerPhone})`,
+          null, // orderId will be added after order creation
+          { orderType: "single" }
+        );
 
-          // Use atomic update to avoid tenantId validation issues
-          await User.findByIdAndUpdate(
-            userId,
-            { $inc: { walletBalance: -orderTotal } },
-            { session, new: false }
-          );
-
-          // Update local user object for consistency
-          user.walletBalance = newBalance;
-
-          // Record wallet transaction
-          const transaction = new WalletTransaction({
-            user: userId,
-            type: "debit",
-            amount: orderTotal,
-            balanceAfter: newBalance,
-            description: `Payment for order - ${bundle.name} for ${customerPhone}`,
-            metadata: { orderType: "single" },
-          });
-          await transaction.save({ session });
-        } else {
-          await walletService.debitWallet(
-            userId.toString(),
-            orderTotal,
-            `Payment for order - ${bundle.name} for ${customerPhone}`,
-            null,
-            { orderType: "single" }
-          );
-        }
-        walletDeducted = true;
+        // Mark as paid immediately
         paymentStatus = "paid";
 
         // Only set status to confirmed for super admins, agents stay pending
         if (user.userType === "super_admin") {
           orderStatus = "confirmed";
         }
+
+        logger.info(
+          `Wallet deducted GH₵${orderTotal.toFixed(
+            2
+          )} for new order (${customerPhone})`
+        );
       } else {
         // Insufficient balance - create as draft
         orderStatus = "draft";
         paymentStatus = "pending";
+        logger.info(
+          `Order created as draft - insufficient balance. Required: GH₵${orderTotal.toFixed(
+            2
+          )}, Available: GH₵${user.walletBalance.toFixed(2)}`
+        );
       }
 
       // Create order
@@ -343,58 +329,15 @@ class OrderService {
       try {
         await saveOrderWithRetry(order, session);
       } catch (error) {
-        // If order creation fails and wallet was deducted, refund the amount
-        if (walletDeducted) {
-          try {
-            if (session) {
-              const newBalance = user.walletBalance + orderTotal;
-
-              // Use atomic update to avoid tenantId validation issues
-              await User.findByIdAndUpdate(
-                userId,
-                { $inc: { walletBalance: orderTotal } },
-                { session, new: false }
-              );
-
-              // Update local user object for consistency
-              user.walletBalance = newBalance;
-
-              // Record refund transaction
-              const refundTransaction = new WalletTransaction({
-                user: userId,
-                type: "credit",
-                amount: orderTotal,
-                balanceAfter: newBalance,
-                description: `Refund for failed order creation - ${bundle.name} for ${customerPhone}`,
-                metadata: { orderType: "single", refund: true },
-              });
-              await refundTransaction.save({ session });
-            } else {
-              await walletService.creditWallet(
-                userId.toString(),
-                orderTotal,
-                `Refund for failed order creation - ${bundle.name} for ${customerPhone}`,
-                null,
-                { orderType: "single", refund: true }
-              );
-            }
-            logger.info(
-              `Refunded GH₵${orderTotal.toFixed(2)} for failed order creation`
-            );
-          } catch (refundError) {
-            logger.error(
-              `Failed to refund wallet for failed order creation: ${refundError.message}`
-            );
-          }
-        }
         throw error;
       }
 
-      const statusMessage = walletDeducted
-        ? `Order created successfully: ${order.orderNumber}`
-        : `Order created as draft due to insufficient wallet balance. Required: GH₵${orderTotal.toFixed(
-            2
-          )}, Available: GH₵${user.walletBalance.toFixed(2)}`;
+      const statusMessage =
+        orderStatus === "draft"
+          ? `Order created as draft due to insufficient wallet balance. Required: GH₵${orderTotal.toFixed(
+              2
+            )}, Available: GH₵${user.walletBalance.toFixed(2)}`
+          : `Order created successfully: ${order.orderNumber}`;
 
       logger.info(statusMessage);
 
@@ -402,14 +345,13 @@ class OrderService {
         order: order.toObject(),
         user: user.toObject(),
         orderTotal,
-        walletDeducted,
         paymentStatus,
       };
     });
 
     // Send notifications outside the transaction to avoid commit/abort issues
     try {
-      const { order, user, orderTotal, walletDeducted, paymentStatus } = result;
+      const { order, user, orderTotal, paymentStatus } = result;
 
       // Notify super admins about new order
       const superAdmins = await User.find(
@@ -439,12 +381,12 @@ class OrderService {
       await notificationService.createInAppNotification(
         userId.toString(),
         "Order Created Successfully",
-        `Your order ${order.orderNumber} has been created. ${
-          walletDeducted
-            ? "Payment processed from wallet."
-            : "Payment pending - insufficient wallet balance."
-        }`,
-        walletDeducted ? "success" : "warning",
+        `Your order ${order.orderNumber} has been created${
+          paymentStatus === "paid" ? " and paid" : " as draft"
+        }. GH₵${orderTotal.toFixed(2)} ${
+          paymentStatus === "paid" ? "deducted from wallet" : "required"
+        }.`,
+        "info",
         {
           orderId: order._id.toString(),
           orderNumber: order.orderNumber,
@@ -597,44 +539,35 @@ class OrderService {
       }
 
       // Determine if we can process all orders or need to create as drafts
+      // NO wallet deduction here - only check balance sufficiency
       let canProcessAll = user.walletBalance >= totalOrderAmount;
-      let walletDeducted = false;
 
+      if (!canProcessAll) {
+        // Log insufficient balance for bulk order
+        logger.info(
+          `Insufficient balance for bulk order. Required: GH₵${totalOrderAmount.toFixed(
+            2
+          )}, Available: GH₵${user.walletBalance.toFixed(
+            2
+          )}. Creating as drafts.`
+        );
+      }
+
+      // DEDUCT WALLET IMMEDIATELY for bulk orders with sufficient balance
       if (canProcessAll) {
-        // Deduct wallet for all orders
-        if (session) {
-          const newBalance = user.walletBalance - totalOrderAmount;
+        await walletService.debitWallet(
+          userId.toString(),
+          totalOrderAmount,
+          `Bulk order payment for ${orderItems.length} items`,
+          null, // orderId will be added after orders are created
+          { orderType: "bulk", itemCount: orderItems.length }
+        );
 
-          // Use atomic update to avoid tenantId validation issues
-          await User.findByIdAndUpdate(
-            userId,
-            { $inc: { walletBalance: -totalOrderAmount } },
-            { session, new: false }
-          );
-
-          // Update local user object for consistency
-          user.walletBalance = newBalance;
-
-          // Record wallet transaction
-          const transaction = new WalletTransaction({
-            user: userId,
-            type: "debit",
-            amount: totalOrderAmount,
-            balanceAfter: user.walletBalance,
-            description: `Bulk order payment for ${orderItems.length} items`,
-            metadata: { orderType: "bulk", itemCount: orderItems.length },
-          });
-          await transaction.save({ session });
-        } else {
-          await walletService.debitWallet(
-            userId.toString(),
-            totalOrderAmount,
-            `Bulk order payment for ${orderItems.length} items`,
-            null,
-            { orderType: "bulk", itemCount: orderItems.length }
-          );
-        }
-        walletDeducted = true;
+        logger.info(
+          `Wallet deducted GH₵${totalOrderAmount.toFixed(2)} for bulk order (${
+            orderItems.length
+          } items)`
+        );
       }
 
       // Second pass: create orders
@@ -646,17 +579,22 @@ class OrderService {
           // Get user-specific price for this bundle
           const userPrice = getPriceForUserType(bundle, user.userType);
 
-          // Determine order status based on user type and wallet balance
+          // Determine order status and payment status based on wallet balance
           let orderStatus = "pending"; // Default to pending for agents
-          const paymentStatus = canProcessAll ? "paid" : "pending";
+          let paymentStatus = "pending"; // Default to pending
 
           if (canProcessAll) {
+            // Wallet was deducted - mark as paid
+            paymentStatus = "paid";
+
             // Only set status to confirmed for super admins, agents stay pending
             if (user.userType === "super_admin") {
               orderStatus = "confirmed";
             }
           } else {
+            // Insufficient balance - create as draft
             orderStatus = "draft";
+            paymentStatus = "pending";
           }
 
           const order = new Order({
@@ -700,8 +638,8 @@ class OrderService {
         }
       }
 
-      const statusMessage = walletDeducted
-        ? `Bulk order created successfully: ${createdOrders.length} orders`
+      const statusMessage = canProcessAll
+        ? `Bulk order created successfully: ${createdOrders.length} orders (pending payment at completion)`
         : `Bulk order created as drafts due to insufficient wallet balance. Required: GH₵${totalOrderAmount.toFixed(
             2
           )}, Available: GH₵${user.walletBalance.toFixed(2)}`;
@@ -714,7 +652,6 @@ class OrderService {
         failedRecords: errors,
         orders: createdOrders.map((o) => o._id),
         totalAmount: totalOrderAmount,
-        walletDeducted,
         user: user.toObject(), // Pass user data for notifications
         orderCount: createdOrders.length,
       };
@@ -722,7 +659,7 @@ class OrderService {
 
     // Send notifications outside the transaction to avoid commit/abort issues
     try {
-      const { user, orderCount, totalAmount, walletDeducted } = result;
+      const { user, orderCount, totalAmount } = result;
 
       // Notify super admins about bulk order
       const superAdmins = await User.find(
@@ -751,16 +688,13 @@ class OrderService {
       await notificationService.createInAppNotification(
         userId.toString(),
         "Bulk Order Created Successfully",
-        `Your bulk order with ${orderCount} items has been created. ${
-          walletDeducted
-            ? "Payment processed from wallet."
-            : "Payment pending - insufficient wallet balance."
-        }`,
-        walletDeducted ? "success" : "warning",
+        `Your bulk order with ${orderCount} items has been created and paid. GH₵${totalAmount.toFixed(
+          2
+        )} deducted from wallet. Automatic refund for any failed orders.`,
+        "info",
         {
           orderCount: orderCount,
           totalAmount: totalAmount,
-          paymentStatus: walletDeducted ? "paid" : "pending",
           type: "bulk_order_created",
           navigationLink: this.getNavigationLink(user.userType, "orders"),
         }
@@ -777,7 +711,6 @@ class OrderService {
       failedRecords: result.failedRecords,
       orders: result.orders,
       totalAmount: result.totalAmount,
-      walletDeducted: result.walletDeducted,
     };
   }
 
@@ -975,8 +908,6 @@ class OrderService {
       let processedSuccessfully = false;
       try {
         await this.processMobileBundle(item);
-        // Mark as completed - wallet was already checked and deducted when order was created
-        item.paymentStatus = "Done";
         item.processingStatus = "completed";
         item.processedAt = new Date();
         processedSuccessfully = true;
@@ -991,6 +922,89 @@ class OrderService {
         await order.save({ session });
       } else {
         await order.save();
+      }
+
+      logger.info(
+        `Order ${order.orderNumber} status after updateStatus: ${order.status}, processedSuccessfully: ${processedSuccessfully}`
+      );
+
+      // REFUND WALLET IF ORDER FAILED
+      if (!processedSuccessfully && order.paymentStatus === "paid") {
+        try {
+          logger.info(`Order ${order.orderNumber} failed, initiating refund`);
+          // Get fresh user data
+          const orderCreator = session
+            ? await User.findById(order.createdBy).session(session)
+            : await User.findById(order.createdBy);
+
+          if (!orderCreator) {
+            throw new Error("Order creator not found for refund");
+          }
+
+          // Calculate total for this order
+          const orderTotal = order.items.reduce(
+            (sum, item) => sum + item.totalPrice,
+            0
+          );
+
+          logger.info(
+            `Refunding GH₵${orderTotal.toFixed(2)} for failed order ${
+              order.orderNumber
+            }`
+          );
+
+          // Refund wallet using walletService
+          await walletService.creditWallet(
+            order.createdBy.toString(),
+            orderTotal,
+            `Refund for failed order ${order.orderNumber}`,
+            order._id,
+            { orderType: order.orderType, refundReason: "order_failed" }
+          );
+
+          // Mark payment as refunded
+          order.paymentStatus = "refunded";
+          order.items.forEach((orderItem) => {
+            orderItem.paymentStatus = "Refunded";
+          });
+          if (session) {
+            await order.save({ session });
+          } else {
+            await order.save();
+          }
+
+          logger.info(
+            `✅ Refunded GH₵${orderTotal.toFixed(2)} for failed order ${
+              order.orderNumber
+            }`
+          );
+
+          // Notify user about refund
+          await notificationService.createInAppNotification(
+            order.createdBy.toString(),
+            "Order Refunded",
+            `Order ${order.orderNumber} failed and GH₵${orderTotal.toFixed(
+              2
+            )} has been refunded to your wallet.`,
+            "info",
+            {
+              orderId: order._id.toString(),
+              orderNumber: order.orderNumber,
+              refundAmount: orderTotal,
+              type: "order_refund",
+              navigationLink: this.getNavigationLink(
+                orderCreator.userType,
+                "wallet"
+              ),
+            }
+          );
+        } catch (refundError) {
+          logger.error(
+            `❌ Refund error for order ${order.orderNumber}: ${refundError.message}`
+          );
+          logger.error(`Stack: ${refundError.stack}`);
+          // Don't throw - we want to continue with the order processing notification
+        }
       }
 
       // Update commission in real-time if order is completed and created by a business user
@@ -1408,47 +1422,21 @@ class OrderService {
         );
       }
 
-      // Process all draft orders
+      // Process all draft orders - DEDUCT WALLET IMMEDIATELY
       let processedCount = 0;
       for (const { order, orderTotal } of processableOrders) {
         // Deduct wallet for this order
-        if (session) {
-          const newBalance = user.walletBalance - orderTotal;
+        await walletService.debitWallet(
+          userId.toString(),
+          orderTotal,
+          `Payment for order ${order.orderNumber}`,
+          order._id,
+          { orderType: order.orderType }
+        );
 
-          // Use atomic update to avoid tenantId validation issues
-          await User.findByIdAndUpdate(
-            userId,
-            { $inc: { walletBalance: -orderTotal } },
-            { session, new: false }
-          );
-
-          // Update local user object for consistency
-          user.walletBalance = newBalance;
-
-          // Record wallet transaction
-          const transaction = new WalletTransaction({
-            user: userId,
-            type: "debit",
-            amount: orderTotal,
-            balanceAfter: newBalance,
-            description: `Payment for draft order ${order.orderNumber}`,
-            relatedOrder: order._id,
-            metadata: { orderType: "draft_processing" },
-          });
-          await transaction.save({ session });
-        } else {
-          await walletService.debitWallet(
-            userId.toString(),
-            orderTotal,
-            `Payment for draft order ${order.orderNumber}`,
-            order._id,
-            { orderType: "draft_processing" }
-          );
-        }
-
-        // Update order status
-        order.status = "pending"; // Changed from 'confirmed' to 'pending' for agents
-        order.paymentStatus = "paid";
+        // Update order status to pending (ready for processing)
+        order.status = "pending"; // Move from draft to pending
+        order.paymentStatus = "paid"; // Paid immediately
 
         if (session) {
           await order.save({ session });
@@ -1479,9 +1467,9 @@ class OrderService {
         await notificationService.createInAppNotification(
           userId.toString(),
           "Draft Orders Processed",
-          `Successfully processed ${processed} draft orders. Total amount: GH₵${totalAmount.toFixed(
+          `Successfully processed ${processed} draft orders. Total GH₵${totalAmount.toFixed(
             2
-          )}`,
+          )} deducted from wallet.`,
           "success",
           {
             processedCount: processed,
@@ -1529,6 +1517,115 @@ class OrderService {
     };
   }
 
+  // Process single draft order
+  async processSingleDraftOrder(orderId, userId, tenantId) {
+    // Execute the main transaction
+    const result = await this.executeWithTransaction(async (session) => {
+      // Find the specific draft order
+      const query = {
+        _id: orderId,
+        createdBy: userId,
+        tenantId,
+        status: "draft",
+      };
+
+      const order = session
+        ? await Order.findOne(query).session(session)
+        : await Order.findOne(query);
+
+      if (!order) {
+        throw new Error("Draft order not found or already processed");
+      }
+
+      // Get user's current wallet balance
+      const user = session
+        ? await User.findById(userId).session(session)
+        : await User.findById(userId);
+
+      if (!user) {
+        throw new Error("User not found");
+      }
+
+      // Calculate total required for this order
+      const orderTotal = order.items.reduce(
+        (sum, item) => sum + item.totalPrice,
+        0
+      );
+
+      // Check if user has sufficient balance
+      if (user.walletBalance < orderTotal) {
+        throw new Error(
+          `Insufficient wallet balance to process this order. Required: GH₵${orderTotal.toFixed(
+            2
+          )}, Available: GH₵${user.walletBalance.toFixed(2)}`
+        );
+      }
+
+      // Deduct wallet immediately
+      await walletService.debitWallet(
+        userId.toString(),
+        orderTotal,
+        `Payment for order ${order.orderNumber}`,
+        order._id,
+        { orderType: order.orderType }
+      );
+
+      // Move order from draft to pending
+      order.status = "pending";
+      order.paymentStatus = "paid";
+
+      if (session) {
+        await order.save({ session });
+      } else {
+        await order.save();
+      }
+
+      logger.info(
+        `Processed single draft order ${order.orderNumber} for user ${userId}`
+      );
+
+      return {
+        processed: 1,
+        message: `Successfully processed draft order ${order.orderNumber}`,
+        totalAmount: orderTotal,
+        order: order.toObject(),
+        user: user.toObject(),
+      };
+    });
+
+    // Send notifications outside the transaction
+    try {
+      const { order, totalAmount, user } = result;
+
+      await notificationService.createInAppNotification(
+        userId.toString(),
+        "Draft Order Processed",
+        `Draft order ${
+          order.orderNumber
+        } moved to pending. GH₵${totalAmount.toFixed(2)} deducted from wallet.`,
+        "success",
+        {
+          orderId: order._id.toString(),
+          orderNumber: order.orderNumber,
+          totalAmount: totalAmount,
+          type: "draft_order_processed",
+          navigationLink: this.getNavigationLink(user.userType, "orders"),
+        }
+      );
+    } catch (error) {
+      logger.error(
+        `Failed to send draft order processing notification: ${error.message}`
+      );
+    }
+
+    return {
+      processed: result.processed,
+      message: result.message,
+      totalAmount: result.totalAmount,
+      order: result.order,
+    };
+  }
+
   // Cancel order
   async cancelOrder(orderId, tenantId, userId, reason) {
     // Execute the main transaction
@@ -1569,7 +1666,7 @@ class OrderService {
         };
       }
 
-      // Handle wallet refund for paid orders
+      // REFUND WALLET for cancelled orders (if payment was made)
       let refundAmount = 0;
       let refundTransaction = null;
 
@@ -1579,7 +1676,24 @@ class OrderService {
         order.total > 0
       ) {
         try {
-          // Get the order creator
+          refundAmount = order.total;
+
+          // Refund using wallet service
+          await walletService.creditWallet(
+            order.createdBy.toString(),
+            refundAmount,
+            `Refund for cancelled order ${order.orderNumber}`,
+            order._id,
+            { orderType: order.orderType, reason: "order_cancelled" }
+          );
+
+          logger.info(
+            `✅ Refunded GH₵${refundAmount.toFixed(2)} for cancelled order ${
+              order.orderNumber
+            }`
+          );
+
+          // Get the order creator for notification
           const orderCreator = await User.findById(order.createdBy);
           if (!orderCreator) {
             throw new Error("Order creator not found");
