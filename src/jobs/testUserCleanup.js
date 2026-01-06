@@ -3,6 +3,7 @@ import cron from "node-cron";
 import Order from "../models/Order.js";
 import WalletTransaction from "../models/WalletTransaction.js";
 import CommissionRecord from "../models/CommissionRecord.js";
+import Notification from "../models/Notification.js";
 import logger from "../utils/logger.js";
 
 // Test user ID
@@ -37,6 +38,7 @@ async function cleanupCompletedTestOrders() {
     let deletedOrders = 0;
     let deletedTransactions = 0;
     let deletedCommissions = 0;
+    let deletedNotifications = 0;
 
     for (const order of completedOrders) {
       try {
@@ -67,6 +69,16 @@ async function cleanupCompletedTestOrders() {
         });
         deletedCommissions += commissionResult.deletedCount || 0;
 
+        // Delete related notifications
+        const notificationResult = await Notification.deleteMany({
+          user: TEST_USER_ID,
+          createdAt: {
+            $gte: order.createdAt,
+            $lte: order.updatedAt || new Date(),
+          },
+        });
+        deletedNotifications += notificationResult.deletedCount || 0;
+
         // Delete the order itself
         await Order.findByIdAndDelete(orderId);
         deletedOrders++;
@@ -81,7 +93,7 @@ async function cleanupCompletedTestOrders() {
     }
 
     logger.info(
-      `Test user cleanup completed: ${deletedOrders} orders, ${deletedTransactions} transactions, ${deletedCommissions} commissions deleted`
+      `Test user cleanup completed: ${deletedOrders} orders, ${deletedTransactions} transactions, ${deletedCommissions} commissions, ${deletedNotifications} notifications deleted`
     );
   } catch (error) {
     logger.error("Error in test user cleanup job:", error);
