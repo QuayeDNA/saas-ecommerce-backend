@@ -6,6 +6,7 @@ import { orderValidation } from "../validators/orderValidator.js";
 import User from "../models/User.js"; // Added import for User
 import notificationService from "../services/notificationService.js"; // Added import for notificationService
 import walletService from "../services/walletService.js"; // Added import for walletService
+import websocketService from "../services/websocketService.js"; // Added import for WebSocket
 
 class OrderController {
   /**
@@ -565,6 +566,31 @@ class OrderController {
           );
           // Don't fail the status update if refund fails
         }
+      }
+
+      // Broadcast order status update via WebSocket
+      try {
+        const superAdmins = await User.find({ userType: "super_admin" });
+        const superAdminIds = superAdmins.map((admin) => admin._id.toString());
+
+        websocketService.broadcastOrderStatusUpdate(
+          {
+            orderId: updatedOrder._id.toString(),
+            orderNumber: updatedOrder.orderNumber,
+            status: updatedOrder.status,
+            paymentStatus: updatedOrder.paymentStatus,
+            processingNotes: updatedOrder.processingNotes,
+            processedBy: updatedOrder.processedBy,
+            items: updatedOrder.items,
+          },
+          updatedOrder.createdBy.toString(),
+          superAdminIds
+        );
+      } catch (wsError) {
+        logger.error(
+          `Failed to broadcast order status via WebSocket: ${wsError.message}`
+        );
+        // Don't fail the request if WebSocket fails
       }
 
       res.json({

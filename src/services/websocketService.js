@@ -355,6 +355,69 @@ class WebSocketService {
       `Announcement broadcast completed: ${successCount} successful, ${failCount} failed out of ${userIds.length} target users`
     );
   }
+
+  // Broadcast new order to all super admins
+  broadcastOrderCreatedToAdmins(orderData, superAdminIds) {
+    if (!Array.isArray(superAdminIds) || superAdminIds.length === 0) {
+      logger.warn("No super admin IDs provided for order broadcast");
+      return;
+    }
+
+    let successCount = 0;
+    superAdminIds.forEach((adminId) => {
+      const ws = this.clients.get(adminId.toString());
+      if (ws && ws.readyState === 1) {
+        try {
+          ws.send(
+            JSON.stringify({
+              type: "order_created",
+              data: orderData,
+            })
+          );
+          successCount++;
+        } catch (error) {
+          logger.error(
+            `Failed to send order creation to admin ${adminId}:`,
+            error
+          );
+        }
+      }
+    });
+
+    logger.info(
+      `Order creation broadcast to ${successCount} of ${superAdminIds.length} admins`
+    );
+  }
+
+  // Send order status update to user and all super admins
+  broadcastOrderStatusUpdate(orderData, userId, superAdminIds = []) {
+    // Send to order creator
+    this.sendOrderUpdateToUser(userId.toString(), orderData);
+
+    // Send to all super admins
+    superAdminIds.forEach((adminId) => {
+      const ws = this.clients.get(adminId.toString());
+      if (ws && ws.readyState === 1) {
+        try {
+          ws.send(
+            JSON.stringify({
+              type: "order_status_updated",
+              data: orderData,
+            })
+          );
+        } catch (error) {
+          logger.error(
+            `Failed to send order status update to admin ${adminId}:`,
+            error
+          );
+        }
+      }
+    });
+
+    logger.info(
+      `Order status update sent to user ${userId} and ${superAdminIds.length} admins`
+    );
+  }
 }
 
 export default new WebSocketService();

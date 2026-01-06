@@ -8,6 +8,7 @@ import notificationService from "./notificationService.js";
 import pushNotificationService from "./pushNotificationService.js";
 import duplicateOrderPreventionService from "./duplicateOrderPreventionService.js";
 import commissionService from "./commissionService.js";
+import websocketService from "./websocketService.js";
 import mongoose from "mongoose";
 import logger from "../utils/logger.js";
 import { parseBulkOrderRow } from "../utils/parseBulkOrderRow.js";
@@ -358,6 +359,9 @@ class OrderService {
         { userType: "super_admin" },
         "userType"
       );
+
+      const superAdminIds = superAdmins.map((admin) => admin._id.toString());
+
       for (const admin of superAdmins) {
         await notificationService.createInAppNotification(
           admin._id.toString(),
@@ -374,6 +378,29 @@ class OrderService {
             type: "new_order_created",
             navigationLink: this.getNavigationLink(admin.userType, "orders"),
           }
+        );
+      }
+
+      // Broadcast order creation to all super admins via WebSocket
+      if (superAdminIds.length > 0) {
+        websocketService.broadcastOrderCreatedToAdmins(
+          {
+            orderId: order._id.toString(),
+            orderNumber: order.orderNumber,
+            status: order.status,
+            paymentStatus: paymentStatus,
+            total: orderTotal,
+            orderType: order.orderType,
+            createdBy: {
+              id: user._id,
+              name: user.fullName || user.name,
+              email: user.email,
+              agentCode: user.agentCode,
+            },
+            items: order.items,
+            createdAt: order.createdAt,
+          },
+          superAdminIds
         );
       }
 
