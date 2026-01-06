@@ -1705,28 +1705,11 @@ class OrderService {
         try {
           refundAmount = order.total;
 
-          // Refund using wallet service
-          await walletService.creditWallet(
-            order.createdBy.toString(),
-            refundAmount,
-            `Refund for cancelled order ${order.orderNumber}`,
-            order._id,
-            { orderType: order.orderType, reason: "order_cancelled" }
-          );
-
-          logger.info(
-            `✅ Refunded GH₵${refundAmount.toFixed(2)} for cancelled order ${
-              order.orderNumber
-            }`
-          );
-
           // Get the order creator for notification
           const orderCreator = await User.findById(order.createdBy);
           if (!orderCreator) {
             throw new Error("Order creator not found");
           }
-
-          refundAmount = order.total;
 
           // Refund the amount to the user's wallet
           refundTransaction = await walletService.creditWallet(
@@ -1743,7 +1726,9 @@ class OrderService {
           );
 
           logger.info(
-            `Wallet refund processed for order ${order.orderNumber}: ${refundAmount} GH₵ refunded to user ${order.createdBy}`
+            `✅ Refunded GH₵${refundAmount.toFixed(2)} for cancelled order ${
+              order.orderNumber
+            } to user ${order.createdBy}`
           );
         } catch (refundError) {
           logger.error(
