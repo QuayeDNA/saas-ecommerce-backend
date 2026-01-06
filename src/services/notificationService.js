@@ -1,15 +1,17 @@
 // src/services/notificationService.js
-import axios from 'axios';
-import logger from '../utils/logger.js';
-import User from '../models/User.js';
-import Notification from '../models/Notification.js';
-import websocketService from './websocketService.js';
+import axios from "axios";
+import logger from "../utils/logger.js";
+import User from "../models/User.js";
+import Notification from "../models/Notification.js";
+import websocketService from "./websocketService.js";
 
 class NotificationService {
   constructor() {
     this.whatsappApiUrl = process.env.WHATSAPP_API_URL;
     this.whatsappToken = process.env.WHATSAPP_TOKEN;
     this.whatsappPhoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+    // Test user ID to exclude from notifications
+    this.TEST_USER_ID = "689bae9e81b90ad7c5ad66d4";
   }
 
   /**
@@ -20,18 +22,18 @@ class NotificationService {
    */
   getNavigationLink(userType, page) {
     const routes = {
-      'agent': {
-        'wallet': '/agent/dashboard/wallet',
-        'orders': '/agent/dashboard/orders'
+      agent: {
+        wallet: "/agent/dashboard/wallet",
+        orders: "/agent/dashboard/orders",
       },
-      'super_admin': {
-        'wallet': '/superadmin/wallet',
-        'orders': '/superadmin/orders'
+      super_admin: {
+        wallet: "/superadmin/wallet",
+        orders: "/superadmin/orders",
       },
-      'admin': {
-        'wallet': '/admin/wallet',
-        'orders': '/admin/orders'
-      }
+      admin: {
+        wallet: "/admin/wallet",
+        orders: "/admin/orders",
+      },
     };
 
     return routes[userType]?.[page] || `/${page}`;
@@ -45,21 +47,27 @@ class NotificationService {
    */
   async sendWhatsAppMessage(phoneNumber, message) {
     try {
-      if (!this.whatsappApiUrl || !this.whatsappToken || !this.whatsappPhoneNumberId) {
-        logger.warn('WhatsApp configuration missing. Skipping WhatsApp notification.');
+      if (
+        !this.whatsappApiUrl ||
+        !this.whatsappToken ||
+        !this.whatsappPhoneNumberId
+      ) {
+        logger.warn(
+          "WhatsApp configuration missing. Skipping WhatsApp notification."
+        );
         return false;
       }
 
       // Format phone number (remove + if present, ensure it starts with country code)
-      const formattedPhone = phoneNumber.replace(/^\+/, '');
+      const formattedPhone = phoneNumber.replace(/^\+/, "");
 
       const payload = {
-        messaging_product: 'whatsapp',
+        messaging_product: "whatsapp",
         to: formattedPhone,
-        type: 'text',
+        type: "text",
         text: {
-          body: message
-        }
+          body: message,
+        },
       };
 
       const response = await axios.post(
@@ -67,9 +75,9 @@ class NotificationService {
         payload,
         {
           headers: {
-            'Authorization': `Bearer ${this.whatsappToken}`,
-            'Content-Type': 'application/json'
-          }
+            Authorization: `Bearer ${this.whatsappToken}`,
+            "Content-Type": "application/json",
+          },
         }
       );
 
@@ -90,26 +98,38 @@ class NotificationService {
    * @param {object} metadata - Additional data
    * @returns {Promise<object>} Created notification
    */
-  async createInAppNotification(userId, title, message, type = 'info', metadata = {}) {
+  async createInAppNotification(
+    userId,
+    title,
+    message,
+    type = "info",
+    metadata = {}
+  ) {
     try {
+      // Skip notifications for test user
+      if (userId && userId.toString() === this.TEST_USER_ID) {
+        logger.debug(`Skipping notification for test user ${userId}`);
+        return null;
+      }
+
       const notification = new Notification({
         user: userId,
         title,
         message,
         type,
         metadata,
-        read: false
+        read: false,
       });
 
       await notification.save();
       logger.info(`In-app notification created for user ${userId}: ${title}`);
-      
+
       // Send real-time notification via WebSocket
       websocketService.sendNotificationToUser(userId, {
-        type: 'new_notification',
-        notification: notification
+        type: "new_notification",
+        notification: notification,
       });
-      
+
       return notification;
     } catch (error) {
       logger.error(`Failed to create in-app notification: ${error.message}`);
@@ -126,21 +146,27 @@ class NotificationService {
    */
   async sendWalletTopUpApprovalNotification(userId, amount, approvedBy) {
     try {
+      // Skip notifications for test user
+      if (userId && userId.toString() === this.TEST_USER_ID) {
+        logger.debug(`Skipping wallet notification for test user ${userId}`);
+        return;
+      }
+
       const user = await User.findById(userId);
       if (!user) {
         logger.error(`User not found for wallet notification: ${userId}`);
         return;
       }
 
-      const title = 'Wallet Top-Up Approved';
+      const title = "Wallet Top-Up Approved";
       const message = `Your wallet top-up request of GH₵${amount} has been approved and credited to your account.`;
-      
+
       // Create in-app notification
-      await this.createInAppNotification(userId, title, message, 'success', {
+      await this.createInAppNotification(userId, title, message, "success", {
         amount,
         approvedBy,
-        type: 'wallet_topup_approved',
-        navigationLink: this.getNavigationLink(user.userType, 'wallet')
+        type: "wallet_topup_approved",
+        navigationLink: this.getNavigationLink(user.userType, "wallet"),
       });
 
       // Send WhatsApp notification if phone number exists
@@ -151,7 +177,9 @@ class NotificationService {
 
       logger.info(`Wallet top-up approval notification sent to user ${userId}`);
     } catch (error) {
-      logger.error(`Failed to send wallet top-up approval notification: ${error.message}`);
+      logger.error(
+        `Failed to send wallet top-up approval notification: ${error.message}`
+      );
     }
   }
 
@@ -163,24 +191,39 @@ class NotificationService {
    * @param {string} rejectedBy - Admin who rejected
    * @returns {Promise<void>}
    */
-  async sendWalletTopUpRejectionNotification(userId, amount, reason, rejectedBy) {
+  async sendWalletTopUpRejectionNotification(
+    userId,
+    amount,
+    reason,
+    rejectedBy
+  ) {
     try {
-      const user = await User.findById(userId);
-      if (!user) {
-        logger.error(`User not found for wallet rejection notification: ${userId}`);
+      // Skip notifications for test user
+      if (userId && userId.toString() === this.TEST_USER_ID) {
+        logger.debug(
+          `Skipping wallet rejection notification for test user ${userId}`
+        );
         return;
       }
 
-      const title = 'Wallet Top-Up Rejected';
+      const user = await User.findById(userId);
+      if (!user) {
+        logger.error(
+          `User not found for wallet rejection notification: ${userId}`
+        );
+        return;
+      }
+
+      const title = "Wallet Top-Up Rejected";
       const message = `Your wallet top-up request of GH₵${amount} has been rejected. Reason: ${reason}`;
-      
+
       // Create in-app notification
-      await this.createInAppNotification(userId, title, message, 'error', {
+      await this.createInAppNotification(userId, title, message, "error", {
         amount,
         reason,
         rejectedBy,
-        type: 'wallet_topup_rejected',
-        navigationLink: this.getNavigationLink(user.userType, 'wallet')
+        type: "wallet_topup_rejected",
+        navigationLink: this.getNavigationLink(user.userType, "wallet"),
       });
 
       // Send WhatsApp notification if phone number exists
@@ -189,9 +232,13 @@ class NotificationService {
         await this.sendWhatsAppMessage(user.phone, whatsappMessage);
       }
 
-      logger.info(`Wallet top-up rejection notification sent to user ${userId}`);
+      logger.info(
+        `Wallet top-up rejection notification sent to user ${userId}`
+      );
     } catch (error) {
-      logger.error(`Failed to send wallet top-up rejection notification: ${error.message}`);
+      logger.error(
+        `Failed to send wallet top-up rejection notification: ${error.message}`
+      );
     }
   }
 
@@ -205,8 +252,21 @@ class NotificationService {
    * @param {object} orderDetails - Order details
    * @returns {Promise<void>}
    */
-  async sendOrderStatusNotification(userId, orderId, orderNumber, oldStatus, newStatus, orderDetails = {}) {
+  async sendOrderStatusNotification(
+    userId,
+    orderId,
+    orderNumber,
+    oldStatus,
+    newStatus,
+    orderDetails = {}
+  ) {
     try {
+      // Skip notifications for test user
+      if (userId && userId.toString() === this.TEST_USER_ID) {
+        logger.debug(`Skipping order notification for test user ${userId}`);
+        return;
+      }
+
       const user = await User.findById(userId);
       if (!user) {
         logger.error(`User not found for order notification: ${userId}`);
@@ -214,45 +274,66 @@ class NotificationService {
       }
 
       const statusMessages = {
-        'confirmed': 'Your order has been confirmed and is being processed.',
-        'processing': 'Your order is now being processed.',
-        'completed': 'Your order has been completed successfully!',
-        'failed': 'Your order processing failed. Please contact support.',
-        'cancelled': 'Your order has been cancelled.'
+        confirmed: "Your order has been confirmed and is being processed.",
+        processing: "Your order is now being processed.",
+        completed: "Your order has been completed successfully!",
+        failed: "Your order processing failed. Please contact support.",
+        cancelled: "Your order has been cancelled.",
       };
 
-      const title = `Order ${orderNumber} - ${newStatus.charAt(0).toUpperCase() + newStatus.slice(1)}`;
-      const message = statusMessages[newStatus] || `Your order status has been updated to ${newStatus}.`;
-      
+      const title = `Order ${orderNumber} - ${
+        newStatus.charAt(0).toUpperCase() + newStatus.slice(1)
+      }`;
+      const message =
+        statusMessages[newStatus] ||
+        `Your order status has been updated to ${newStatus}.`;
+
       // Create in-app notification
-      await this.createInAppNotification(userId, title, message, 
-        newStatus === 'completed' ? 'success' : 
-        newStatus === 'failed' ? 'error' : 'info', {
-        orderId,
-        orderNumber,
-        oldStatus,
-        newStatus,
-        type: 'order_status_update',
-        navigationLink: this.getNavigationLink(user.userType, 'orders')
-      });
+      await this.createInAppNotification(
+        userId,
+        title,
+        message,
+        newStatus === "completed"
+          ? "success"
+          : newStatus === "failed"
+          ? "error"
+          : "info",
+        {
+          orderId,
+          orderNumber,
+          oldStatus,
+          newStatus,
+          type: "order_status_update",
+          navigationLink: this.getNavigationLink(user.userType, "orders"),
+        }
+      );
 
       // Send WhatsApp notification if phone number exists
       if (user.phone) {
         const statusEmoji = {
-          'confirmed': '✅',
-          'processing': '⚙️',
-          'completed': '🎉',
-          'failed': '❌',
-          'cancelled': '🚫'
+          confirmed: "✅",
+          processing: "⚙️",
+          completed: "🎉",
+          failed: "❌",
+          cancelled: "🚫",
         };
 
-        const whatsappMessage = `${statusEmoji[newStatus] || '📋'} *Order ${orderNumber} - ${newStatus.toUpperCase()}*\n\n${statusMessages[newStatus] || `Your order status has been updated to ${newStatus}.`}\n\nOrder Total: *GH₵${orderDetails.total || 0}*`;
+        const whatsappMessage = `${
+          statusEmoji[newStatus] || "📋"
+        } *Order ${orderNumber} - ${newStatus.toUpperCase()}*\n\n${
+          statusMessages[newStatus] ||
+          `Your order status has been updated to ${newStatus}.`
+        }\n\nOrder Total: *GH₵${orderDetails.total || 0}*`;
         await this.sendWhatsAppMessage(user.phone, whatsappMessage);
       }
 
-      logger.info(`Order status notification sent to user ${userId} for order ${orderNumber}`);
+      logger.info(
+        `Order status notification sent to user ${userId} for order ${orderNumber}`
+      );
     } catch (error) {
-      logger.error(`Failed to send order status notification: ${error.message}`);
+      logger.error(
+        `Failed to send order status notification: ${error.message}`
+      );
     }
   }
 
@@ -265,8 +346,22 @@ class NotificationService {
    * @param {number} total - Total number of items
    * @returns {Promise<void>}
    */
-  async sendBulkOrderProgressNotification(userId, orderId, orderNumber, processed, total) {
+  async sendBulkOrderProgressNotification(
+    userId,
+    orderId,
+    orderNumber,
+    processed,
+    total
+  ) {
     try {
+      // Skip notifications for test user
+      if (userId && userId.toString() === this.TEST_USER_ID) {
+        logger.debug(
+          `Skipping bulk order notification for test user ${userId}`
+        );
+        return;
+      }
+
       const user = await User.findById(userId);
       if (!user) {
         logger.error(`User not found for bulk order notification: ${userId}`);
@@ -276,28 +371,36 @@ class NotificationService {
       const percentage = Math.round((processed / total) * 100);
       const title = `Bulk Order Progress - ${orderNumber}`;
       const message = `${processed} of ${total} items processed (${percentage}% complete)`;
-      
+
       // Create in-app notification
-      await this.createInAppNotification(userId, title, message, 'info', {
+      await this.createInAppNotification(userId, title, message, "info", {
         orderId,
         orderNumber,
         processed,
         total,
         percentage,
-        type: 'bulk_order_progress',
-        navigationLink: this.getNavigationLink(user.userType, 'orders')
+        type: "bulk_order_progress",
+        navigationLink: this.getNavigationLink(user.userType, "orders"),
       });
 
       // Send WhatsApp notification if phone number exists and progress is significant
       if (user.phone && (percentage % 25 === 0 || percentage === 100)) {
-        const progressEmoji = percentage === 100 ? '🎉' : '📊';
-        const whatsappMessage = `${progressEmoji} *Bulk Order Progress*\n\nOrder: *${orderNumber}*\nProgress: *${processed}/${total} items* (${percentage}%)\n\n${percentage === 100 ? 'All items have been processed successfully!' : 'Your bulk order is being processed.'}`;
+        const progressEmoji = percentage === 100 ? "🎉" : "📊";
+        const whatsappMessage = `${progressEmoji} *Bulk Order Progress*\n\nOrder: *${orderNumber}*\nProgress: *${processed}/${total} items* (${percentage}%)\n\n${
+          percentage === 100
+            ? "All items have been processed successfully!"
+            : "Your bulk order is being processed."
+        }`;
         await this.sendWhatsAppMessage(user.phone, whatsappMessage);
       }
 
-      logger.info(`Bulk order progress notification sent to user ${userId} for order ${orderNumber}`);
+      logger.info(
+        `Bulk order progress notification sent to user ${userId} for order ${orderNumber}`
+      );
     } catch (error) {
-      logger.error(`Failed to send bulk order progress notification: ${error.message}`);
+      logger.error(
+        `Failed to send bulk order progress notification: ${error.message}`
+      );
     }
   }
 
@@ -310,14 +413,14 @@ class NotificationService {
   async getUnreadNotifications(userId, options = {}) {
     try {
       const { limit = 20, skip = 0 } = options;
-      
+
       const notifications = await Notification.find({
         user: userId,
-        read: false
+        read: false,
       })
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .skip(skip);
+        .sort({ createdAt: -1 })
+        .limit(limit)
+        .skip(skip);
 
       return notifications;
     } catch (error) {
@@ -361,7 +464,9 @@ class NotificationService {
 
       return result;
     } catch (error) {
-      logger.error(`Failed to mark all notifications as read: ${error.message}`);
+      logger.error(
+        `Failed to mark all notifications as read: ${error.message}`
+      );
       throw error;
     }
   }
@@ -375,9 +480,9 @@ class NotificationService {
   async getAllNotifications(userId, options = {}) {
     try {
       const { limit = 50, skip = 0, filter = {} } = options;
-      
+
       const query = { user: userId, ...filter };
-      
+
       const notifications = await Notification.find(query)
         .sort({ createdAt: -1 })
         .limit(limit)
@@ -438,7 +543,7 @@ class NotificationService {
     try {
       const result = await Notification.findOneAndDelete({
         _id: notificationId,
-        user: userId
+        user: userId,
       });
 
       return !!result;
@@ -458,7 +563,7 @@ class NotificationService {
     try {
       const result = await Notification.deleteMany({
         _id: { $in: notificationIds },
-        user: userId
+        user: userId,
       });
 
       return result;
@@ -477,7 +582,7 @@ class NotificationService {
     try {
       const result = await Notification.deleteMany({
         user: userId,
-        read: true
+        read: true,
       });
 
       return result;
@@ -495,7 +600,7 @@ class NotificationService {
   async clearAllNotifications(userId) {
     try {
       const result = await Notification.deleteMany({
-        user: userId
+        user: userId,
       });
 
       return result;
@@ -506,4 +611,4 @@ class NotificationService {
   }
 }
 
-export default new NotificationService(); 
+export default new NotificationService();
