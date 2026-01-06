@@ -39,7 +39,7 @@ class UserController {
   // Update user profile
   async updateProfile(req, res) {
     try {
-      const { fullName, phone } = req.body;
+      const { fullName, phone, businessName, businessCategory } = req.body;
       const userId = req.user.userId;
 
       const user = await User.findById(userId);
@@ -53,6 +53,13 @@ class UserController {
       // Update allowed fields
       if (fullName) user.fullName = fullName;
       if (phone) user.phone = phone;
+
+      // Update business fields for business users
+      if (isBusinessUser(user.userType)) {
+        if (businessName !== undefined) user.businessName = businessName;
+        if (businessCategory !== undefined)
+          user.businessCategory = businessCategory;
+      }
 
       await user.save();
 
@@ -873,11 +880,14 @@ class UserController {
       // Import required models
       const Order = (await import("../models/Order.js")).default;
       const User = (await import("../models/User.js")).default;
-      const WalletTransaction = (await import("../models/WalletTransaction.js")).default;
+      const WalletTransaction = (await import("../models/WalletTransaction.js"))
+        .default;
       const Bundle = (await import("../models/Bundle.js")).default;
 
       // Get the selected bundle
-      const bundle = await Bundle.findById(bundleId).populate('packageId providerId');
+      const bundle = await Bundle.findById(bundleId).populate(
+        "packageId providerId"
+      );
       if (!bundle || !bundle.isActive || bundle.isDeleted) {
         return res.status(400).json({
           success: false,
@@ -886,7 +896,7 @@ class UserController {
       }
 
       // Verify bundle is for AFA provider
-      if (!bundle.providerId || bundle.providerId.code !== 'AFA') {
+      if (!bundle.providerId || bundle.providerId.code !== "AFA") {
         return res.status(400).json({
           success: false,
           message: "Selected bundle is not an AFA bundle",
@@ -907,7 +917,8 @@ class UserController {
         if (!ghanaCardRegex.test(ghanaCardNumber.toUpperCase())) {
           return res.status(400).json({
             success: false,
-            message: "Invalid Ghana Card number format. Must be in format GHA-XXXXXXXXX-X (9 digits in middle, 1 at end)",
+            message:
+              "Invalid Ghana Card number format. Must be in format GHA-XXXXXXXXX-X (9 digits in middle, 1 at end)",
           });
         }
       }
@@ -922,7 +933,7 @@ class UserController {
       }
 
       // Get price based on user type
-      const fee = bundle.getPriceForUserType(user.userType || 'default');
+      const fee = bundle.getPriceForUserType(user.userType || "default");
 
       // Determine order status based on wallet balance
       let orderStatus = "pending";
@@ -959,7 +970,9 @@ class UserController {
         customerInfo: {
           name: fullName,
           phone: phone,
-          ...(ghanaCardNumber && { ghanaCardNumber: ghanaCardNumber.toUpperCase() }),
+          ...(ghanaCardNumber && {
+            ghanaCardNumber: ghanaCardNumber.toUpperCase(),
+          }),
         },
         items: [
           {
@@ -995,7 +1008,11 @@ class UserController {
         paymentMethod: "wallet",
         tenantId: userId,
         createdBy: userId,
-        notes: `AFA Registration - ${bundle.name} for ${fullName} (${phone})${ghanaCardNumber ? ` - Ghana Card: ${ghanaCardNumber.toUpperCase()}` : ''}`,
+        notes: `AFA Registration - ${bundle.name} for ${fullName} (${phone})${
+          ghanaCardNumber
+            ? ` - Ghana Card: ${ghanaCardNumber.toUpperCase()}`
+            : ""
+        }`,
       });
 
       await order.save();
@@ -1069,7 +1086,10 @@ class UserController {
       const Provider = (await import("../models/Provider.js")).default;
 
       // Get AFA provider
-      const afaProvider = await Provider.findOne({ code: "AFA", isActive: true });
+      const afaProvider = await Provider.findOne({
+        code: "AFA",
+        isActive: true,
+      });
       if (!afaProvider) {
         return res.status(404).json({
           success: false,
