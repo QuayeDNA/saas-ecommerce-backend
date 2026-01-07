@@ -134,16 +134,36 @@ class NotificationService {
       // Send push notification if user has enabled it
       try {
         const user = await User.findById(userId);
-        if (user && user.pushNotificationPreferences?.enabled) {
-          await pushNotificationService.sendToUser(userId, {
-            title,
-            body: message,
-            url: metadata.navigationLink || "/",
-            data: metadata,
-          });
+        logger.info(`Checking push notification for user ${userId}:`, {
+          hasUser: !!user,
+          hasPushSubscription: !!user?.pushSubscription,
+          pushPreferences: user?.pushNotificationPreferences,
+        });
+
+        if (user && user.pushSubscription) {
+          const prefsEnabled =
+            user.pushNotificationPreferences?.enabled !== false;
+          logger.info(`Push notification enabled: ${prefsEnabled}`);
+
+          if (prefsEnabled) {
+            const result = await pushNotificationService.sendToUser(userId, {
+              title,
+              body: message,
+              url: metadata.navigationLink || "/",
+              data: metadata,
+            });
+            logger.info(
+              `Push notification result for user ${userId}: ${result}`
+            );
+          } else {
+            logger.info(`Push notifications disabled for user ${userId}`);
+          }
+        } else {
+          logger.info(`No push subscription for user ${userId}`);
         }
       } catch (pushError) {
         logger.error(`Failed to send push notification: ${pushError.message}`);
+        logger.error(`Push error stack:`, pushError.stack);
         // Don't fail the whole notification process if push fails
       }
 

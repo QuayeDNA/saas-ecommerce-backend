@@ -42,8 +42,13 @@ class PushNotificationService {
   async sendToUser(userId, notification) {
     try {
       const user = await User.findById(userId);
-      if (!user || !user.pushSubscription) {
-        logger.debug(`No push subscription found for user ${userId}`);
+
+      if (!user) {
+        logger.warn(`User not found: ${userId}`);
+        return false;
+      }
+
+      if (!user.pushSubscription) {
         return false;
       }
 
