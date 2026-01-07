@@ -23,7 +23,7 @@ async function cleanupCompletedTestOrders() {
     // Find all completed/received orders by test user
     const completedOrders = await Order.find({
       createdBy: TEST_USER_ID,
-      status: { $in: ["completed", "received"] },
+      status: { $in: ["completed", "received", "cancelled"] },
     });
 
     if (completedOrders.length === 0) {
@@ -197,11 +197,11 @@ export async function cleanupAllTestUserData() {
 
 /**
  * Initialize the test user cleanup job
- * Runs every 5 minutes to check for orders ready to be deleted
+ * Runs every 30 minutes to check for orders ready to be deleted
  */
 export function initTestUserCleanupJob() {
-  // Run every 5 minutes
-  cron.schedule("*/5 * * * *", async () => {
+  // Run every 30 minutes
+  cron.schedule("*/30 * * * *", async () => {
     try {
       await cleanupDelayedTestOrders();
     } catch (error) {
