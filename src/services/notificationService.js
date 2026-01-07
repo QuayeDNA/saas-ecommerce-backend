@@ -4,6 +4,7 @@ import logger from "../utils/logger.js";
 import User from "../models/User.js";
 import Notification from "../models/Notification.js";
 import websocketService from "./websocketService.js";
+import pushNotificationService from "./pushNotificationService.js";
 
 class NotificationService {
   constructor() {
@@ -129,6 +130,22 @@ class NotificationService {
         type: "new_notification",
         notification: notification,
       });
+
+      // Send push notification if user has enabled it
+      try {
+        const user = await User.findById(userId);
+        if (user && user.pushNotificationPreferences?.enabled) {
+          await pushNotificationService.sendToUser(userId, {
+            title,
+            body: message,
+            url: metadata.navigationLink || "/",
+            data: metadata,
+          });
+        }
+      } catch (pushError) {
+        logger.error(`Failed to send push notification: ${pushError.message}`);
+        // Don't fail the whole notification process if push fails
+      }
 
       return notification;
     } catch (error) {

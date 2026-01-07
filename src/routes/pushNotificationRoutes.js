@@ -3,6 +3,7 @@ import express from "express";
 import pushNotificationService from "../services/pushNotificationService.js";
 import { authenticate } from "../middlewares/auth.js";
 import logger from "../utils/logger.js";
+import User from "../models/User.js";
 
 const router = express.Router();
 
@@ -89,6 +90,93 @@ router.get("/vapid-public-key", (req, res) => {
     });
   } catch (error) {
     logger.error("Error getting VAPID public key:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
+
+// Get push notification preferences
+router.get("/preferences", authenticate, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const user = await User.findById(userId).select(
+      "pushNotificationPreferences"
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      preferences: user.pushNotificationPreferences || {
+        enabled: true,
+        orderUpdates: true,
+        walletUpdates: true,
+        commissionUpdates: true,
+        announcements: true,
+      },
+    });
+  } catch (error) {
+    logger.error("Error getting push notification preferences:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
+
+// Update push notification preferences
+router.put("/preferences", authenticate, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { preferences } = req.body;
+
+    if (!preferences || typeof preferences !== "object") {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid preferences object",
+      });
+    }
+
+    const updateData = {};
+    const allowedFields = [
+      "enabled",
+      "orderUpdates",
+      "walletUpdates",
+      "commissionUpdates",
+      "announcements",
+    ];
+
+    for (const field of allowedFields) {
+      if (preferences[field] !== undefined) {
+        updateData[`pushNotificationPreferences.${field}`] = preferences[field];
+      }
+    }
+
+    const user = await User.findByIdAndUpdate(userId, updateData, {
+      new: true,
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Push notification preferences updated successfully",
+      preferences: user.pushNotificationPreferences,
+    });
+  } catch (error) {
+    logger.error("Error updating push notification preferences:", error);
     res.status(500).json({
       success: false,
       message: "Internal server error",

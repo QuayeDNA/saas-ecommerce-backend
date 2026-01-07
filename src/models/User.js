@@ -123,6 +123,37 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
+  // Push notification subscription
+  pushSubscription: {
+    endpoint: String,
+    keys: {
+      p256dh: String,
+      auth: String,
+    },
+  },
+  // Push notification preferences
+  pushNotificationPreferences: {
+    enabled: {
+      type: Boolean,
+      default: true,
+    },
+    orderUpdates: {
+      type: Boolean,
+      default: true,
+    },
+    walletUpdates: {
+      type: Boolean,
+      default: true,
+    },
+    commissionUpdates: {
+      type: Boolean,
+      default: true,
+    },
+    announcements: {
+      type: Boolean,
+      default: true,
+    },
+  },
   // AFA Registration fields
   afaRegistration: {
     afaId: String,
