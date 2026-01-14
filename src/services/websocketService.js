@@ -6,8 +6,6 @@ class WebSocketService {
   constructor() {
     this.wss = null;
     this.clients = new Map(); // Map of userId -> WebSocket connection
-    // Test user ID to exclude from broadcasts
-    this.TEST_USER_ID = "689bae9e81b90ad7c5ad66d4";
   }
 
   initialize(server) {
@@ -56,12 +54,6 @@ class WebSocketService {
 
   // Send notification to specific user
   sendNotificationToUser(userId, notification) {
-    // Skip notifications for test user
-    if (userId && userId.toString() === this.TEST_USER_ID) {
-      logger.debug(`Skipping WebSocket notification for test user ${userId}`);
-      return;
-    }
-
     const ws = this.clients.get(userId);
     if (ws && ws.readyState === 1) {
       // 1 = OPEN
@@ -84,12 +76,6 @@ class WebSocketService {
 
   // Send wallet update to specific user
   sendWalletUpdateToUser(userId, walletData) {
-    // Skip wallet updates for test user
-    if (userId && userId.toString() === this.TEST_USER_ID) {
-      logger.debug(`Skipping WebSocket wallet update for test user ${userId}`);
-      return;
-    }
-
     const ws = this.clients.get(userId);
     if (ws && ws.readyState === 1) {
       // 1 = OPEN
@@ -279,11 +265,6 @@ class WebSocketService {
   // Broadcast to all connected clients
   broadcast(notification) {
     this.clients.forEach((ws, userId) => {
-      // Skip test user
-      if (userId && userId.toString() === this.TEST_USER_ID) {
-        return;
-      }
-
       if (ws.readyState === 1) {
         try {
           ws.send(

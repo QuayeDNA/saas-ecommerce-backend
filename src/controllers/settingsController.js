@@ -1,6 +1,5 @@
 import settingsService from "../services/settingsService.js";
 import logger from "../utils/logger.js";
-import { cleanupAllTestUserData } from "../jobs/testUserCleanup.js";
 
 // =============================================================================
 // SETTINGS CONTROLLER
@@ -195,44 +194,6 @@ class SettingsController {
     } catch (error) {
       logger.error("Error updating wallet settings:", error);
       res.status(500).json({ error: "Failed to update wallet settings" });
-    }
-  }
-
-  // Test User Cleanup
-  async cleanupTestUser(req, res) {
-    try {
-      const TEST_USER_ID = "689bae9e81b90ad7c5ad66d4";
-      const userId = req.user.id || req.user._id;
-      const isSuperAdmin = req.user.userType === "super_admin";
-      const isTestUser = userId.toString() === TEST_USER_ID;
-
-      // Only allow test user or super admin
-      if (!isTestUser && !isSuperAdmin) {
-        logger.warn(
-          `Unauthorized cleanup attempt by ${req.user.email} (userType: "${req.user.userType}")`
-        );
-        return res.status(403).json({
-          success: false,
-          error: "Only the test user or super admin can trigger this cleanup",
-        });
-      }
-
-      logger.info(
-        `Manual test user cleanup triggered by ${req.user.email} (${
-          isTestUser ? "test user" : "super admin"
-        })`
-      );
-      const result = await cleanupAllTestUserData();
-      res.json({
-        success: true,
-        message: "Test user data cleaned up successfully",
-        ...result,
-      });
-    } catch (error) {
-      logger.error("Error cleaning up test user data:", error);
-      res
-        .status(500)
-        .json({ success: false, error: "Failed to cleanup test user data" });
     }
   }
 }

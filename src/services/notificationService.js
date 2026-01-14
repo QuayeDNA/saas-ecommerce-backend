@@ -11,8 +11,6 @@ class NotificationService {
     this.whatsappApiUrl = process.env.WHATSAPP_API_URL;
     this.whatsappToken = process.env.WHATSAPP_TOKEN;
     this.whatsappPhoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-    // Test user ID to exclude from notifications
-    this.TEST_USER_ID = "689bae9e81b90ad7c5ad66d4";
   }
 
   /**
@@ -107,12 +105,6 @@ class NotificationService {
     metadata = {}
   ) {
     try {
-      // Skip notifications for test user
-      if (userId && userId.toString() === this.TEST_USER_ID) {
-        logger.debug(`Skipping notification for test user ${userId}`);
-        return null;
-      }
-
       const notification = new Notification({
         user: userId,
         title,
@@ -183,12 +175,6 @@ class NotificationService {
    */
   async sendWalletTopUpApprovalNotification(userId, amount, approvedBy) {
     try {
-      // Skip notifications for test user
-      if (userId && userId.toString() === this.TEST_USER_ID) {
-        logger.debug(`Skipping wallet notification for test user ${userId}`);
-        return;
-      }
-
       const user = await User.findById(userId);
       if (!user) {
         logger.error(`User not found for wallet notification: ${userId}`);
@@ -235,14 +221,6 @@ class NotificationService {
     rejectedBy
   ) {
     try {
-      // Skip notifications for test user
-      if (userId && userId.toString() === this.TEST_USER_ID) {
-        logger.debug(
-          `Skipping wallet rejection notification for test user ${userId}`
-        );
-        return;
-      }
-
       const user = await User.findById(userId);
       if (!user) {
         logger.error(
@@ -298,12 +276,6 @@ class NotificationService {
     orderDetails = {}
   ) {
     try {
-      // Skip notifications for test user
-      if (userId && userId.toString() === this.TEST_USER_ID) {
-        logger.debug(`Skipping order notification for test user ${userId}`);
-        return;
-      }
-
       const user = await User.findById(userId);
       if (!user) {
         logger.error(`User not found for order notification: ${userId}`);
@@ -391,14 +363,6 @@ class NotificationService {
     total
   ) {
     try {
-      // Skip notifications for test user
-      if (userId && userId.toString() === this.TEST_USER_ID) {
-        logger.debug(
-          `Skipping bulk order notification for test user ${userId}`
-        );
-        return;
-      }
-
       const user = await User.findById(userId);
       if (!user) {
         logger.error(`User not found for bulk order notification: ${userId}`);

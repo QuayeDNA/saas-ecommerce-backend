@@ -15,9 +15,6 @@ router.get("/site/status", settingsController.getSiteStatus);
 router.use(authenticate);
 router.get("/wallet", settingsController.getWalletSettings);
 
-// Test User Cleanup - Available to test user and super admin
-router.post("/cleanup/test-user", settingsController.cleanupTestUser);
-
 // All other routes require super admin authorization
 router.use(authorize("super_admin"));
 
