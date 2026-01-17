@@ -41,6 +41,27 @@ class SettingsController {
     }
   }
 
+  async getSignupApprovalSetting(req, res) {
+    try {
+      const requireApproval = await settingsService.getSignupApprovalSetting();
+      res.json({ requireApprovalForSignup: requireApproval });
+    } catch (error) {
+      logger.error("Error getting signup approval setting:", error);
+      res.status(500).json({ error: "Failed to get signup approval setting" });
+    }
+  }
+
+  async updateSignupApprovalSetting(req, res) {
+    try {
+      const { requireApprovalForSignup } = req.body;
+      const result = await settingsService.updateSignupApprovalSetting(requireApprovalForSignup);
+      res.json(result);
+    } catch (error) {
+      logger.error("Error updating signup approval setting:", error);
+      res.status(500).json({ error: "Failed to update signup approval setting" });
+    }
+  }
+
   // Commission Rates
   async getCommissionRates(req, res) {
     try {

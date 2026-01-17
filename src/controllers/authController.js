@@ -4,6 +4,7 @@ import crypto from "crypto";
 import mongoose from "mongoose";
 import User from "../models/User.js";
 import emailService from "../services/emailService.js";
+import settingsService from "../services/settingsService.js";
 import logger from "../utils/logger.js";
 import {
   isBusinessUser,
@@ -81,6 +82,10 @@ class AuthController {
         });
       }
 
+      // Check signup approval setting
+      const requireApproval = await settingsService.getSignupApprovalSetting();
+      const userStatus = requireApproval ? "pending" : "active";
+
       // Create agent document with temporary agent code and temporary tenantId
       const agent = new User({
         fullName,
@@ -93,7 +98,7 @@ class AuthController {
         subscriptionPlan,
         subscriptionStatus: "active",
         isVerified: true, // Auto-verify
-        status: "pending", // Set agent status to pending
+        status: userStatus, // Set based on approval setting
         agentCode: "TEMP", // Temporary code to pass validation
         tenantId: new mongoose.Types.ObjectId(), // Temporary ID to pass validation
       });
@@ -112,9 +117,13 @@ class AuthController {
       logger.info(
         `${userType} registered successfully: ${email} - Business: ${businessName} - Agent Code: ${agentCode}`
       );
+
+      // Always return success message - user must login manually
       res.status(201).json({
         success: true,
-        message: `${userType} account created successfully. Your account is pending approval by a super admin.`,
+        message: requireApproval
+          ? `${userType} account created successfully. Your account is pending approval by a super admin.`
+          : `${userType} account created successfully. You can now log in.`,
         agentCode: agentCode,
         userType: userType,
       });

@@ -12,6 +12,10 @@ const settingsSchema = new mongoose.Schema(
       default:
         "We're currently performing maintenance. Please check back later.",
     },
+    requireApprovalForSignup: {
+      type: Boolean,
+      default: true,
+    },
 
     // Commission Rates by User Type
     agentCommission: {

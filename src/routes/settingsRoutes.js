@@ -11,6 +11,9 @@ const router = express.Router();
 // Public site status endpoint (no auth required)
 router.get("/site/status", settingsController.getSiteStatus);
 
+// Public signup approval setting (no auth required - needed for registration flow)
+router.get("/signup-approval", settingsController.getSignupApprovalSetting);
+
 // Wallet Settings - GET available to all authenticated users for validation
 router.use(authenticate);
 router.get("/wallet", settingsController.getWalletSettings);
@@ -22,6 +25,9 @@ router.use(authorize("super_admin"));
 router.get("/site", settingsController.getSiteSettings);
 router.put("/site", settingsController.updateSiteSettings);
 router.post("/site/toggle", settingsController.toggleSiteStatus);
+
+// Signup Approval Setting - PUT requires super admin (GET is public above)
+router.put("/signup-approval", settingsController.updateSignupApprovalSetting);
 
 // Commission Rates
 router.get("/commission", settingsController.getCommissionRates);

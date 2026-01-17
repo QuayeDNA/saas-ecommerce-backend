@@ -418,6 +418,26 @@ class WebSocketService {
       `Order status update sent to user ${userId} and ${superAdminIds.length} admins`
     );
   }
+
+  // Broadcast site status update to all connected clients
+  broadcastSiteStatusUpdate(siteStatus) {
+    this.clients.forEach((ws, userId) => {
+      if (ws.readyState === 1) {
+        try {
+          ws.send(
+            JSON.stringify({
+              type: "site_status_update",
+              data: siteStatus,
+            })
+          );
+        } catch (error) {
+          logger.error(`Failed to broadcast site status to user ${userId}:`, error);
+        }
+      }
+    });
+
+    logger.info(`Site status update broadcasted to all connected clients:`, siteStatus);
+  }
 }
 
 export default new WebSocketService();

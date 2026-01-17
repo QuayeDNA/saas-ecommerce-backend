@@ -2,6 +2,7 @@ import bcrypt from "bcrypt";
 import User from "../models/User.js";
 import Settings from "../models/Settings.js";
 import logger from "../utils/logger.js";
+import websocketService from "./websocketService.js";
 
 // =============================================================================
 // SETTINGS SERVICE
@@ -39,11 +40,51 @@ class SettingsService {
     settings.isSiteOpen = !settings.isSiteOpen;
     await settings.save();
 
+    const siteStatus = {
+      isSiteOpen: settings.isSiteOpen,
+      customMessage: settings.customMessage,
+    };
+
     logger.info(
       `Site status toggled to: ${settings.isSiteOpen ? "open" : "closed"}`
     );
 
-    return { isSiteOpen: settings.isSiteOpen };
+    // Broadcast the site status update to all connected clients
+    websocketService.broadcastSiteStatusUpdate(siteStatus);
+
+    return siteStatus;
+  }
+
+  async getSignupApprovalSetting() {
+    try {
+      const settings = await Settings.getInstance();
+      return settings.requireApprovalForSignup;
+    } catch (error) {
+      logger.error(`Error getting signup approval setting: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async updateSignupApprovalSetting(requireApproval) {
+    try {
+      const settings = await Settings.getInstance();
+      settings.requireApprovalForSignup = requireApproval;
+      await settings.save();
+
+      logger.info(`Signup approval setting updated to: ${requireApproval}`);
+      
+      // Broadcast site status update to refresh frontend settings
+      const siteStatus = {
+        isSiteOpen: settings.isSiteOpen,
+        customMessage: settings.customMessage,
+      };
+      websocketService.broadcastSiteStatusUpdate(siteStatus);
+      
+      return { requireApprovalForSignup: settings.requireApprovalForSignup };
+    } catch (error) {
+      logger.error(`Error updating signup approval setting: ${error.message}`);
+      throw error;
+    }
   }
 
   // Get site status for middleware checks
