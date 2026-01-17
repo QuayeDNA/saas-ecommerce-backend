@@ -8,6 +8,11 @@ class AnnouncementService {
    */
   async createAnnouncement(announcementData, createdBy) {
     try {
+      // Set default expiration to 1 day from now if not provided
+      if (!announcementData.expiresAt) {
+        announcementData.expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 1 day
+      }
+
       const announcement = new Announcement({
         ...announcementData,
         createdBy,
@@ -72,7 +77,13 @@ class AnnouncementService {
       const query = {
         status: "active",
         targetAudience: user.userType,
-        $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }],
+        $and: [
+          // Expiration filter
+          { $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }] },
+          // Broadcast timing filter: only show announcements broadcasted after user was created
+          // OR announcements that haven't been broadcasted yet
+          { $or: [{ broadcastedAt: null }, { broadcastedAt: { $gte: user.createdAt } }] }
+        ]
       };
 
       const announcements = await Announcement.find(query)
@@ -238,10 +249,18 @@ class AnnouncementService {
         return;
       }
 
+      // Set broadcastedAt timestamp
+      const broadcastTime = new Date();
+      const wasPreviouslyBroadcasted = announcement.broadcastedAt !== null;
+      
+      await Announcement.findByIdAndUpdate(announcementId, {
+        broadcastedAt: broadcastTime
+      });
+
       console.log(
         `Broadcasting announcement to audiences: ${announcement.targetAudience.join(
           ", "
-        )}`
+        )} ${wasPreviouslyBroadcasted ? '(re-broadcast)' : '(first broadcast)'}`
       );
 
       // Get eligible users based on target audience array
@@ -251,15 +270,35 @@ class AnnouncementService {
         announcement.targetAudience &&
         announcement.targetAudience.length > 0
       ) {
-        // Broadcast to users matching any of the selected user types
-        eligibleUsers = await User.find({
-          userType: { $in: announcement.targetAudience },
-        }).select("_id username email");
-        console.log(
-          `Found ${
-            eligibleUsers.length
-          } users matching types: ${announcement.targetAudience.join(", ")}`
-        );
+        if (wasPreviouslyBroadcasted) {
+          // For re-broadcasts, only send to users who haven't viewed it yet
+          // and were created before the broadcast time
+          const viewedUserIds = announcement.viewedBy?.map(v => v.user.toString()) || [];
+          
+          eligibleUsers = await User.find({
+            userType: { $in: announcement.targetAudience },
+            createdAt: { $lt: broadcastTime },
+            _id: { $nin: viewedUserIds }, // Exclude users who have already viewed it
+          }).select("_id username email");
+          
+          console.log(
+            `Found ${
+              eligibleUsers.length
+            } users for re-broadcast: ${announcement.targetAudience.join(", ")} (new users who haven't viewed it)`
+          );
+        } else {
+          // For first broadcasts, send to all eligible users who existed before broadcast
+          eligibleUsers = await User.find({
+            userType: { $in: announcement.targetAudience },
+            createdAt: { $lt: broadcastTime },
+          }).select("_id username email");
+          
+          console.log(
+            `Found ${
+              eligibleUsers.length
+            } users for first broadcast: ${announcement.targetAudience.join(", ")} (created before broadcast time)`
+          );
+        }
       } else {
         // If no audience selected, don't broadcast
         console.log("No target audience selected");

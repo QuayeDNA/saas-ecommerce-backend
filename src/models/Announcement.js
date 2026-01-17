@@ -32,7 +32,7 @@ const announcementSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: ["draft", "active", "expired", "archived"],
-      default: "draft",
+      default: "active",
     },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
@@ -91,6 +91,10 @@ const announcementSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    broadcastedAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,
@@ -101,6 +105,7 @@ const announcementSchema = new mongoose.Schema(
 announcementSchema.index({ status: 1, createdAt: -1 });
 announcementSchema.index({ targetAudience: 1, status: 1 });
 announcementSchema.index({ expiresAt: 1 });
+announcementSchema.index({ broadcastedAt: 1 });
 
 // Virtual for checking if expired
 announcementSchema.virtual("isExpired").get(function () {
