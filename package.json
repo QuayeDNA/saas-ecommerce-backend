@@ -9,7 +9,8 @@
     "dev": "nodemon app.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "build": "npm install && npm install --only=dev && npm install --only=production"
+    "build": "npm install && npm install --only=dev && npm install --only=production",
+    "setup-mtn": "node scripts/setupMtnSandbox.js"
   },
   "keywords": [],
   "author": "",

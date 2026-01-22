@@ -9,7 +9,7 @@ const walletTransactionSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['credit', 'debit'],
+    enum: ['credit', 'debit', 'instant_topup'],
     required: true
   },
   amount: {

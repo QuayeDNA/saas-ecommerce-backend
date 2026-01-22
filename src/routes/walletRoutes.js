@@ -69,11 +69,18 @@ router.get(
   authorize("super_admin"),
   walletController.getWalletAnalytics
 );
-router.get(
-  "/admin-transactions",
+router.post(
+  "/instant-topup",
   authenticate,
-  authorize("super_admin"),
-  walletController.getAdminTransactions
+  authorizeWalletUser,
+  validate(walletValidation.instantTopup),
+  walletController.initiateInstantTopup
+);
+
+// MTN webhook (no auth required)
+router.post(
+  "/mtn-webhook/:referenceId",
+  walletController.mtnWebhook
 );
 
 export default router;

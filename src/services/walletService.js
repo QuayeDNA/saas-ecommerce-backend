@@ -1,6 +1,7 @@
 // src/services/walletService.js
 import User from "../models/User.js";
 import WalletTransaction from "../models/WalletTransaction.js";
+import crypto from 'crypto';
 import logger from "../utils/logger.js";
 import notificationService from "./notificationService.js";
 import websocketService from "./websocketService.js";
@@ -527,6 +528,175 @@ class WalletService {
       };
     } catch (error) {
       logger.error(`Get wallet analytics error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Initiate instant topup via MTN Mobile Money
+   * @param {string} userId - The user ID
+   * @param {number} amount - Amount to topup
+   * @param {string} phoneNumber - Agent's phone number for payment
+   * @returns {Promise<object>} Transaction object with MTN reference
+   */
+  async initiateInstantTopup(userId, amount, phoneNumber) {
+    try {
+      const user = await User.findById(userId);
+      if (!user) {
+        throw new Error("User not found");
+      }
+
+      // Validate amount
+      if (amount <= 0) {
+        throw new Error("Topup amount must be greater than zero");
+      }
+
+      // Check daily limit (e.g., 1000 GHS per day)
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
+      const dailyTopups = await WalletTransaction.aggregate([
+        { $match: { user: user._id, type: 'instant_topup', createdAt: { $gte: today, $lt: tomorrow } } },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+
+      const dailyTotal = dailyTopups.length > 0 ? dailyTopups[0].total : 0;
+      if (dailyTotal + amount > 1000) {
+        throw new Error("Daily topup limit exceeded. Maximum 1000 GHS per day.");
+      }
+
+      // Import MTN service
+      const mtnService = (await import('./mtnMobileMoneyService.js')).default;
+
+      // Validate phone number
+      if (!mtnService.validatePhoneNumber(phoneNumber)) {
+        throw new Error("Invalid MTN phone number format");
+      }
+
+      // Generate unique reference ID
+      const referenceId = `topup_${userId}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+
+      // Create pending transaction
+      const transaction = new WalletTransaction({
+        user: userId,
+        type: "instant_topup",
+        amount,
+        balanceAfter: user.walletBalance, // Will be updated on success
+        description: `Instant topup via MTN Mobile Money (${phoneNumber})`,
+        status: "pending",
+        metadata: {
+          phoneNumber,
+          mtnReferenceId: referenceId,
+          initiatedAt: new Date()
+        },
+      });
+
+      await transaction.save();
+
+      // Initiate MTN payment request
+      await mtnService.requestToPay(phoneNumber, amount, referenceId);
+
+      logger.info(`Instant topup initiated: ${amount} GHS for user ${userId}, reference: ${referenceId}`);
+
+      return {
+        transaction,
+        referenceId,
+        message: "Topup request sent to your phone. Please approve the payment."
+      };
+    } catch (error) {
+      logger.error(`Initiate instant topup error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Complete instant topup (called from webhook)
+   * @param {string} referenceId - MTN reference ID
+   * @param {string} status - Payment status from MTN
+   */
+  async completeInstantTopup(referenceId, status) {
+    try {
+      const transaction = await WalletTransaction.findOne({
+        'metadata.mtnReferenceId': referenceId,
+        type: 'instant_topup'
+      });
+
+      if (!transaction) {
+        logger.warn(`Transaction not found for MTN reference: ${referenceId}`);
+        return;
+      }
+
+      if (transaction.status !== 'pending') {
+        logger.warn(`Transaction ${transaction._id} already processed`);
+        return;
+      }
+
+      const user = await User.findById(transaction.user);
+      if (!user) {
+        throw new Error("User not found");
+      }
+
+      if (status === 'SUCCESSFUL') {
+        // Credit the wallet
+        user.walletBalance += transaction.amount;
+        await user.save({ validateBeforeSave: false });
+
+        // Update transaction
+        transaction.status = 'completed';
+        transaction.balanceAfter = user.walletBalance;
+        transaction.metadata.completedAt = new Date();
+
+        logger.info(`Instant topup completed: ${transaction.amount} GHS for user ${transaction.user}`);
+
+        // Send WebSocket update
+        try {
+          const recentTransactions = await WalletTransaction.find({
+            user: transaction.user,
+          })
+            .sort({ createdAt: -1 })
+            .limit(10)
+            .populate([
+              { path: "approvedBy", select: "fullName" },
+              { path: "relatedOrder", select: "orderNumber" },
+            ]);
+
+          websocketService.sendToUser(transaction.user.toString(), {
+            type: "wallet_update",
+            userId: transaction.user.toString(),
+            balance: user.walletBalance,
+            recentTransactions: recentTransactions,
+            message: `Instant topup of GH₵${transaction.amount} completed. New balance: GH₵${user.walletBalance}`,
+          });
+        } catch (wsError) {
+          logger.warn(`Failed to send WebSocket update for instant topup: ${wsError.message}`);
+        }
+
+        // Send notification
+        await notificationService.sendWalletTopUpApprovalNotification(
+          transaction.user.toString(),
+          transaction.amount,
+          null // No admin for instant topup
+        );
+      } else if (status === 'FAILED' || status === 'REJECTED') {
+        // Failed payment
+        transaction.status = 'failed';
+        transaction.metadata.failureReason = status;
+        logger.info(`Instant topup failed: ${referenceId}, status: ${status}`);
+      } else if (status === 'PENDING') {
+        // Still pending, don't update yet
+        logger.info(`Instant topup still pending: ${referenceId}`);
+        return;
+      } else {
+        // Unknown status, log for investigation
+        logger.warn(`Unknown MTN status received: ${status} for reference: ${referenceId}`);
+        return;
+      }
+
+      await transaction.save();
+    } catch (error) {
+      logger.error(`Complete instant topup error: ${error.message}`);
       throw error;
     }
   }

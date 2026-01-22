@@ -651,6 +651,68 @@ class WalletController {
       });
     }
   }
+
+  /**
+   * Initiate instant topup via MTN Mobile Money
+   */
+  async initiateInstantTopup(req, res) {
+    try {
+      const userId = req.user.userId;
+      const { amount, phoneNumber } = req.body;
+
+      // Validate input
+      if (!amount || !phoneNumber) {
+        return res.status(400).json({
+          success: false,
+          message: "Amount and phone number are required",
+        });
+      }
+
+      if (amount < 1 || amount > 1000) {
+        return res.status(400).json({
+          success: false,
+          message: "Amount must be between 1 and 1000 GHS",
+        });
+      }
+
+      const result = await walletService.initiateInstantTopup(userId, amount, phoneNumber);
+
+      res.json({
+        success: true,
+        message: result.message,
+        transactionId: result.transaction._id,
+        referenceId: result.referenceId,
+      });
+    } catch (error) {
+      logger.error(`Initiate instant topup error: ${error.message}`);
+      res.status(500).json({
+        success: false,
+        message: error.message || "Failed to initiate topup",
+      });
+    }
+  }
+
+  /**
+   * MTN Mobile Money webhook for payment status updates
+   */
+  async mtnWebhook(req, res) {
+    try {
+      const { referenceId } = req.params;
+      const callbackData = req.body;
+
+      logger.info(`MTN Webhook received: ${referenceId}`, callbackData);
+
+      // Extract status from callback data
+      const status = callbackData.status || callbackData.Status || 'UNKNOWN';
+
+      await walletService.completeInstantTopup(referenceId, status);
+
+      res.status(200).json({ message: "Webhook processed successfully" });
+    } catch (error) {
+      logger.error(`MTN Webhook error: ${error.message}`);
+      res.status(500).json({ message: "Webhook processing failed" });
+    }
+  }
 }
 
 export default new WalletController();
