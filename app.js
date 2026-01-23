@@ -16,7 +16,6 @@ import orderRouter from "./src/routes/orderRoutes.js";
 import packageRoutes from "./src/routes/packageRoutes.js";
 import bundleRoutes from "./src/routes/bundleRoutes.js";
 import publicRoutes from "./src/routes/publicRoutes.js";
-import storefrontRoutes from "./src/routes/storefrontRoutes.js";
 import userRoutes from "./src/routes/userRoutes.js";
 import providerRoutes from "./src/routes/providerRoutes.js";
 import walletRoutes from "./src/routes/walletRoutes.js";
@@ -137,7 +136,6 @@ app.get("/manifest", (req, res) => {
 // Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/orders", orderRouter);
-app.use("/api/storefront", storefrontRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/providers", providerRoutes);
 app.use("/api/wallet", walletRoutes);
