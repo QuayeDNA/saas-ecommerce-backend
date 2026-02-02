@@ -63,12 +63,7 @@ const orderItemSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     },
-    // Custom pricing for storefront orders
-    customPricing: {
-      originalPrice: Number, // Agent's tier price
-      customPrice: Number, // Storefront price
-      markup: Number // Profit per unit
-    }
+
   },
   { timestamps: true }
 );
@@ -82,7 +77,7 @@ const orderSchema = new mongoose.Schema(
     },
     orderType: {
       type: String,
-      enum: ["single", "bulk", "regular", "storefront"],
+      enum: ["single", "bulk", "regular"],
       required: true,
     },
     // Version field for optimistic locking (prevents concurrent modification)
@@ -102,58 +97,7 @@ const orderSchema = new mongoose.Schema(
       phone: String,
     },
 
-    // Storefront-specific data
-    storefrontData: {
-      storefrontId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "AgentStorefront"
-      },
-      agentProfit: {
-        type: Number,
-        default: 0
-      },
-      paymentMethod: {
-        type: {
-          type: String,
-          enum: ["mobile_money", "bank_transfer", "paystack"],
-          required: function() { return this.orderType === 'storefront'; }
-        },
-        // Mobile Money Payment Details
-        mobileMoney: {
-          transactionId: String,
-          network: String,
-          senderNumber: String,
-          amount: Number,
-          reference: String
-        },
-        // Bank Transfer Payment Details
-        bankTransfer: {
-          bankName: String,
-          transactionId: String,
-          senderAccount: String,
-          amount: Number,
-          transferDate: Date
-        },
-        // Paystack Payment Details (Future)
-        paystack: {
-          reference: String,
-          amount: Number,
-          status: String,
-          paidAt: Date
-        },
-        paymentProof: {
-          url: String,
-          uploadedAt: Date,
-          verifiedAt: Date,
-          verifiedBy: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: "User"
-          }
-        },
-        verificationNotes: String,
-        verified: { type: Boolean, default: false }
-      }
-    },
+
 
     // Order items
     items: [orderItemSchema],
@@ -188,7 +132,7 @@ const orderSchema = new mongoose.Schema(
       enum: [
         "draft",
         "pending",
-        "pending_payment", // For storefront orders awaiting payment verification
+        "pending_payment",
         "confirmed",
         "processing",
         "partially_completed",

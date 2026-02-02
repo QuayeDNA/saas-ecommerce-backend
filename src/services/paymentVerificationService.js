@@ -336,12 +336,11 @@ class PaymentVerificationService {
 
   /**
    * Get verification statistics for analytics
-   * @param {string} storefrontId - Storefront ID
    * @param {Date} startDate - Start date for statistics
    * @param {Date} endDate - End date for statistics
    * @returns {Object} Verification statistics
    */
-  async getVerificationStats(storefrontId, startDate, endDate) {
+  async getVerificationStats(startDate, endDate) {
     // This would aggregate verification data from the database
     // For now, return mock statistics
 

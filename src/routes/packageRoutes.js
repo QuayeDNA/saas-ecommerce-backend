@@ -164,7 +164,7 @@ router.get(
   bundleController.getBundleAnalytics
 );
 
-// Public routes (for storefront and general access)
+// Public routes
 router.get("/public", packageController.getPackages);
 
 router.get("/public/:id", packageController.getPackage);

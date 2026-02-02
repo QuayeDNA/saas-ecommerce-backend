@@ -25,7 +25,6 @@ import analyticsRoutes from "./src/routes/analyticsRoutes.js";
 import commissionRoutes from "./src/routes/commissionRoutes.js";
 import pushNotificationRoutes from "./src/routes/pushNotificationRoutes.js";
 import announcementRoutes from "./src/routes/announcementRoutes.js";
-import storefrontRoutes from "./src/routes/storefrontRoutes.js";
 
 const app = express();
 const PORT = process.env.PORT || 5050;
@@ -146,7 +145,6 @@ app.use("/api/analytics", analyticsRoutes);
 app.use("/api/commissions", commissionRoutes);
 app.use("/api/push", pushNotificationRoutes);
 app.use("/api/announcements", announcementRoutes);
-app.use("/api/storefront", storefrontRoutes);
 app.use("/api", publicRoutes);
 app.use("/api/packages", packageRoutes);
 app.use("/api/bundles", bundleRoutes);

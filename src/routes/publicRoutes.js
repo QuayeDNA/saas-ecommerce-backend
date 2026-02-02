@@ -2,7 +2,6 @@
 import express from "express";
 import packageController from "../controllers/packageController.js";
 import bundleController from "../controllers/bundleController.js";
-import storefrontRoutes from "./storefrontRoutes.js";
 
 const router = express.Router();
 
@@ -96,8 +95,5 @@ router.get("/providers", (req, res) => {
   ];
   res.json({ success: true, providers });
 });
-
-// Mount storefront routes (includes both public and authenticated endpoints)
-router.use("/storefront", storefrontRoutes);
 
 export default router;

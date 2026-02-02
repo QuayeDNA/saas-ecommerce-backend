@@ -8,7 +8,7 @@ import bundleController from "../controllers/bundleController.js";
 
 const router = express.Router();
 
-// Public routes (for storefront)
+// Public routes
 router.get("/", bundleController.getAllBundles);
 router.get("/:id", bundleController.getBundleById);
 router.get("/provider/:providerId", bundleController.getBundlesByProvider);
