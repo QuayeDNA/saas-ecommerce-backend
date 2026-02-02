@@ -26,14 +26,17 @@
     "joi": "^17.13.3",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.16.0",
+    "multer": "^2.0.2",
     "node-cron": "^4.1.1",
     "node-fetch": "^3.3.2",
     "nodemailer": "^7.0.3",
+    "validator": "^13.15.26",
     "web-push": "^3.6.7",
     "winston": "^3.17.0",
     "ws": "^8.18.3"
   },
   "devDependencies": {
+    "eslint": "^9.39.2",
     "nodemon": "^3.1.10"
   }
 }

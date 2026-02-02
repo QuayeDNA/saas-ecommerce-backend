@@ -327,11 +327,7 @@ class OrderService {
         // The pre-save hook will calculate subtotal, total, and generate orderNumber
       });
 
-      try {
-        await saveOrderWithRetry(order, session);
-      } catch (error) {
-        throw error;
-      }
+      await saveOrderWithRetry(order, session);
 
       const statusMessage =
         orderStatus === "draft"
@@ -567,7 +563,7 @@ class OrderService {
 
       // Determine if we can process all orders or need to create as drafts
       // NO wallet deduction here - only check balance sufficiency
-      let canProcessAll = user.walletBalance >= totalOrderAmount;
+      const canProcessAll = user.walletBalance >= totalOrderAmount;
 
       if (!canProcessAll) {
         // Log insufficient balance for bulk order
@@ -1238,7 +1234,7 @@ class OrderService {
       999
     );
 
-    let matchCondition = {
+    const matchCondition = {
       status: "completed",
       createdAt: { $gte: startOfMonth, $lte: endOfMonth },
     };
@@ -1288,7 +1284,7 @@ class OrderService {
       999
     );
 
-    let matchCondition = {
+    const matchCondition = {
       status: "completed",
       createdAt: { $gte: startOfDay, $lte: endOfDay },
     };
