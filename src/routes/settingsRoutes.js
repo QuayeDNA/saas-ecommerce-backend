@@ -29,6 +29,10 @@ router.post("/site/toggle", settingsController.toggleSiteStatus);
 // Signup Approval Setting - PUT requires super admin (GET is public above)
 router.put("/signup-approval", settingsController.updateSignupApprovalSetting);
 
+// Storefront Auto-Approval
+router.get("/storefront-auto-approve", settingsController.getAutoApproveStorefronts);
+router.put("/storefront-auto-approve", settingsController.updateAutoApproveStorefronts);
+
 // Commission Rates
 router.get("/commission", settingsController.getCommissionRates);
 router.put("/commission", settingsController.updateCommissionRates);

@@ -62,6 +62,28 @@ class SettingsController {
     }
   }
 
+  // Storefront Auto-Approval
+  async getAutoApproveStorefronts(req, res) {
+    try {
+      const autoApprove = await settingsService.getAutoApproveStorefronts();
+      res.json({ autoApproveStorefronts: autoApprove });
+    } catch (error) {
+      logger.error("Error getting auto-approve storefronts setting:", error);
+      res.status(500).json({ error: "Failed to get auto-approve storefronts setting" });
+    }
+  }
+
+  async updateAutoApproveStorefronts(req, res) {
+    try {
+      const { autoApproveStorefronts } = req.body;
+      const result = await settingsService.updateAutoApproveStorefronts(autoApproveStorefronts);
+      res.json(result);
+    } catch (error) {
+      logger.error("Error updating auto-approve storefronts setting:", error);
+      res.status(500).json({ error: "Failed to update auto-approve storefronts setting" });
+    }
+  }
+
   // Commission Rates
   async getCommissionRates(req, res) {
     try {

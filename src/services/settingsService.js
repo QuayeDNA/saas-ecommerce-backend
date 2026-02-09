@@ -87,6 +87,31 @@ class SettingsService {
     }
   }
 
+  // Storefront auto-approval setting
+  async getAutoApproveStorefronts() {
+    try {
+      const settings = await Settings.getInstance();
+      return settings.autoApproveStorefronts;
+    } catch (error) {
+      logger.error(`Error getting auto-approve storefronts setting: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async updateAutoApproveStorefronts(autoApprove) {
+    try {
+      const settings = await Settings.getInstance();
+      settings.autoApproveStorefronts = autoApprove;
+      await settings.save();
+
+      logger.info(`Auto-approve storefronts setting updated to: ${autoApprove}`);
+      return { autoApproveStorefronts: settings.autoApproveStorefronts };
+    } catch (error) {
+      logger.error(`Error updating auto-approve storefronts setting: ${error.message}`);
+      throw error;
+    }
+  }
+
   // Get site status for middleware checks
   async isSiteOpen() {
     try {
