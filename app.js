@@ -54,13 +54,28 @@ announcementExpirationJob();
 app.use(helmet());
 app.use(
   cors({
-    origin: [
-      process.env.FRONTEND_URL,
-      "https://brytelink-chi.vercel.app",
-      "https://saas-ecommerce.vercel.app",
-      "http://localhost:5173",
-      "http://localhost:3000",
-    ].filter(Boolean),
+    origin: function (origin, callback) {
+      const allowedOrigins = [
+        process.env.FRONTEND_URL,
+        "https://brytelink-chi.vercel.app",
+        "https://saas-ecommerce.vercel.app",
+        "http://localhost:5173",
+        "http://localhost:3000",
+      ].filter(Boolean);
+
+      // Allow requests with no origin (mobile apps, curl, etc.)
+      if (!origin) return callback(null, true);
+
+      // Allow any Vercel preview deployment for this project
+      if (
+        allowedOrigins.includes(origin) ||
+        /^https:\/\/saas-ecommerce[a-z0-9-]*\.vercel\.app$/.test(origin)
+      ) {
+        return callback(null, true);
+      }
+
+      callback(new Error("Not allowed by CORS"));
+    },
     credentials: true,
   })
 );
