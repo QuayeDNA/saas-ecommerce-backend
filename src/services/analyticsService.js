@@ -266,9 +266,9 @@ class AnalyticsService {
     const thisMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
     const [allTimeStats, todayStats, thisMonthStats] = await Promise.all([
-      // ALL TIME stats (not limited by date range)
+      // ALL TIME stats (not limited by date range) — exclude draft/pending_payment
       Order.aggregate([
-        { $match: {} }, // Get all orders
+        { $match: { status: { $nin: ["draft", "pending_payment"] } } },
         {
           $group: {
             _id: null,
@@ -282,20 +282,32 @@ class AnalyticsService {
             processing: {
               $sum: { $cond: [{ $eq: ["$status", "processing"] }, 1, 0] },
             },
+            confirmed: {
+              $sum: { $cond: [{ $eq: ["$status", "confirmed"] }, 1, 0] },
+            },
             failed: { $sum: { $cond: [{ $eq: ["$status", "failed"] }, 1, 0] } },
             cancelled: {
               $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] },
             },
+            partiallyCompleted: {
+              $sum: { $cond: [{ $eq: ["$status", "partially_completed"] }, 1, 0] },
+            },
             bulk: { $sum: { $cond: [{ $eq: ["$orderType", "bulk"] }, 1, 0] } },
             single: {
               $sum: { $cond: [{ $eq: ["$orderType", "single"] }, 1, 0] },
+            },
+            regular: {
+              $sum: { $cond: [{ $eq: ["$orderType", "regular"] }, 1, 0] },
+            },
+            storefront: {
+              $sum: { $cond: [{ $eq: ["$orderType", "storefront"] }, 1, 0] },
             },
           },
         },
       ]),
       // Today's stats
       Order.aggregate([
-        { $match: { createdAt: { $gte: todayStart, $lte: todayEnd } } },
+        { $match: { createdAt: { $gte: todayStart, $lte: todayEnd }, status: { $nin: ["draft", "pending_payment"] } } },
         {
           $group: {
             _id: null,
@@ -309,16 +321,22 @@ class AnalyticsService {
             processing: {
               $sum: { $cond: [{ $eq: ["$status", "processing"] }, 1, 0] },
             },
+            confirmed: {
+              $sum: { $cond: [{ $eq: ["$status", "confirmed"] }, 1, 0] },
+            },
             failed: { $sum: { $cond: [{ $eq: ["$status", "failed"] }, 1, 0] } },
             cancelled: {
               $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] },
+            },
+            partiallyCompleted: {
+              $sum: { $cond: [{ $eq: ["$status", "partially_completed"] }, 1, 0] },
             },
           },
         },
       ]),
       // This month's stats
       Order.aggregate([
-        { $match: { createdAt: { $gte: thisMonthStart, $lte: thisMonthEnd } } },
+        { $match: { createdAt: { $gte: thisMonthStart, $lte: thisMonthEnd }, status: { $nin: ["draft", "pending_payment"] } } },
         {
           $group: {
             _id: null,
@@ -332,9 +350,15 @@ class AnalyticsService {
             processing: {
               $sum: { $cond: [{ $eq: ["$status", "processing"] }, 1, 0] },
             },
+            confirmed: {
+              $sum: { $cond: [{ $eq: ["$status", "confirmed"] }, 1, 0] },
+            },
             failed: { $sum: { $cond: [{ $eq: ["$status", "failed"] }, 1, 0] } },
             cancelled: {
               $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] },
+            },
+            partiallyCompleted: {
+              $sum: { $cond: [{ $eq: ["$status", "partially_completed"] }, 1, 0] },
             },
           },
         },
@@ -346,10 +370,14 @@ class AnalyticsService {
       completed: 0,
       pending: 0,
       processing: 0,
+      confirmed: 0,
       failed: 0,
       cancelled: 0,
+      partiallyCompleted: 0,
       bulk: 0,
       single: 0,
+      regular: 0,
+      storefront: 0,
     };
 
     const todayData = todayStats[0] || {
@@ -357,8 +385,10 @@ class AnalyticsService {
       completed: 0,
       pending: 0,
       processing: 0,
+      confirmed: 0,
       failed: 0,
       cancelled: 0,
+      partiallyCompleted: 0,
     };
 
     const monthData = thisMonthStats[0] || {
@@ -366,8 +396,10 @@ class AnalyticsService {
       completed: 0,
       pending: 0,
       processing: 0,
+      confirmed: 0,
       failed: 0,
       cancelled: 0,
+      partiallyCompleted: 0,
     };
 
     const successRate =
@@ -380,28 +412,36 @@ class AnalyticsService {
       completed: allTimeData.completed,
       pending: allTimeData.pending,
       processing: allTimeData.processing,
+      confirmed: allTimeData.confirmed,
       failed: allTimeData.failed,
       cancelled: allTimeData.cancelled,
+      partiallyCompleted: allTimeData.partiallyCompleted,
       successRate: Math.round(successRate * 100) / 100,
       today: {
         total: todayData.total,
         completed: todayData.completed,
         pending: todayData.pending,
         processing: todayData.processing,
+        confirmed: todayData.confirmed,
         failed: todayData.failed,
         cancelled: todayData.cancelled,
+        partiallyCompleted: todayData.partiallyCompleted,
       },
       thisMonth: {
         total: monthData.total,
         completed: monthData.completed,
         pending: monthData.pending,
         processing: monthData.processing,
+        confirmed: monthData.confirmed,
         failed: monthData.failed,
         cancelled: monthData.cancelled,
+        partiallyCompleted: monthData.partiallyCompleted,
       },
       byType: {
         bulk: allTimeData.bulk,
         single: allTimeData.single,
+        regular: allTimeData.regular,
+        storefront: allTimeData.storefront,
       },
     };
   }
@@ -672,29 +712,40 @@ class AnalyticsService {
         createdAt: { $gte: startDate, $lte: endDate },
       });
 
-      const totalCommission = commissionRecords.reduce(
-        (sum, record) => sum + (record.amount || 0),
-        0
-      );
       const totalRecords = commissionRecords.length;
 
-      // Get pending commissions
+      // Separate by status
+      const paidCommissions = commissionRecords.filter(
+        (record) => record.status === "paid"
+      );
       const pendingCommissions = commissionRecords.filter(
         (record) => record.status === "pending"
       );
 
+      const totalEarned = commissionRecords.reduce(
+        (sum, record) => sum + (record.amount || 0),
+        0
+      );
+      const totalPaid = paidCommissions.reduce(
+        (sum, record) => sum + (record.amount || 0),
+        0
+      );
+      const pendingAmount = pendingCommissions.reduce(
+        (sum, record) => sum + (record.amount || 0),
+        0
+      );
+
       return {
-        totalPaid: totalCommission,
+        totalEarned,
+        totalPaid,
         totalRecords,
         pendingCount: pendingCommissions.length,
-        pendingAmount: pendingCommissions.reduce(
-          (sum, record) => sum + (record.amount || 0),
-          0
-        ),
+        pendingAmount,
       };
     } catch (error) {
       logger.error(`Commission statistics error: ${error.message}`);
       return {
+        totalEarned: 0,
         totalPaid: 0,
         totalRecords: 0,
         pendingCount: 0,
@@ -717,6 +768,7 @@ class AnalyticsService {
       {
         $match: {
           createdAt: { $gte: startDate, $lte: endDate },
+          status: { $nin: ["draft", "pending_payment"] },
         },
       },
       {
@@ -725,7 +777,11 @@ class AnalyticsService {
             $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
           },
           orders: { $sum: 1 },
-          revenue: { $sum: "$total" },
+          revenue: {
+            $sum: {
+              $cond: [{ $eq: ["$status", "completed"] }, "$total", 0],
+            },
+          },
           completedOrders: {
             $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] },
           },
@@ -757,6 +813,7 @@ class AnalyticsService {
       {
         $match: {
           createdAt: { $gte: startDate, $lte: endDate },
+          status: { $nin: ["draft", "pending_payment"] },
         },
       },
       {
@@ -820,6 +877,7 @@ class AnalyticsService {
               ? { tenantId: new mongoose.Types.ObjectId(tenantId) }
               : {}),
             createdAt: { $gte: startDate, $lte: endDate },
+            status: { $nin: ["draft", "pending_payment"] },
           },
         },
         {
@@ -838,6 +896,12 @@ class AnalyticsService {
             failed: { $sum: { $cond: [{ $eq: ["$status", "failed"] }, 1, 0] } },
             cancelled: {
               $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] },
+            },
+            confirmed: {
+              $sum: { $cond: [{ $eq: ["$status", "confirmed"] }, 1, 0] },
+            },
+            partiallyCompleted: {
+              $sum: { $cond: [{ $eq: ["$status", "partially_completed"] }, 1, 0] },
             },
           },
         },
@@ -851,6 +915,7 @@ class AnalyticsService {
               ? { tenantId: new mongoose.Types.ObjectId(tenantId) }
               : {}),
             createdAt: { $gte: todayStart, $lte: todayEnd },
+            status: { $nin: ["draft", "pending_payment"] },
           },
         },
         {
@@ -870,6 +935,12 @@ class AnalyticsService {
             cancelled: {
               $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] },
             },
+            confirmed: {
+              $sum: { $cond: [{ $eq: ["$status", "confirmed"] }, 1, 0] },
+            },
+            partiallyCompleted: {
+              $sum: { $cond: [{ $eq: ["$status", "partially_completed"] }, 1, 0] },
+            },
           },
         },
       ]),
@@ -880,8 +951,10 @@ class AnalyticsService {
       completed: 0,
       pending: 0,
       processing: 0,
+      confirmed: 0,
       failed: 0,
       cancelled: 0,
+      partiallyCompleted: 0,
     };
 
     const todayData = todayStats[0] || {
@@ -889,8 +962,10 @@ class AnalyticsService {
       completed: 0,
       pending: 0,
       processing: 0,
+      confirmed: 0,
       failed: 0,
       cancelled: 0,
+      partiallyCompleted: 0,
     };
 
     const successRate =
@@ -903,16 +978,20 @@ class AnalyticsService {
       completed: periodData.completed,
       pending: periodData.pending,
       processing: periodData.processing,
+      confirmed: periodData.confirmed,
       failed: periodData.failed,
       cancelled: periodData.cancelled,
+      partiallyCompleted: periodData.partiallyCompleted,
       successRate: Math.round(successRate * 100) / 100,
       todayCounts: {
         total: todayData.total,
         completed: todayData.completed,
         pending: todayData.pending,
         processing: todayData.processing,
+        confirmed: todayData.confirmed,
         failed: todayData.failed,
         cancelled: todayData.cancelled,
+        partiallyCompleted: todayData.partiallyCompleted,
       },
     };
   }
@@ -1118,6 +1197,7 @@ class AnalyticsService {
             ? { tenantId: new mongoose.Types.ObjectId(tenantId) }
             : {}),
           createdAt: { $gte: startDate, $lte: endDate },
+          status: { $nin: ["draft", "pending_payment"] },
         },
       },
       {
@@ -1126,7 +1206,11 @@ class AnalyticsService {
             $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
           },
           orders: { $sum: 1 },
-          revenue: { $sum: "$total" },
+          revenue: {
+            $sum: {
+              $cond: [{ $eq: ["$status", "completed"] }, "$total", 0],
+            },
+          },
           completedOrders: {
             $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] },
           },

@@ -1353,9 +1353,15 @@ class OrderService {
             _id: null,
             totalOrders: { $sum: 1 },
             completedOrders: {
-              $sum: { $cond: ["$status", 1, 0] },
+              $sum: {
+                $cond: [{ $eq: ["$status", "completed"] }, 1, 0],
+              },
             },
-            totalRevenue: { $sum: "$total" },
+            totalRevenue: {
+              $sum: {
+                $cond: [{ $eq: ["$status", "completed"] }, "$total", 0],
+              },
+            },
             bulkOrders: {
               $sum: { $cond: [{ $eq: ["$orderType", "bulk"] }, 1, 0] },
             },
