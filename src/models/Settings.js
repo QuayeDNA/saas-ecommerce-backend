@@ -17,6 +17,12 @@ const settingsSchema = new mongoose.Schema(
       default: true,
     },
 
+    // Storefront Settings
+    autoApproveStorefronts: {
+      type: Boolean,
+      default: false,
+    },
+
     // Commission Rates by User Type
     agentCommission: {
       type: Number,

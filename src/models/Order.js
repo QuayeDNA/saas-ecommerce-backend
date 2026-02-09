@@ -77,7 +77,7 @@ const orderSchema = new mongoose.Schema(
     },
     orderType: {
       type: String,
-      enum: ["single", "bulk", "regular"],
+      enum: ["single", "bulk", "regular", "storefront"],
       required: true,
     },
     // Version field for optimistic locking (prevents concurrent modification)
@@ -97,7 +97,56 @@ const orderSchema = new mongoose.Schema(
       phone: String,
     },
 
-
+    // Storefront-specific data (only for storefront orders)
+    storefrontData: {
+      storefrontId: { 
+        type: mongoose.Schema.Types.ObjectId, 
+        ref: 'AgentStorefront',
+        required: function() { return this.orderType === 'storefront'; }
+      },
+      customerInfo: {
+        name: { 
+          type: String, 
+          required: function() { return this.orderType === 'storefront'; }
+        },
+        phone: { 
+          type: String, 
+          required: function() { return this.orderType === 'storefront'; }
+        },
+        email: String
+      },
+      paymentMethod: {
+        type: { 
+          type: String, 
+          enum: ['mobile_money', 'bank_transfer'],
+          required: function() { return this.orderType === 'storefront'; }
+        },
+        reference: String, // Transaction ID or reference
+        paymentProofUrl: String, // Future: screenshot of payment for verification
+        verified: { type: Boolean, default: false },
+        verifiedAt: Date,
+        verificationNotes: String
+      },
+      totalMarkup: { type: Number, default: 0 }, // Total profit for agent
+      totalTierCost: { type: Number, default: 0 }, // Agent's cost at tier prices
+      items: [{
+        bundleId: { type: mongoose.Schema.Types.ObjectId, ref: 'Bundle' },
+        bundleName: String,
+        provider: String,
+        dataVolume: Number,
+        dataUnit: String,
+        validity: mongoose.Schema.Types.Mixed,
+        validityUnit: String,
+        quantity: { type: Number, default: 1 },
+        customerPhone: String,
+        unitPrice: Number,   // Storefront price (what customer pays per unit)
+        tierPrice: Number,   // Agent's cost (for wallet deduction)
+        totalPrice: Number,  // unitPrice * quantity
+        processingStatus: { type: String, enum: ['pending', 'processing', 'completed', 'failed'], default: 'pending' },
+        processingError: String,
+        processedAt: Date
+      }]
+    },
 
     // Order items
     items: [orderItemSchema],
@@ -255,7 +304,17 @@ orderSchema.pre("save", async function (next) {
   }
 
   // Calculate totals
-  if (this.items && Array.isArray(this.items) && this.items.length > 0) {
+  // Storefront orders store items in storefrontData.items and set total directly
+  if (this.orderType === 'storefront') {
+    // Preserve the manually set total for storefront orders
+    if (!this.total && this.storefrontData?.items?.length > 0) {
+      this.total = this.storefrontData.items.reduce(
+        (sum, item) => sum + (item.totalPrice || 0),
+        0
+      );
+    }
+    this.subtotal = this.total || 0;
+  } else if (this.items && Array.isArray(this.items) && this.items.length > 0) {
     this.subtotal = this.items.reduce(
       (sum, item) => sum + (item.totalPrice || 0),
       0
@@ -268,8 +327,10 @@ orderSchema.pre("save", async function (next) {
   this.tax = this.tax || 0;
   this.discount = this.discount || 0;
 
-  // Calculate final total
-  this.total = this.subtotal + this.tax - this.discount;
+  // Calculate final total (skip for storefront - already set)
+  if (this.orderType !== 'storefront') {
+    this.total = this.subtotal + this.tax - this.discount;
+  }
 
   next();
 });

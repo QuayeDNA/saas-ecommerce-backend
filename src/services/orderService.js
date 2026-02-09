@@ -828,11 +828,15 @@ class OrderService {
           query.status = { $ne: "draft" };
         }
       } else if (!status && currentUserId) {
-        // If no specific status filter and user is not super admin, exclude draft orders from other users
+        // If no specific status filter, exclude draft orders from other users
+        // AND always exclude pending_payment storefront orders (managed via storefront order manager)
         query.$or = [
-          { status: { $ne: "draft" } },
-          { createdBy: currentUserId },
+          { status: { $nin: ["draft", "pending_payment"] } },
+          { status: "draft", createdBy: currentUserId },
         ];
+      } else if (!status) {
+        // No status filter and no currentUserId: exclude draft and pending_payment
+        query.status = { $nin: ["draft", "pending_payment"] };
       }
 
       if (startDate || endDate) {
