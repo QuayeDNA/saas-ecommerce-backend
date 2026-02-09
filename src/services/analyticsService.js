@@ -1339,7 +1339,7 @@ class AnalyticsService {
 
       // Get wallet transactions for this agent
       const transactions = await WalletTransaction.find({
-        userId: agentObjectId,
+        user: agentObjectId,
       })
         .sort({ createdAt: -1 })
         .limit(10);
@@ -1407,7 +1407,7 @@ class AnalyticsService {
 
       // Get recent wallet transactions
       const recentTransactions = await WalletTransaction.find({
-        userId: agentObjectId,
+        user: agentObjectId,
       })
         .sort({ createdAt: -1 })
         .limit(5)

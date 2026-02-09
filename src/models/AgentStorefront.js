@@ -106,9 +106,7 @@ const agentStorefrontSchema = new mongoose.Schema({
   timestamps: true 
 });
 
-// Indexes for performance
-agentStorefrontSchema.index({ agentId: 1 });
-agentStorefrontSchema.index({ businessName: 1 });
+// Indexes for performance (agentId and businessName already indexed via unique: true)
 agentStorefrontSchema.index({ isActive: 1, isApproved: 1 });
 
 // Virtual for store URL
