@@ -94,12 +94,48 @@ const agentStorefrontSchema = new mongoose.Schema({
   settings: {
     theme: { 
       type: String, 
-      enum: ['blue', 'green', 'purple'], 
+      enum: ['blue', 'green', 'purple', 'red', 'orange', 'teal', 'indigo', 'pink'], 
       default: 'blue' 
     },
     showContact: { 
       type: Boolean, 
       default: true 
+    }
+  },
+
+  // Branding & Customization
+  branding: {
+    logoUrl: String,
+    bannerUrl: String,
+    tagline: {
+      type: String,
+      maxLength: 120,
+      trim: true
+    },
+    customColors: {
+      primary: String,   // hex e.g. #3B82F6
+      secondary: String, // hex
+      accent: String,    // hex
+    },
+    socialLinks: {
+      facebook: String,
+      instagram: String,
+      twitter: String,
+      tiktok: String,
+    },
+    layout: {
+      type: String,
+      enum: ['classic', 'modern', 'minimal'],
+      default: 'classic'
+    },
+    showBanner: {
+      type: Boolean,
+      default: true
+    },
+    footerText: {
+      type: String,
+      maxLength: 200,
+      trim: true
     }
   }
 }, { 

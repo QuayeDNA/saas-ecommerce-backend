@@ -411,10 +411,11 @@ class StorefrontService {
       pricingMap.set(p.bundleId.toString(), p);
     }
     
-    // Get ALL active bundles from the system
+    // Get ALL active bundles from the system (include AFA fields + packageId for grouping)
     const allBundles = await Bundle.find({ isActive: true, isDeleted: { $ne: true } })
-      .select('name description dataVolume dataUnit validity validityUnit category providerId pricingTiers price')
+      .select('name description dataVolume dataUnit validity validityUnit category providerId packageId pricingTiers price requiresGhanaCard afaRequirements')
       .populate('providerId', 'name code')
+      .populate('packageId', 'name category')
       .lean();
     
     // For each bundle: show unless agent explicitly disabled it
@@ -446,7 +447,13 @@ class StorefrontService {
         validityUnit: bundle.validityUnit,
         category: bundle.category,
         provider: bundle.providerId?.code || 'Unknown',
-        price
+        providerName: bundle.providerId?.name || bundle.providerId?.code || 'Unknown',
+        packageName: bundle.packageId?.name || bundle.category || 'General',
+        packageCategory: bundle.packageId?.category || bundle.category,
+        price,
+        // AFA-specific fields
+        requiresGhanaCard: bundle.requiresGhanaCard || false,
+        afaRequirements: bundle.afaRequirements || [],
       });
     }
     
@@ -457,6 +464,7 @@ class StorefrontService {
         description: storefront.description,
         contactInfo: storefront.contactInfo,
         settings: storefront.settings,
+        branding: storefront.branding || {},
         paymentMethods: storefront.paymentMethods.filter(pm => pm.isActive)
       },
       bundles
