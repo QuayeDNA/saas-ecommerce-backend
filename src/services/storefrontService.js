@@ -457,6 +457,7 @@ class StorefrontService {
         description: storefront.description,
         contactInfo: storefront.contactInfo,
         settings: storefront.settings,
+        branding: storefront.branding || {},
         paymentMethods: storefront.paymentMethods.filter(pm => pm.isActive)
       },
       bundles
