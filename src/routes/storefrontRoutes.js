@@ -311,7 +311,7 @@ router.get(
   [
     query('status')
       .optional()
-      .isIn(['pending', 'confirmed', 'processing', 'completed', 'cancelled'])
+      .isIn(['pending', 'pending_payment', 'confirmed', 'processing', 'completed', 'cancelled', 'failed'])
       .withMessage('Invalid status'),
     query('limit')
       .optional()
