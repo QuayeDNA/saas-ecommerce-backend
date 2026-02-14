@@ -95,6 +95,7 @@ const orderSchema = new mongoose.Schema(
       name: String,
       email: String,
       phone: String,
+      ghanaCardNumber: String, // AFA-specific
     },
 
     // Storefront-specific data (only for storefront orders)
@@ -113,7 +114,8 @@ const orderSchema = new mongoose.Schema(
           type: String, 
           required: function() { return this.orderType === 'storefront'; }
         },
-        email: String
+        email: String,
+        ghanaCardNumber: String // AFA-specific
       },
       paymentMethod: {
         type: { 
