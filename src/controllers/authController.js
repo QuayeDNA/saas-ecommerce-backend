@@ -796,7 +796,7 @@ class AuthController {
   // List all users (super admin only)
   async listUsers(req, res) {
     try {
-      const { status, userType, search } = req.query;
+      const { status, userType, search, page = 1, limit = 20 } = req.query;
       const filter = {};
 
       // Add status filter
@@ -816,12 +816,33 @@ class AuthController {
         ];
       }
 
+      // Parse pagination parameters
+      const pageNum = parseInt(page, 10) || 1;
+      const limitNum = parseInt(limit, 10) || 20;
+      const skip = (pageNum - 1) * limitNum;
+
+      // Get total count for pagination
+      const total = await User.countDocuments(filter);
+
       // No tenantId filtering; super admin sees all users
       const users = await User.find(filter)
         .select("-password -refreshToken")
-        .sort({ createdAt: -1 }); // Sort by newest first
+        .sort({ createdAt: -1 }) // Sort by newest first
+        .skip(skip)
+        .limit(limitNum);
 
-      res.json({ success: true, users });
+      const totalPages = Math.ceil(total / limitNum);
+
+      res.json({
+        success: true,
+        users,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          pages: totalPages
+        }
+      });
     } catch (error) {
       logger.error(`List users failed: ${error.message}`);
       res
