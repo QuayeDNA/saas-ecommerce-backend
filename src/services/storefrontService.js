@@ -414,20 +414,24 @@ class StorefrontService {
     // Get ALL active bundles from the system (include AFA fields + packageId for grouping)
     const allBundles = await Bundle.find({ isActive: true, isDeleted: { $ne: true } })
       .select('name description dataVolume dataUnit validity validityUnit category providerId packageId pricingTiers price requiresGhanaCard afaRequirements')
-      .populate('providerId', 'name code')
+      .populate('providerId', 'name code logo') // include logo so public storefront can render provider cards
       .populate('packageId', 'name category')
       .lean();
     
     // For each bundle: show unless agent explicitly disabled it
     const bundles = [];
+
+    // Build provider → package → bundles grouping so frontend can render provider cards + package groups
+    const providersMap = new Map(); // providerCode -> { code, name, logo, packages: Map(packageName -> { _id, name, category, bundles: [] }) }
+
     for (const bundle of allBundles) {
       const pricing = pricingMap.get(bundle._id.toString());
-      
+
       if (pricing && !pricing.isActive) {
         // Agent explicitly disabled this bundle — hide it
         continue;
       }
-      
+
       let price;
       if (pricing) {
         // Agent has an active pricing record
@@ -436,8 +440,8 @@ class StorefrontService {
         // No pricing record — show at agent's tier price
         price = bundle.pricingTiers?.[agentUserType] ?? bundle.pricingTiers?.default ?? bundle.price;
       }
-      
-      bundles.push({
+
+      const publicBundle = {
         _id: bundle._id,
         name: bundle.name,
         description: bundle.description,
@@ -454,9 +458,36 @@ class StorefrontService {
         // AFA-specific fields
         requiresGhanaCard: bundle.requiresGhanaCard || false,
         afaRequirements: bundle.afaRequirements || [],
-      });
+      };
+
+      bundles.push(publicBundle);
+
+      // --- populate providersMap for grouped response ---
+      const provCode = bundle.providerId?.code || 'Unknown';
+      const provName = bundle.providerId?.name || provCode;
+      const provLogo = bundle.providerId?.logo || null;
+      if (!providersMap.has(provCode)) {
+        providersMap.set(provCode, { code: provCode, name: provName, logo: provLogo, packages: new Map() });
+      }
+      const provEntry = providersMap.get(provCode);
+
+      const pkgId = bundle.packageId?._id || null;
+      const pkgName = bundle.packageId?.name || bundle.category || 'General';
+      const pkgCategory = bundle.packageId?.category || bundle.category || null;
+      if (!provEntry.packages.has(pkgName)) {
+        provEntry.packages.set(pkgName, { _id: pkgId, name: pkgName, category: pkgCategory, bundles: [] });
+      }
+      provEntry.packages.get(pkgName).bundles.push(publicBundle);
     }
-    
+
+    // Convert providersMap -> array with packages arrays
+    const providers = Array.from(providersMap.values()).map(p => ({
+      code: p.code,
+      name: p.name,
+      logo: p.logo,
+      packages: Array.from(p.packages.values()).map(pkg => ({ _id: pkg._id, name: pkg.name, category: pkg.category, bundles: pkg.bundles }))
+    }));
+
     return {
       storefront: {
         businessName: storefront.businessName,
@@ -467,7 +498,8 @@ class StorefrontService {
         branding: storefront.branding || {},
         paymentMethods: storefront.paymentMethods.filter(pm => pm.isActive)
       },
-      bundles
+      bundles,      // backward-compatible flat list
+      providers    // new grouped provider -> packages -> bundles structure
     };
   }
   

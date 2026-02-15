@@ -195,6 +195,7 @@ class UserController {
         limit = 20,
         search,
         userType,
+        userTypes, // comma-separated list (optional)
         includeWallet = "true",
       } = req.query;
       const { userType: requestUserType } = req.user;
@@ -209,9 +210,20 @@ class UserController {
 
       let query = {};
 
-      // Filter by user type if specified
-      if (userType) {
+      // Support both single userType and comma-separated userTypes
+      if (userTypes) {
+        const types = String(userTypes)
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean);
+        if (types.length) query.userType = { $in: types };
+      } else if (userType) {
         query.userType = userType;
+      }
+
+      // Add status filter (optional)
+      if (req.query.status) {
+        query.status = req.query.status;
       }
 
       // Add search functionality
@@ -223,9 +235,13 @@ class UserController {
         ];
       }
 
-      // Select fields including wallet balance
-      const selectFields =
+      // Select fields (omit wallet if explicitly requested)
+      let selectFields =
         "-password -refreshToken -verificationToken -resetPasswordToken";
+      if (String(includeWallet).toLowerCase() !== "true") {
+        selectFields += " -walletBalance";
+      }
+
       const users = await User.find(query)
         .select(selectFields)
         .sort({ createdAt: -1 })
