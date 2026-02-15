@@ -467,9 +467,48 @@ class UserController {
           subscriptionStatus: "active",
         });
 
+        // Get users active in the last week (based on order activity)
+        const Order = (await import("../models/Order.js")).default;
+        const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        const activeUserIds = await Order.distinct("createdBy", {
+          createdAt: { $gte: oneWeekAgo }
+        });
+        const activeUsers = activeUserIds.length;
+
+        // Get active agents (agents who have created orders in the last week)
+        const activeAgentIds = await Order.distinct("createdBy", {
+          createdAt: { $gte: oneWeekAgo },
+          userType: "agent"
+        });
+        const activeAgents = activeAgentIds.length;
+
+        // Count users by status
+        const pendingUsers = await User.countDocuments({ status: "pending" });
+        const rejectedUsers = await User.countDocuments({ status: "rejected" });
+        const superAdmins = await User.countDocuments({ userType: "super_admin" });
+
+        // Count users by type
+        const superAgents = await User.countDocuments({ userType: "super_agent" });
+        const dealers = await User.countDocuments({ userType: "dealer" });
+        const superDealers = await User.countDocuments({ userType: "super_dealer" });
+
         stats = {
           totalUsers,
+          activeUsers,
+          pendingUsers,
+          rejectedUsers,
+          agents: totalAgents,
+          totalAgentRoles: totalAgents,
+          superAdmins,
           totalAgents,
+          activeAgents,
+          verifiedSubordinates: verifiedUsers,
+          unverifiedSubordinates: totalUsers - verifiedUsers,
+          // Individual user type counts
+          superAgents,
+          dealers,
+          superDealers,
+          // Keep existing fields for backward compatibility
           totalBusinessUsers,
           verifiedUsers,
           unverifiedUsers: totalUsers - verifiedUsers,

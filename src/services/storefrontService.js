@@ -487,6 +487,7 @@ class StorefrontService {
     let totalAmount = 0;
     let totalMarkup = 0;
     let totalTierCost = 0;
+    let hasAfaBundles = false;
     const storefrontItems = [];   // For storefrontData.items (customer-facing prices)
     const systemItems = [];       // For top-level items[] (tier prices for agent processing)
     
@@ -531,6 +532,19 @@ class StorefrontService {
       
       // Resolve provider code from populated providerId
       const providerCode = bundle.providerId?.code || 'Unknown';
+
+      // Validate AFA requirements
+      if (providerCode === 'AFA' && bundle.requiresGhanaCard) {
+        hasAfaBundles = true;
+        if (!customerInfo.ghanaCardNumber) {
+          throw new Error(`Ghana Card number is required for AFA bundle: ${bundle.name}`);
+        }
+        // Validate Ghana Card format
+        const ghanaCardRegex = /^GHA-\d{9}-\d$/i;
+        if (!ghanaCardRegex.test(customerInfo.ghanaCardNumber.toUpperCase())) {
+          throw new Error(`Invalid Ghana Card format for AFA bundle: ${bundle.name}. Must be in format GHA-XXXXXXXXX-X`);
+        }
+      }
 
       // Storefront-specific item (customer-facing prices)
       storefrontItems.push({
@@ -578,6 +592,14 @@ class StorefrontService {
     const order = new Order({
       orderType: 'storefront',
       customer: null,
+      // For AFA orders, populate top-level customerInfo like regular AFA orders
+      ...(hasAfaBundles ? {
+        customerInfo: {
+          name: customerInfo.name,
+          phone: customerInfo.phone,
+          ...(customerInfo.ghanaCardNumber ? { ghanaCardNumber: customerInfo.ghanaCardNumber } : {})
+        }
+      } : {}),
       // Top-level items in standard format — agent dashboard reads these
       items: systemItems,
       storefrontData: {
@@ -585,7 +607,8 @@ class StorefrontService {
         customerInfo: {
           name: customerInfo.name,
           phone: customerInfo.phone,
-          ...(customerInfo.email ? { email: customerInfo.email } : {})
+          ...(customerInfo.email ? { email: customerInfo.email } : {}),
+          ...(customerInfo.ghanaCardNumber ? { ghanaCardNumber: customerInfo.ghanaCardNumber } : {})
         },
         paymentMethod: {
           type: paymentMethod.type,
@@ -604,6 +627,11 @@ class StorefrontService {
       tenantId: storefront.agentId._id || storefront.agentId,
       createdBy: storefront.agentId._id || storefront.agentId
     });
+
+    // For AFA orders, add notes like regular AFA orders
+    if (hasAfaBundles && customerInfo.ghanaCardNumber) {
+      order.notes = `AFA Registration - ${systemItems[0]?.packageDetails?.name || 'AFA Bundle'} for ${customerInfo.name} (${customerInfo.phone}) - Ghana Card: ${customerInfo.ghanaCardNumber}`;
+    }
     
     await order.save();
     
