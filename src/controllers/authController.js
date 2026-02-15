@@ -997,6 +997,7 @@ class AuthController {
           .status(404)
           .json({ success: false, message: "User not found" });
       }
+
       // Only allow impersonation of non-super_admin users
       if (user.userType === "super_admin") {
         return res.status(403).json({
@@ -1004,8 +1005,31 @@ class AuthController {
           message: "Cannot impersonate another super admin",
         });
       }
-      const token = this.generateAccessToken(user._id, user.userType);
-      res.json({ success: true, token, user });
+
+      // Generate short-lived access token for impersonated user
+      const accessToken = this.generateAccessToken(user._id, user.userType);
+
+      // Generate a refresh token for the impersonated session and persist it
+      const refreshToken = this.generateRefreshToken(user._id);
+      user.refreshToken = refreshToken; // store so /refresh endpoint will accept it
+      await user.save();
+
+      // Set refresh token cookie for the impersonated session (same options as login)
+      const cookieOptions = {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days (impersonation should be short-lived)
+      };
+      res.cookie("refreshToken", refreshToken, cookieOptions);
+
+      // Return both tokens so frontend can persist admin tokens and set impersonated cookies
+      res.json({
+        success: true,
+        token: accessToken,
+        refreshToken,
+        user,
+      });
     } catch (error) {
       logger.error(`Impersonate user failed: ${error.message}`);
       res
