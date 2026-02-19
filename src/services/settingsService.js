@@ -164,6 +164,14 @@ class SettingsService {
   async getApiSettings() {
     try {
       const settings = await Settings.getInstance();
+
+      // Detect whether secret keys exist on the server (useful for admin UI)
+      const paystackTestSecretExists = Boolean(settings.paystackTestSecretKey || process.env.PAYSTACK_TEST_SECRET_KEY);
+      const paystackLiveSecretExists = Boolean(settings.paystackLiveSecretKey || process.env.PAYSTACK_LIVE_SECRET_KEY);
+
+      // In production we must NOT return secret keys to the browser. Instead expose existence flags.
+      const isProd = process.env.NODE_ENV === 'production';
+
       const result = {
         mtnApiKey: settings.mtnApiKey || process.env.MTN_API_KEY || "",
         telecelApiKey:
@@ -177,9 +185,15 @@ class SettingsService {
         // Paystack
         paystackEnabled: settings.paystackEnabled || (process.env.PAYSTACK_ENABLED === 'true') || false,
         paystackTestPublicKey: settings.paystackTestPublicKey || process.env.PAYSTACK_TEST_PUBLIC_KEY || "",
-        paystackTestSecretKey: settings.paystackTestSecretKey || process.env.PAYSTACK_TEST_SECRET_KEY || "",
         paystackLivePublicKey: settings.paystackLivePublicKey || process.env.PAYSTACK_LIVE_PUBLIC_KEY || "",
-        paystackLiveSecretKey: settings.paystackLiveSecretKey || process.env.PAYSTACK_LIVE_SECRET_KEY || "",
+
+        // SECRET KEYS: only include actual secret values when NOT in production.
+        paystackTestSecretKey: isProd ? undefined : (settings.paystackTestSecretKey || process.env.PAYSTACK_TEST_SECRET_KEY || ""),
+        paystackLiveSecretKey: isProd ? undefined : (settings.paystackLiveSecretKey || process.env.PAYSTACK_LIVE_SECRET_KEY || ""),
+
+        // provide boolean flags so the UI can indicate whether a secret exists without exposing it
+        paystackTestSecretExists,
+        paystackLiveSecretExists,
       };
 
       return result;
