@@ -174,6 +174,12 @@ class SettingsService {
           settings.apiEndpoint ||
           process.env.API_ENDPOINT ||
           "https://api.telecomsaas.com",
+        // Paystack
+        paystackEnabled: settings.paystackEnabled || (process.env.PAYSTACK_ENABLED === 'true') || false,
+        paystackTestPublicKey: settings.paystackTestPublicKey || process.env.PAYSTACK_TEST_PUBLIC_KEY || "",
+        paystackTestSecretKey: settings.paystackTestSecretKey || process.env.PAYSTACK_TEST_SECRET_KEY || "",
+        paystackLivePublicKey: settings.paystackLivePublicKey || process.env.PAYSTACK_LIVE_PUBLIC_KEY || "",
+        paystackLiveSecretKey: settings.paystackLiveSecretKey || process.env.PAYSTACK_LIVE_SECRET_KEY || "",
       };
 
       return result;
@@ -189,6 +195,14 @@ class SettingsService {
     settingsDoc.telecelApiKey = settings.telecelApiKey;
     settingsDoc.airtelTigoApiKey = settings.airtelTigoApiKey;
     settingsDoc.apiEndpoint = settings.apiEndpoint;
+
+    // Paystack settings (optional)
+    if (settings.paystackEnabled !== undefined) settingsDoc.paystackEnabled = settings.paystackEnabled;
+    if (settings.paystackTestPublicKey !== undefined) settingsDoc.paystackTestPublicKey = settings.paystackTestPublicKey;
+    if (settings.paystackTestSecretKey !== undefined) settingsDoc.paystackTestSecretKey = settings.paystackTestSecretKey;
+    if (settings.paystackLivePublicKey !== undefined) settingsDoc.paystackLivePublicKey = settings.paystackLivePublicKey;
+    if (settings.paystackLiveSecretKey !== undefined) settingsDoc.paystackLiveSecretKey = settings.paystackLiveSecretKey;
+
     await settingsDoc.save();
 
     logger.info("API settings updated:", {
@@ -196,6 +210,8 @@ class SettingsService {
       mtnApiKey: settings.mtnApiKey ? "[HIDDEN]" : "",
       telecelApiKey: settings.telecelApiKey ? "[HIDDEN]" : "",
       airtelTigoApiKey: settings.airtelTigoApiKey ? "[HIDDEN]" : "",
+      paystackTestSecretKey: settings.paystackTestSecretKey ? "[HIDDEN]" : "",
+      paystackLiveSecretKey: settings.paystackLiveSecretKey ? "[HIDDEN]" : "",
     });
     return settings;
   }

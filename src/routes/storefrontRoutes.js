@@ -12,7 +12,7 @@ const validateBusinessName = param('businessName')
   .isLength({ min: 3, max: 50 })
   .matches(/^[a-zA-Z0-9_-]+$/)
   .withMessage('Business name must be 3-50 characters, alphanumeric with underscores/hyphens only');
-
+  
 const validateStorefrontData = [
   body('businessName')
     .isLength({ min: 3, max: 50 })
@@ -36,8 +36,8 @@ const validateStorefrontData = [
     .isArray({ min: 1 })
     .withMessage('At least one payment method is required'),
   body('paymentMethods.*.type')
-    .isIn(['mobile_money', 'bank_transfer'])
-    .withMessage('Payment method type must be mobile_money or bank_transfer'),
+    .isIn(['mobile_money'])
+    .withMessage('Payment method type must be mobile_money'),
   body('paymentMethods.*')
     .custom((paymentMethod) => {
       if (paymentMethod.type === 'mobile_money') {
@@ -92,8 +92,8 @@ const validateOrderData = [
     .isEmail()
     .withMessage('Invalid email format'),
   body('paymentMethod.type')
-    .isIn(['mobile_money', 'bank_transfer'])
-    .withMessage('Payment method type must be mobile_money or bank_transfer'),
+    .isIn(['mobile_money'])
+    .withMessage('Payment method type must be mobile_money'),
   body('paymentMethod.reference')
     .optional()
     .isLength({ min: 1, max: 100 })
@@ -294,6 +294,13 @@ router.post(
   authenticate,
   validatePricingData,
   storefrontController.setPricing
+);
+
+// Agent: create Paystack subaccount for payouts
+router.post(
+  '/agent/storefront/paystack/subaccount',
+  authenticate,
+  storefrontController.createPaystackSubaccount
 );
 
 // =========================================================================

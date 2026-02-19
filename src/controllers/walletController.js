@@ -3,6 +3,7 @@ import User from "../models/User.js";
 import WalletTransaction from "../models/WalletTransaction.js";
 import walletService from "../services/walletService.js";
 import websocketService from "../services/websocketService.js";
+import paystackService from "../services/paystackService.js";
 import logger from "../utils/logger.js";
 import { isBusinessUser } from "../utils/userTypeHelpers.js";
 
@@ -232,6 +233,119 @@ class WalletController {
         success: false,
         message: error.message || "Failed to create top-up request",
       });
+    }
+  }
+
+  /**
+   * Initiate a Paystack checkout for wallet top-up (authenticated user)
+   * POST /api/wallet/paystack/initiate
+   */
+  async initiatePaystackTopUp(req, res) {
+    try {
+      const userId = req.user.userId;
+      const { amount, returnUrl } = req.body;
+
+      if (!amount || Number(amount) <= 0) {
+        return res.status(400).json({ success: false, message: 'Valid amount is required' });
+      }
+
+      const result = await walletService.initiatePaystackTopUp(userId, parseFloat(amount), returnUrl || null);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Paystack checkout initiated',
+        data: {
+          transactionId: result.transaction._id,
+          authorizationUrl: result.authorizationUrl,
+          reference: result.reference,
+          amount: parseFloat(amount),
+        }
+      });
+    } catch (error) {
+      logger.error(`initiatePaystackTopUp error: ${error.message}`);
+
+      // If Paystack returned a 401 (invalid/missing secret) surface a clearer message
+      if (error.response?.status === 401 || /401/.test(error.message || '')) {
+        return res.status(502).json({
+          success: false,
+          message: 'Paystack authentication failed — server Paystack secret key is missing or invalid. Please configure Paystack in Admin → API settings.'
+        });
+      }
+
+      return res.status(400).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * Return Paystack public key for frontend use
+   * GET /api/wallet/paystack/public-key
+   */
+  async verifyPaystackTransaction(req, res) {
+    try {
+      const reference = req.query.reference || req.body.reference;
+      if (!reference) return res.status(400).json({ success: false, message: 'reference is required' });
+
+      // Ensure keys are loaded before verifying with Paystack
+      if (typeof paystackService.ensureKeys === 'function') {
+        await paystackService.ensureKeys().catch((e) => logger.warn('[verifyPaystackTransaction] ensureKeys failed', { message: e.message }));
+      }
+
+      // Verify with Paystack API
+      const paystackData = await paystackService.verifyTransaction(reference.toString());
+      if (!paystackData || paystackData.status !== 'success') {
+        return res.status(400).json({ success: false, message: 'Paystack transaction not successful' });
+      }
+
+      // Build a webhook-like event and process it so wallet/storefront flow reuses existing logic
+      const event = { event: 'charge.success', data: paystackData };
+      await (await import('../services/walletService.js')).default.processPaystackWebhook(event).catch((err) => {
+        // log but continue to return a response
+        logger.warn('[verifyPaystackTransaction] processPaystackWebhook warning', { message: err.message });
+      });
+
+      return res.json({ success: true, message: 'Paystack transaction verified and processed' });
+    } catch (error) {
+      logger.error(`verifyPaystackTransaction error: ${error.message}`);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async getPaystackPublicKey(req, res) {
+    try {
+      // Ensure Paystack service attempts to load keys from Settings (DB) before reporting status
+      if (typeof paystackService.ensureKeys === 'function') {
+        try {
+          await paystackService.ensureKeys();
+        } catch (e) {
+          logger.warn('[getPaystackPublicKey] paystackService.ensureKeys failed', { message: e.message });
+        }
+      }
+
+      // Prefer runtime key from Paystack service (env-based or Settings loaded by ensureKeys)
+      let key = paystackService.getPublicKey();
+
+      // Extra fallback: read from API settings if still missing
+      if (!key) {
+        try {
+          const settingsService = (await import('../services/settingsService.js')).default;
+          const apiSettings = await settingsService.getApiSettings();
+          key = process.env.NODE_ENV === 'production'
+            ? apiSettings.paystackLivePublicKey || process.env.PAYSTACK_LIVE_PUBLIC_KEY || ''
+            : apiSettings.paystackTestPublicKey || process.env.PAYSTACK_TEST_PUBLIC_KEY || '';
+          logger.debug('[getPaystackPublicKey] falling back to settings/public key from DB');
+        } catch (fallbackErr) {
+          logger.warn('[getPaystackPublicKey] fallback to settings failed', { message: fallbackErr.message });
+        }
+      }
+
+      // Include whether secret key + public key are configured server-side
+      const configured = Boolean(paystackService.isConfigured());
+
+      res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+      return res.json({ success: true, publicKey: key || '', configured });
+    } catch (error) {
+      logger.error(`getPaystackPublicKey error: ${error.message}`);
+      res.status(500).json({ success: false, message: 'Failed to get public key' });
     }
   }
 
@@ -542,12 +656,13 @@ class WalletController {
         `[getAdminTransactions] Admin ${adminId} fetching transactions: page=${page}, limit=${limit}, type=${type}, startDate=${startDate}, endDate=${endDate}, userId=${userId}`
       );
 
-      // Build filter - find transactions where admin was involved
+      // Build filter - find transactions where admin was involved OR gateway (Paystack) transactions
       const filter = {
         $or: [
           { approvedBy: adminId }, // Transactions approved by this admin (top-ups from requests)
           { "metadata.debitedBy": adminId }, // Transactions debited by this admin
           { "metadata.adminAction": true, approvedBy: adminId }, // Direct admin credits
+          { "metadata.paystack": { $exists: true } }, // Include Paystack (gateway) transactions so admins can audit them
         ],
       };
 

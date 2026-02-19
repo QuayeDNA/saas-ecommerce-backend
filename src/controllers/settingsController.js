@@ -133,13 +133,30 @@ class SettingsController {
 
   async updateApiSettings(req, res) {
     try {
-      const { mtnApiKey, telecelApiKey, airtelTigoApiKey, apiEndpoint } =
-        req.body;
+      const {
+        mtnApiKey,
+        telecelApiKey,
+        airtelTigoApiKey,
+        apiEndpoint,
+        // Paystack
+        paystackEnabled,
+        paystackTestPublicKey,
+        paystackTestSecretKey,
+        paystackLivePublicKey,
+        paystackLiveSecretKey,
+      } = req.body;
+
       const settings = await settingsService.updateApiSettings({
         mtnApiKey,
         telecelApiKey,
         airtelTigoApiKey,
         apiEndpoint,
+        // Paystack
+        paystackEnabled,
+        paystackTestPublicKey,
+        paystackTestSecretKey,
+        paystackLivePublicKey,
+        paystackLiveSecretKey,
       });
       res.json(settings);
     } catch (error) {

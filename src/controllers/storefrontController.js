@@ -1,5 +1,6 @@
 // src/controllers/storefrontController.js
 import storefrontService from '../services/storefrontService.js';
+import paystackService from '../services/paystackService.js';
 import { validationResult } from 'express-validator';
 import logger from '../utils/logger.js';
 
@@ -58,7 +59,50 @@ class StorefrontController {
       });
       
       const order = await storefrontService.createStorefrontOrder(businessName, orderData);
-      
+
+      // If customer chose Paystack as payment method, initialize Paystack checkout
+      if (orderData.paymentMethod?.type === 'paystack') {
+        const customerEmail = order.storefrontData.customerInfo?.email;
+        if (!customerEmail) {
+          return res.status(400).json({ success: false, message: 'Customer email is required for Paystack payments' });
+        }
+
+        const reference = `storefront_${order._id}`;
+        const amountPesewas = paystackService.convertToPesewas(order.total || 0);
+
+        const initPayload = {
+          email: customerEmail,
+          amount: amountPesewas,
+          reference,
+          currency: 'GHS',
+          callback_url: `${process.env.FRONTEND_URL || ''}/storefront/${order.storefrontData.storefrontId}/callback`,
+          metadata: { orderId: order._id.toString() }
+        };
+
+        // If the storefront has a Paystack subaccount, include it so Paystack can route funds to the agent
+        if (order.storefrontData?.paystackSubaccountId) {
+          initPayload.subaccount = order.storefrontData.paystackSubaccountId;
+        }
+
+        const init = await paystackService.initializeTransaction(initPayload);
+
+        return res.status(201).json({
+          success: true,
+          message: 'Order created. Paystack checkout initialized.',
+          data: {
+            orderId: order._id,
+            orderNumber: order.orderNumber,
+            total: order.total,
+            status: order.status,
+            paystack: {
+              authorizationUrl: init.authorization_url,
+              reference: init.reference,
+              accessCode: init.access_code
+            }
+          }
+        });
+      }
+
       res.status(201).json({
         success: true,
         message: 'Order placed successfully! The store owner will verify your payment.',
@@ -205,6 +249,21 @@ class StorefrontController {
         success: false,
         message: error.message
       });
+    }
+  }
+
+  /**
+   * Create Paystack subaccount for authenticated agent's storefront
+   * POST /api/storefront/agent/storefront/paystack/subaccount
+   */
+  async createPaystackSubaccount(req, res) {
+    try {
+      const userId = req.user.userId;
+      const result = await storefrontService.createPaystackSubaccount(userId);
+      res.json({ success: true, message: 'Paystack subaccount created', data: result });
+    } catch (error) {
+      logger.error(`createPaystackSubaccount error: ${error.message}`);
+      res.status(400).json({ success: false, message: error.message });
     }
   }
   

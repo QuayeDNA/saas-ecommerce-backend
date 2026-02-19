@@ -103,6 +103,12 @@ const agentStorefrontSchema = new mongoose.Schema({
     }
   },
 
+  // Paystack subaccount (optional) — stores agent's Paystack subaccount code for direct payouts
+  paystackSubaccountId: {
+    type: String,
+    default: null,
+  },
+
   // Branding & Customization
   branding: {
     logoUrl: String,

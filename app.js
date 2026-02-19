@@ -26,6 +26,7 @@ import commissionRoutes from "./src/routes/commissionRoutes.js";
 import pushNotificationRoutes from "./src/routes/pushNotificationRoutes.js";
 import announcementRoutes from "./src/routes/announcementRoutes.js";
 import storefrontRoutes from "./src/routes/storefrontRoutes.js";
+import paystackRoutes from "./src/routes/paystackRoutes.js";
 
 const app = express();
 const PORT = process.env.PORT || 5050;
@@ -81,6 +82,14 @@ app.use(
 );
 
 // Body parsing middleware
+// Capture raw body for Paystack webhook signature verification (route-specific)
+app.use('/api/webhooks/paystack', (req, res, next) => {
+  let data = '';
+  req.setEncoding('utf8');
+  req.on('data', (chunk) => { data += chunk; });
+  req.on('end', () => { req.rawBody = data || ''; next(); });
+});
+
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -164,6 +173,7 @@ app.use("/api/announcements", announcementRoutes);
 app.use("/api/packages", packageRoutes);
 app.use("/api/bundles", bundleRoutes);
 app.use("/api/storefront", storefrontRoutes);
+app.use('/api/webhooks/paystack', paystackRoutes);
 app.use("/api", publicRoutes);
 
 // Health check

@@ -530,6 +530,236 @@ class WalletService {
       throw error;
     }
   }
+
+  /**
+   * Initialize Paystack wallet top-up (creates pending WalletTransaction + initializes Paystack)
+   */
+  async initiatePaystackTopUp(userId, amount, returnUrl = null) {
+    try {
+      const user = await User.findById(userId);
+      if (!user) throw new Error('User not found');
+      if (amount <= 0) throw new Error('Amount must be greater than zero');
+
+      // Prevent multiple pending paystack top-ups
+      const existingPending = await WalletTransaction.findOne({
+        user: userId,
+        type: 'credit',
+        status: 'pending',
+        'metadata.paystack': { $exists: true },
+      });
+
+      if (existingPending) {
+        const hoursSince = (Date.now() - new Date(existingPending.createdAt)) / (1000 * 60 * 60);
+        if (hoursSince < 24) {
+          throw new Error('You have a pending Paystack top-up. Please complete or wait for it to expire.');
+        }
+        existingPending.status = 'rejected';
+        existingPending.description = `${existingPending.description} - expired`; 
+        await existingPending.save();
+      }
+
+      const reference = `wallet_${userId}_${Date.now()}`;
+      const amountPesewas = (await import('../services/paystackService.js')).default.convertToPesewas(amount);
+
+      // Try to ensure a Paystack Customer exists (this lets Paystack's hosted widget show the customer's name)
+      try {
+        if (user.email && user.fullName) {
+          const [first_name, ...rest] = (user.fullName || '').trim().split(/\s+/);
+          const last_name = rest.join(' ') || undefined;
+          await (await import('../services/paystackService.js')).default.createCustomer({
+            email: user.email,
+            first_name,
+            last_name,
+          });
+        }
+      } catch (custErr) {
+        // Non-fatal — proceed to initialize transaction even if customer creation fails
+        logger.warn(`createCustomer for Paystack failed for user ${userId}: ${custErr.message}`);
+      }
+
+      // Initialize Paystack
+      const paystackData = await (await import('../services/paystackService.js')).default.initializeTransaction({
+        email: user.email || `${user._id}@noemail.local`,
+        amount: amountPesewas,
+        reference,
+        currency: 'GHS',
+        callback_url: returnUrl || `${process.env.FRONTEND_URL || ''}/wallet/topup/callback`,
+        // pass user's full name in metadata (already present) and include it in description so Paystack's hosted/redirect page can surface the name
+        metadata: { userId: userId.toString(), type: 'wallet_topup', userName: user.fullName },
+        channels: ['card', 'mobile_money', 'bank_transfer']
+      });
+
+      const transaction = new WalletTransaction({
+        user: userId,
+        type: 'credit',
+        amount,
+        balanceAfter: user.walletBalance + amount,
+        // include user's full name in description so Paystack checkout shows a recognizable label instead of only email
+        description: `Wallet top-up for ${user.fullName} (Paystack)`,
+        status: 'pending',
+        reference,
+        metadata: {
+          paystack: {
+            reference,
+            authorization_url: paystackData.authorization_url,
+            access_code: paystackData.access_code,
+            gateway: 'paystack',
+            currency: 'GHS'
+          },
+          requestedAt: new Date()
+        }
+      });
+
+      await transaction.save();
+
+      return {
+        transaction,
+        authorizationUrl: paystackData.authorization_url,
+        reference,
+        accessCode: paystackData.access_code
+      };
+    } catch (error) {
+      logger.error(`initiatePaystackTopUp error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Process Paystack webhook for wallet top-up (idempotent)
+   */
+  async processPaystackWebhook(webhookEvent) {
+    try {
+      const { data } = webhookEvent;
+      const reference = data.reference;
+      const metadata = data.metadata || {};
+
+      if (metadata.type !== 'wallet_topup') return { processed: false, reason: 'not_wallet_topup' };
+
+      // Atomically claim the pending WalletTransaction for processing to avoid double-credit
+      const claimedTx = await WalletTransaction.findOneAndUpdate(
+        { reference, status: 'pending' },
+        { $set: { status: 'processing', 'metadata.paystack.processingAt': new Date() } },
+        { new: true }
+      );
+
+      let tx = claimedTx;
+
+      if (!tx) {
+        // Check if already completed
+        const completed = await WalletTransaction.findOne({ reference, status: 'completed' });
+        if (completed) return { processed: false, duplicate: true };
+
+        // Check if another worker is already processing it
+        const inProgress = await WalletTransaction.findOne({ reference, status: 'processing' });
+        if (inProgress) return { processed: false, reason: 'already_processing' };
+
+        throw new Error(`WalletTransaction not found for reference ${reference}`);
+      }
+
+      // Amount validation (Paystack amount is in smallest unit)
+      const expectedPesewas = (await import('../services/paystackService.js')).default.convertToPesewas(tx.amount);
+      if (Number(data.amount) !== Number(expectedPesewas)) {
+        tx.metadata = tx.metadata || {};
+        tx.metadata.paystack = tx.metadata.paystack || {};
+        tx.metadata.paystack.amountMismatch = true;
+        tx.metadata.paystack.expectedAmount = expectedPesewas;
+        tx.metadata.paystack.receivedAmount = data.amount;
+        tx.description = `${tx.description} - AMOUNT MISMATCH - REQUIRES_MANUAL_REVIEW`;
+        // Revert status so admins can retry/inspect
+        tx.status = 'pending';
+        await tx.save();
+        // TODO: notify admins
+        return { processed: false, reason: 'amount_mismatch' };
+      }
+
+      // Atomically credit user's wallet to avoid race conditions
+      const updatedUser = await User.findByIdAndUpdate(
+        tx.user,
+        { $inc: { walletBalance: tx.amount } },
+        { new: true, runValidators: false }
+      );
+
+      if (!updatedUser) {
+        // revert transaction back to pending so it can be investigated
+        tx.status = 'pending';
+        await tx.save();
+        throw new Error('User not found for wallet top-up');
+      }
+
+      tx.status = 'completed';
+      tx.balanceAfter = updatedUser.walletBalance;
+      tx.metadata = tx.metadata || {};
+      tx.metadata.paystack = tx.metadata.paystack || {};
+      tx.metadata.paystack.transactionId = data.id;
+      tx.metadata.paystack.channel = data.channel;
+      tx.metadata.paystack.paidAt = data.paid_at || new Date();
+      tx.metadata.paystack.processedAt = new Date();
+      tx.description = `Wallet top-up via Paystack (${data.channel})`;
+
+      await tx.save();
+
+      // Reconcile any other pending top-up requests for the same user + amount
+      try {
+        const otherPending = await WalletTransaction.find({
+          user: user._id,
+          type: 'credit',
+          status: 'pending',
+          amount: tx.amount,
+          _id: { $ne: tx._id },
+          'metadata.paystack': { $exists: false }
+        });
+
+        if (otherPending && otherPending.length > 0) {
+          logger.info(`[WalletService] Reconciling ${otherPending.length} pending request(s) for user ${user._id} after Paystack success`, { reference });
+          for (const pendingTx of otherPending) {
+            pendingTx.status = 'completed';
+            pendingTx.balanceAfter = user.walletBalance; // reflect actual new balance
+            pendingTx.description = `${pendingTx.description} - Auto-completed (reconciled via Paystack)`;
+            pendingTx.metadata = pendingTx.metadata || {};
+            pendingTx.metadata.reconciled = {
+              by: 'paystack_webhook',
+              reference,
+              reconciledAt: new Date()
+            };
+            // Do NOT change user.walletBalance again (already credited above)
+            await pendingTx.save();
+
+            // Notify user about auto-approval of their manual request
+            try {
+              await notificationService.sendWalletTopUpApprovalNotification(pendingTx.user.toString(), pendingTx.amount, 'system');
+            } catch (notifErr) {
+              logger.warn(`Failed to send reconciliation notification for transaction ${pendingTx._id}: ${notifErr.message}`);
+            }
+          }
+        }
+      } catch (reconErr) {
+        logger.warn(`Failed to reconcile other pending requests: ${reconErr.message}`);
+      }
+
+      // Emit websocket update for the paystack transaction
+      try {
+        const recentTransactions = await WalletTransaction.find({ user: user._id }).sort({ createdAt: -1 }).limit(10).populate([
+          { path: 'approvedBy', select: 'fullName' },
+          { path: 'relatedOrder', select: 'orderNumber' }
+        ]);
+
+        websocketService.sendToUser(user._id.toString(), {
+          type: 'wallet_update',
+          userId: user._id.toString(),
+          balance: user.walletBalance,
+          recentTransactions,
+          message: `Your wallet has been credited with GH₵${tx.amount}. New balance: GH₵${user.walletBalance}`
+        });
+      } catch (wsErr) {
+        logger.warn(`WebSocket wallet update failed: ${wsErr.message}`);
+      }
+
+      return { processed: true, transaction: tx, user };
+    } catch (err) {
+      logger.error(`processPaystackWebhook error: ${err.message}`);
+      throw err;
+    }
+  }
 }
 
 export default new WalletService();

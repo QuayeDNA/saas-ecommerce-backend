@@ -35,6 +35,29 @@ router.post(
   walletController.requestWalletTopUp
 );
 
+// Paystack: initiate checkout for wallet top-up
+router.post(
+  "/paystack/initiate",
+  authenticate,
+  authorizeWalletUser,
+  validate(walletValidation.paystackInitiate),
+  walletController.initiatePaystackTopUp
+);
+
+// Get Paystack public key for frontend
+router.get(
+  "/paystack/public-key",
+  authenticate,
+  walletController.getPaystackPublicKey
+);
+
+// Verify a Paystack transaction (used by frontend callback to confirm payment quickly)
+router.get(
+  "/paystack/verify",
+  authenticate,
+  walletController.verifyPaystackTransaction
+);
+
 // Routes for admins/super_admins
 router.post(
   "/top-up",

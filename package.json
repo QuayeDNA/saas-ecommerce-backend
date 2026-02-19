@@ -5,12 +5,12 @@
   "main": "app.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node app.js",
     "dev": "nodemon app.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "build": "npm install && npm install --only=dev && npm install --only=production",
-    "create-order": "node src/scripts/createOrderDocument.js"
+    "create-order": "node src/scripts/createOrderDocument.js",
+    "clear-pending-topups": "node src/scripts/clearPendingTopups.js"
   },
   "keywords": [],
   "author": "",

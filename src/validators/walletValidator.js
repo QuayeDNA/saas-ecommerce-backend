@@ -13,6 +13,13 @@ export const walletValidation = {
       .trim()
       .isLength({ min: 5, max: 200 }).withMessage('Description must be between 5 and 200 characters')
   ],
+
+  // Validate Paystack initiate (frontend calls POST /wallet/paystack/initiate with only amount)
+  paystackInitiate: [
+    body('amount')
+      .notEmpty().withMessage('Amount is required')
+      .isFloat({ min: 0.01 }).withMessage('Amount must be a positive number')
+  ],
   
   // Validate admin top-up
   adminTopUp: [

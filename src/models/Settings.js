@@ -73,6 +73,28 @@ const settingsSchema = new mongoose.Schema(
       default: "https://api.telecomsaas.com",
     },
 
+    // Paystack integration settings
+    paystackEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    paystackTestSecretKey: {
+      type: String,
+      default: "",
+    },
+    paystackTestPublicKey: {
+      type: String,
+      default: "",
+    },
+    paystackLiveSecretKey: {
+      type: String,
+      default: "",
+    },
+    paystackLivePublicKey: {
+      type: String,
+      default: "",
+    },
+
     // Wallet Settings - User type-based minimum top-up amounts
     minimumTopUpAmounts: {
       agent: {

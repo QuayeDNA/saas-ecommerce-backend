@@ -7,6 +7,7 @@ import Order from '../models/Order.js';
 import Settings from '../models/Settings.js';
 import walletService from './walletService.js';
 import notificationService from './notificationService.js';
+import paystackService from './paystackService.js';
 import logger from '../utils/logger.js';
 
 class StorefrontService {
@@ -154,7 +155,44 @@ class StorefrontService {
     storefront.isActive = true;
     return await storefront.save();
   }
-  
+
+  /**
+   * Create Paystack subaccount for an agent's storefront (requires bank account details to exist)
+   * - saves `paystackSubaccountId` to the AgentStorefront document
+   */
+  async createPaystackSubaccount(userId) {
+    const storefront = await AgentStorefront.findOne({ agentId: userId });
+    if (!storefront) throw new Error('Storefront not found');
+
+    // Look for a bank_transfer payment method to use for settlement
+    const bankMethod = (storefront.paymentMethods || []).find(pm => pm.type === 'bank_transfer' && pm.isActive && pm.details?.bank && pm.details?.account && pm.details?.name);
+    if (!bankMethod) {
+      throw new Error('Please add an active bank transfer payment method with account details before creating a Paystack subaccount');
+    }
+
+    const agent = await User.findById(userId).select('fullName email phone');
+
+    // Build subaccount payload for Paystack
+    const payload = {
+      business_name: storefront.displayName || storefront.businessName,
+      settlement_bank: bankMethod.details.bank,
+      account_number: bankMethod.details.account,
+      percentage_charge: 0, // agent receives full amount by default; platform may charge a split later
+      primary_contact_name: agent?.fullName || bankMethod.details.name,
+      primary_contact_email: agent?.email || '',
+      primary_contact_phone: agent?.phone || storefront.contactInfo?.phone || ''
+    };
+
+    // Create subaccount via Paystack
+    const sub = await (await import('./../../src/services/paystackService.js').catch(() => import('../services/paystackService.js'))).default.createSubaccount(payload);
+
+    // Persist subaccount code on storefront
+    storefront.paystackSubaccountId = sub.subaccount_code || sub.subaccountCode || sub.id || sub.subaccount_code;
+    await storefront.save();
+
+    return { storefront, subaccount: sub };
+  }
+
   /**
    * Agent deletes their storefront (graceful - checks for active orders)
    */
@@ -666,6 +704,12 @@ class StorefrontService {
     }
     
     await order.save();
+
+    // Attach storefront Paystack subaccount id (if present) to storefrontData so controller can initialize Paystack with subaccount
+    if (storefront.paystackSubaccountId) {
+      order.storefrontData = order.storefrontData || {};
+      order.storefrontData.paystackSubaccountId = storefront.paystackSubaccountId;
+    }
     
     // Notify the store owner about the new order
     try {
@@ -792,6 +836,81 @@ class StorefrontService {
     }
     
     return order;
+  }
+
+  /**
+   * Process Paystack webhook for a storefront order (auto-verify)
+   * @param {Object} event - Paystack webhook event
+   */
+  async processPaystackOrderWebhook(event) {
+    try {
+      const { data } = event;
+      const metadata = data.metadata || {};
+      const orderId = metadata.orderId;
+      if (!orderId) {
+        logger.warn('[Storefront] Paystack webhook missing orderId metadata');
+        return { processed: false, reason: 'missing_orderId' };
+      }
+
+      const order = await Order.findById(orderId);
+      if (!order || order.orderType !== 'storefront') {
+        logger.warn('[Storefront] Order not found for Paystack webhook', { orderId });
+        return { processed: false, reason: 'order_not_found' };
+      }
+
+      // Already verified?
+      if (order.storefrontData.paymentMethod?.verified) {
+        logger.info('[Storefront] Paystack webhook ignored — already verified', { orderId });
+        return { processed: false, duplicate: true };
+      }
+
+      // Validate customer total (compare Paystack amount in smallest unit)
+      const customerTotal = (order.storefrontData.items || []).reduce((s, it) => s + (it.totalPrice || 0), 0);
+      const expectedPesewas = (await import('./paystackService.js')).default.convertToPesewas(customerTotal);
+      if (Number(data.amount) !== Number(expectedPesewas)) {
+        order.metadata = order.metadata || {};
+        order.metadata.paystack = order.metadata.paystack || {};
+        order.metadata.paystack.amountMismatch = { expected: expectedPesewas, received: data.amount };
+        order.storefrontData.paymentMethod.verificationNotes = `Amount mismatch: expected ${customerTotal}, received ${data.amount / 100}`;
+        await order.save();
+        logger.error('[Storefront] Paystack amount mismatch for order', { orderId, expectedPesewas, received: data.amount });
+        return { processed: false, reason: 'amount_mismatch' };
+      }
+
+      // Mark payment as verified and transition order into admin processing queue
+      order.storefrontData.paymentMethod.verified = true;
+      order.storefrontData.paymentMethod.verifiedAt = new Date();
+      order.storefrontData.paymentMethod.verificationNotes = `Paystack auto-verified (${data.channel})`;
+      order.storefrontData.paymentMethod.gateway = 'paystack';
+      order.storefrontData.paymentMethod.reference = data.reference;
+      order.paymentStatus = 'paid';
+      order.status = 'pending';
+      order.metadata = order.metadata || {};
+      order.metadata.paystack = { reference: data.reference, transactionId: data.id, processedAt: new Date() };
+
+      await order.save();
+
+      // Notify admins that storefront order is ready for processing
+      try {
+        const admins = await User.find({ userType: 'super_admin', isActive: true }).select('_id');
+        for (const admin of admins) {
+          await notificationService.createInAppNotification(
+            admin._id.toString(),
+            'Storefront Order Paid',
+            `Storefront order ${order.orderNumber} was paid via Paystack and is ready for processing.`,
+            'info',
+            { orderId: order._id, orderNumber: order.orderNumber, type: 'storefront_order_paid' }
+          );
+        }
+      } catch (notifErr) {
+        logger.error('Failed to notify admins for Paystack storefront order:', notifErr);
+      }
+
+      return { processed: true, order };
+    } catch (err) {
+      logger.error('[Storefront] processPaystackOrderWebhook error', { message: err.message });
+      throw err;
+    }
   }
   
   /**
