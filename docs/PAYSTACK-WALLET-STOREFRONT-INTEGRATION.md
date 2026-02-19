@@ -31,12 +31,16 @@ Status: Draft — use this file as the single source of truth for development, t
 A. Wallet top‑up (Paystack)
 - UX: Agent requests/initiates top‑up → backend creates a WalletTransaction (status="pending") and initializes a Paystack transaction → returns `authorization_url` (or client reference) to frontend → agent completes payment → Paystack POSTs webhook → backend verifies signature → find WalletTransaction by reference → verify amount/user → credit wallet via `walletService.creditWallet()` → mark WalletTransaction `completed`.
 
-B. Storefront direct payment (Paystack subaccount/splits)
-- UX: Customer places storefront order → frontend requests a Paystack checkout for the order (server initializes transaction with metadata.orderId & subaccount/split target) → customer pays → Paystack webhook (payment.success) arrives → backend verifies signature and metadata.orderId → mark `storefrontData.paymentMethod.verified = true`, `paymentStatus = 'paid'`, `status = 'pending'` → no manual agent verification required → order enters existing processing pipeline.
+B. Storefront direct payment (Paystack via platform account)
+- UX: Customer places a storefront order → server initializes a Paystack transaction using the *platform* Paystack account (attach metadata.orderId). The public checkout **does not** set `subaccount`/`split` — customer payments land in the platform account. When Paystack posts the webhook (charge.success) the backend:
+  - verifies webhook signature and metadata.orderId,
+  - marks the order paid (storefrontData.paymentMethod.verified = true; paymentStatus = 'paid'; order.status = 'pending'),
+  - performs a server‑side accounting split: credit the agent's wallet with the base/tier cost (so the agent can fulfill), record the agent's profit/markup as withdrawable earnings (`user.earningsBalance`), and persist Paystack fee / net amounts on the order/transaction records.
+This keeps customer checkout simple and centralizes funds while preserving agent earnings as withdrawable balances.
 
 Notes:
-- Where agents receive funds off‑platform (manual mobile money to agent account) we keep the existing manual `verifyPayment()` path; Paystack automates the common online/payment‑gateway path.
-- All webhook handling must be idempotent and secure (signature verification + duplicate checks).
+- Agent Paystack subaccounts remain available only for admin/manual payouts or future automatic transfers — they are *not* used to route public storefront customer payments in this design.
+- Webhook handling must be idempotent and secure (signature verification + duplicate checks).
 
 ---
 
@@ -54,7 +58,8 @@ Notes:
   - `gatewayStatus` (string)
 
 3) `AgentStorefront` (extend `paymentMethods` in `src/models/AgentStorefront.js`):
-- optional `paystackSubaccountId` OR `paystackRecipientCode` in payment method details (allow platform subaccount or recipient usage)
+- retain optional `paystackSubaccountId` / `paystackRecipientCode` to support agent payout onboarding and future direct transfers.
+- Important: these fields are **not** used to route public storefront payments in the new flow; they only serve as payout destinations for admin/manual or future automated transfers.
 
 4) Settings: add Paystack keys in `Settings` and expose via admin UI (kept secret in DB):
 - `paystackEnabled` (bool)
@@ -83,7 +88,7 @@ A. Wallet top‑up (Paystack)
 B. Storefront payment (Paystack)
 - POST `/api/storefront/:businessName/paystack/init` (public) or return `authorizationUrl` from `createStorefrontOrder`
   - body: order details or orderId after create
-  - server: initialize Paystack transaction with metadata.orderId and either `subaccount` or `split` so agent gets the money
+  - server: initialize Paystack transaction with metadata.orderId using the *platform* account — **do not** include `subaccount` or `split` for public storefront checkout. Funds land in the platform account and the backend performs the fund split (wallet credit + agent earnings) once the webhook confirms payment.
   - response: { authorizationUrl, reference }
 
 - Paystack webhook `/api/webhooks/paystack` handles storefront `charge.success` → validate `metadata.orderId` → update Order: set `storefrontData.paymentMethod.verified = true`, `paymentStatus = 'paid'`, `status = 'pending'`, record gatewayReference
@@ -127,7 +132,7 @@ if (signature !== req.headers['x-paystack-signature']) return res.status(400).en
 - Refunds/chargebacks: implement `charge.refunded` handler to reverse wallet credit or mark order refunded.
 - Missing top‑up request (webhook with no DB mapping): create an audit entry and notify admin for reconciliation.
 - Expired payment (authorization timed out): mark pending top‑up expired after TTL (e.g., 24 hours).
-- Agent not configured for Paystack subaccount: fall back to manual verify flow; show clear UI messaging.
+- Agent Paystack subaccount is *not required* for public storefront payments — storefront checkout always routes to the platform account. Agent payout onboarding (subaccounts/recipient codes) only affects direct Paystack transfers (future auto‑payouts). In the MVP agents receive earnings in‑app and request withdrawals through the payout API.
 
 ---
 
@@ -144,12 +149,22 @@ if (signature !== req.headers['x-paystack-signature']) return res.status(400).en
 - Add: `src/routes/paystackRoutes.js` + `src/controllers/paystackController.js` (webhook receiver)
 - Modify: `src/models/WalletTransaction.js` (document `metadata.paystack` usage — no schema breaking change)
 - Modify: `src/models/Order.js` — extend `storefrontData.paymentMethod` to accept `gateway` fields
-- Modify: `src/models/AgentStorefront.js` — allow `paystack` in `paymentMethods.details` (add `paystackSubaccountId` optional)
-- Modify: `src/services/walletService.js` — add helper to tie Paystack webhook -> `creditWallet()`; create top‑up record with metadata
-- Modify: `src/controllers/walletController.js` + `src/routes/walletRoutes.js` — add `POST /wallet/paystack/initiate`
-- Modify: `src/services/storefrontService.js` & `src/controllers/storefrontController.js` — support creating/returning Paystack `authorizationUrl` for storefront orders and rely on webhook to auto‑verify
-- Modify: `app.js` — mount the new webhook route and ensure raw body capture for signature verification
-- Add tests: `src/tests/integration/paystack-topup.test.js`, `src/tests/integration/paystack-storefront.test.js`
+- Modify: `src/models/AgentStorefront.js` — retain `paystackSubaccountId` / `paystackRecipientCode` for payout onboarding (NOT used for public checkout routing).
+- Add: `src/models/PayoutRequest.js` — stores agent withdrawal requests and admin processing metadata.
+- Modify: `src/models/User.js` — add `earningsBalance: Number` (default 0) to hold withdrawable profits.
+- Modify: `src/services/walletService.js` — reuse `creditWallet()` for base/tier credit and add helper to record earnings ledger entries; ensure WalletTransaction `metadata.paystack` is populated on webhook credit.
+- Modify: `src/services/storefrontService.js` — remove public-checkout subaccount routing in `createStorefrontOrder`; update `processPaystackOrderWebhook` to perform server‑side split (credit wallet + increment `earningsBalance`) and persist Paystack fee/net amounts.
+- Modify: `src/controllers/storefrontController.js` — do not include `subaccount` when initializing Paystack for public orders; return authorizationUrl and metadata to frontend.
+- Add: payout API endpoints and controller methods:
+  - POST `/api/wallet/payouts/request` (agent)
+  - GET `/api/wallet/payouts` (agent/admin)
+  - PUT `/api/wallet/payouts/:id/approve|reject` (admin)
+- Modify: frontend:
+  - `saas-ecommerce/src/pages/public/public-store.tsx` — change public checkout to Paystack flow (require customer email + redirect to Paystack authorization_url).
+  - `saas-ecommerce/src/pages/agent/storefront-dashboard.tsx` — show `earningsBalance` and add “Request withdrawal” UI.
+  - `saas-ecommerce/src/services/storefront.service.ts` — surface Paystack init response.
+- Modify: `app.js` — mount webhook route and capture raw request body for signature verification.
+- Add tests: integration tests for Paystack webhook → ledger split, payout request lifecycle, duplicate webhook idempotency, and front‑end checkout redirect flow.
 
 ---
 
@@ -193,6 +208,9 @@ C. Webhook processing example (wallet top up):
 ## 12) Acceptance criteria (QA) ✅
 - Agent initiates top‑up → receives Paystack URL → completes payment → wallet balance increases automatically within 10s of webhook.
 - Customer completes storefront payment → order is marked `paymentStatus: 'paid'` and `storefrontData.paymentMethod.verified = true` without manual agent verification.
+- Agent `walletBalance` is credited with the base/tier amount and `user.earningsBalance` is incremented by the markup (profit) on successful Paystack charge.
+- Agent can create a payout request ≤ `earningsBalance`; admin approval reduces `earningsBalance` and marks payout record accordingly.
+- Ledger entries exist for wallet credit, earnings allocation and payout requests (audit trail).
 - Duplicate webhooks do not double‑credit or double‑verify.
 - Mismatched amounts create an incident and do not auto‑credit.
 - Admin can disable Paystack via Settings and flows fall back to manual verification.
