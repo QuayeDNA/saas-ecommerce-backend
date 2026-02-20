@@ -9,6 +9,9 @@ import walletService from './walletService.js';
 import notificationService from './notificationService.js';
 import paystackService from './paystackService.js';
 import logger from '../utils/logger.js';
+import mongoose from 'mongoose';
+import WalletTransaction from '../models/WalletTransaction.js';
+import EarningsTransaction from '../models/EarningsTransaction.js';
 
 class StorefrontService {
   
@@ -700,7 +703,7 @@ class StorefrontService {
 
     // For AFA orders, add notes like regular AFA orders
     if (hasAfaBundles && customerInfo.ghanaCardNumber) {
-      order.notes = `AFA Registration - ${systemItems[0]?.packageDetails?.name || 'AFA Bundle'} for ${customerInfo.name} (${customerInfo.phone}) - Ghana Card: ${customerInfo.ghanaCardNumber}`;
+      order.notes = `AFA Registration - ${systemItems[0]?.packageDetails?.name || 'AFA Bundle'} for ${customerInfo.name}${customerInfo.phone ? ` (${customerInfo.phone})` : ''} - Ghana Card: ${customerInfo.ghanaCardNumber}`;
     }
     
     await order.save();
@@ -717,7 +720,7 @@ class StorefrontService {
       await notificationService.createInAppNotification(
         agentId,
         'New Storefront Order',
-        `New order from ${customerInfo.name} (${customerInfo.phone}) for GHS ${totalAmount.toFixed(2)}`,
+        `New order from ${customerInfo.name}${customerInfo.phone ? ` (${customerInfo.phone})` : ''} for GHS ${totalAmount.toFixed(2)}`,
         'info',
         { orderId: order._id, orderNumber: order.orderNumber, type: 'storefront_order' }
       );
@@ -843,24 +846,33 @@ class StorefrontService {
    * @param {Object} event - Paystack webhook event
    */
   async processPaystackOrderWebhook(event) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
     try {
       const { data } = event;
       const metadata = data.metadata || {};
       const orderId = metadata.orderId;
       if (!orderId) {
         logger.warn('[Storefront] Paystack webhook missing orderId metadata');
+        await session.abortTransaction();
+        session.endSession();
         return { processed: false, reason: 'missing_orderId' };
       }
 
-      const order = await Order.findById(orderId);
+      const order = await Order.findById(orderId).session(session);
       if (!order || order.orderType !== 'storefront') {
         logger.warn('[Storefront] Order not found for Paystack webhook', { orderId });
+        await session.abortTransaction();
+        session.endSession();
         return { processed: false, reason: 'order_not_found' };
       }
 
-      // Already verified?
+      // Idempotency: already processed
       if (order.storefrontData.paymentMethod?.verified) {
         logger.info('[Storefront] Paystack webhook ignored — already verified', { orderId });
+        await session.abortTransaction();
+        session.endSession();
         return { processed: false, duplicate: true };
       }
 
@@ -872,12 +884,83 @@ class StorefrontService {
         order.metadata.paystack = order.metadata.paystack || {};
         order.metadata.paystack.amountMismatch = { expected: expectedPesewas, received: data.amount };
         order.storefrontData.paymentMethod.verificationNotes = `Amount mismatch: expected ${customerTotal}, received ${data.amount / 100}`;
-        await order.save();
+        await order.save({ session });
         logger.error('[Storefront] Paystack amount mismatch for order', { orderId, expectedPesewas, received: data.amount });
+        await session.abortTransaction();
+        session.endSession();
         return { processed: false, reason: 'amount_mismatch' };
       }
 
-      // Mark payment as verified and transition order into admin processing queue
+      // Compute split amounts
+      const tierCost = order.storefrontData.totalTierCost || (order.storefrontData.items || []).reduce((sum, it) => sum + ((it.tierPrice || 0) * (it.quantity || 1)), 0);
+      const totalMarkup = order.storefrontData.totalMarkup || 0;
+
+      // Ensure platform net after Paystack collection fee can cover tier cost
+      const paystackFeePesewas = (data.fees || 0);
+      const customerPaidPesewas = Number(data.amount);
+      const netReceivedPesewas = customerPaidPesewas - paystackFeePesewas;
+      const netReceived = netReceivedPesewas / 100;
+
+      if (netReceived < tierCost) {
+        order.metadata = order.metadata || {};
+        order.metadata.paystack = order.metadata.paystack || {};
+        order.metadata.paystack.amountShortfall = { netReceived, tierCost };
+        await order.save({ session });
+        logger.error('[Storefront] Net received after Paystack fees is insufficient', { orderId, netReceived, tierCost });
+        await session.abortTransaction();
+        session.endSession();
+        return { processed: false, reason: 'insufficient_net' };
+      }
+
+      // Get storefront & agent
+      const storefront = await AgentStorefront.findById(order.storefrontData.storefrontId).session(session);
+      if (!storefront) {
+        throw new Error('Storefront not found for order');
+      }
+
+      const agentId = storefront.agentId;
+      const agent = await User.findById(agentId).session(session);
+      if (!agent) throw new Error('Agent user not found');
+
+      // Update agent balances (walletBalance for tier cost; earningsBalance for markup)
+      agent.walletBalance = (agent.walletBalance || 0) + tierCost;
+      if (totalMarkup > 0) {
+        agent.earningsBalance = (agent.earningsBalance || 0) + totalMarkup;
+      }
+      await agent.save({ session, validateBeforeSave: false });
+
+      // Create wallet transaction for the tier cost
+      const walletTx = new WalletTransaction({
+        user: agentId,
+        type: 'credit',
+        amount: tierCost,
+        balanceAfter: agent.walletBalance,
+        description: `Storefront fulfillment (Order: ${order.orderNumber})`,
+        relatedOrder: order._id,
+        metadata: {
+          paystackReference: data.reference,
+          customerPaid: customerTotal,
+          paystackCollectionFee: paystackFeePesewas / 100,
+          netReceived
+        }
+      });
+      await walletTx.save({ session });
+
+      // Create earnings transaction for markup (if any)
+      if (totalMarkup > 0) {
+        const earnTx = new EarningsTransaction({
+          user: agentId,
+          type: 'credit',
+          amount: totalMarkup,
+          balanceAfter: agent.earningsBalance,
+          description: `Storefront profit (Order: ${order.orderNumber})`,
+          relatedOrder: order._id,
+          metadata: { tierCost, customerPaid: customerTotal }
+        });
+        await earnTx.save({ session });
+      }
+
+      // Update order payment fields
       order.storefrontData.paymentMethod.verified = true;
       order.storefrontData.paymentMethod.verifiedAt = new Date();
       order.storefrontData.paymentMethod.verificationNotes = `Paystack auto-verified (${data.channel})`;
@@ -886,11 +969,22 @@ class StorefrontService {
       order.paymentStatus = 'paid';
       order.status = 'pending';
       order.metadata = order.metadata || {};
-      order.metadata.paystack = { reference: data.reference, transactionId: data.id, processedAt: new Date() };
+      order.metadata.paystack = {
+        reference: data.reference,
+        transactionId: data.id,
+        customerPaid: customerTotal,
+        paystackCollectionFee: paystackFeePesewas / 100,
+        netReceived,
+        processedAt: new Date()
+      };
 
-      await order.save();
+      await order.save({ session });
 
-      // Notify admins that storefront order is ready for processing
+      // Commit transaction
+      await session.commitTransaction();
+      session.endSession();
+
+      // Notify admins that storefront order is ready for processing (outside transaction)
       try {
         const admins = await User.find({ userType: 'super_admin', isActive: true }).select('_id');
         for (const admin of admins) {
@@ -908,6 +1002,8 @@ class StorefrontService {
 
       return { processed: true, order };
     } catch (err) {
+      await session.abortTransaction();
+      session.endSession();
       logger.error('[Storefront] processPaystackOrderWebhook error', { message: err.message });
       throw err;
     }

@@ -34,8 +34,7 @@ const agentStorefrontSchema = new mongoose.Schema({
   // Contact & Payment Info
   contactInfo: {
     phone: { 
-      type: String, 
-      required: true,
+      type: String,
       match: /^[0-9+\-\s()]+$/ // Allow international phone format
     },
     email: {
@@ -48,7 +47,7 @@ const agentStorefrontSchema = new mongoose.Schema({
   paymentMethods: [{
     type: { 
       type: String, 
-      enum: ['mobile_money', 'bank_transfer'], 
+      enum: ['mobile_money', 'bank_transfer', 'paystack'], 
       required: true 
     },
     details: {

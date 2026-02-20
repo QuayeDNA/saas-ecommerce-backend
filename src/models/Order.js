@@ -110,17 +110,15 @@ const orderSchema = new mongoose.Schema(
           type: String, 
           required: function() { return this.orderType === 'storefront'; }
         },
-        phone: { 
-          type: String, 
-          required: function() { return this.orderType === 'storefront'; }
-        },
+        // buyer/customer phone is optional for public storefront checkout
+        phone: { type: String },
         email: String,
         ghanaCardNumber: String // AFA-specific
       },
       paymentMethod: {
         type: { 
           type: String, 
-          enum: ['mobile_money', 'bank_transfer'],
+          enum: ['mobile_money', 'bank_transfer', 'paystack'],
           required: function() { return this.orderType === 'storefront'; }
         },
         reference: String, // Transaction ID or reference

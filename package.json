@@ -10,7 +10,8 @@
     "lint:fix": "eslint . --fix",
     "build": "npm install && npm install --only=dev && npm install --only=production",
     "create-order": "node src/scripts/createOrderDocument.js",
-    "clear-pending-topups": "node src/scripts/clearPendingTopups.js"
+    "clear-pending-topups": "node src/scripts/clearPendingTopups.js",
+    "migrate:storefront-payments": "node src/scripts/migrateStorefrontPaymentMethodsToPaystack.js"
   },
   "keywords": [],
   "author": "",

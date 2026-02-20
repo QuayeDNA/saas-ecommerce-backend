@@ -79,10 +79,8 @@ class StorefrontController {
           metadata: { orderId: order._id.toString() }
         };
 
-        // If the storefront has a Paystack subaccount, include it so Paystack can route funds to the agent
-        if (order.storefrontData?.paystackSubaccountId) {
-          initPayload.subaccount = order.storefrontData.paystackSubaccountId;
-        }
+        // Public storefront payments route to the *platform* Paystack account (server will perform a server-side split on webhook).
+        // Do NOT include agent subaccount/subaccount routing for public checkout to centralize funds and auditing.
 
         const init = await paystackService.initializeTransaction(initPayload);
 
@@ -113,7 +111,6 @@ class StorefrontController {
           status: order.status
         }
       });
-      
     } catch (error) {
       logger.error(`Error creating storefront order: ${error.message}`);
       res.status(400).json({
@@ -122,8 +119,44 @@ class StorefrontController {
       });
     }
   }
-  
-  // =========================================================================
+
+  /**
+   * Verify a Paystack transaction by reference and reconcile a storefront order (used by frontend callback)
+   * GET /api/storefront/paystack/verify?reference=xxxx
+   */
+  async verifyPaystackTransaction(req, res) {
+    try {
+      const reference = req.query.reference || req.body.reference;
+      if (!reference) return res.status(400).json({ success: false, message: 'reference is required' });
+
+      // Ensure Paystack keys are loaded
+      if (typeof paystackService.ensureKeys === 'function') {
+        await paystackService.ensureKeys().catch((e) => logger.warn('[verifyPaystackTransaction] ensureKeys failed', { message: e.message }));
+      }
+
+      // Verify transaction with Paystack
+      const paystackData = await paystackService.verifyTransaction(reference.toString());
+      if (!paystackData || paystackData.status !== 'success') {
+        return res.status(400).json({ success: false, message: 'Paystack transaction not successful' });
+      }
+
+      // If metadata.orderId exists, process it using the same logic as the webhook handler
+      const event = { event: 'charge.success', data: paystackData };
+      try {
+        await storefrontService.processPaystackOrderWebhook(event);
+      } catch (procErr) {
+        logger.warn('[verifyPaystackTransaction] processPaystackOrderWebhook warning', { message: procErr.message });
+      }
+
+      return res.json({ success: true, message: 'Paystack transaction verified and processed (if matching order exists)' });
+    } catch (error) {
+      logger.error(`verifyPaystackTransaction error: ${error.message}`);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+      
+// =========================================================================
   // Agent Management Endpoints (Authentication Required)
   // =========================================================================
   

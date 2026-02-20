@@ -26,6 +26,7 @@ const validateStorefrontData = [
     .isLength({ max: 500 })
     .withMessage('Description must be less than 500 characters'),
   body('contactInfo.phone')
+    .optional()
     .matches(/^[0-9+\-\s()]+$/)
     .withMessage('Invalid phone number format'),
   body('contactInfo.email')
@@ -36,8 +37,8 @@ const validateStorefrontData = [
     .isArray({ min: 1 })
     .withMessage('At least one payment method is required'),
   body('paymentMethods.*.type')
-    .isIn(['mobile_money'])
-    .withMessage('Payment method type must be mobile_money'),
+    .isIn(['mobile_money','bank_transfer','paystack'])
+    .withMessage('Payment method type must be mobile_money, bank_transfer or paystack'),
   body('paymentMethods.*')
     .custom((paymentMethod) => {
       if (paymentMethod.type === 'mobile_money') {
@@ -84,6 +85,7 @@ const validateOrderData = [
     .isLength({ min: 2, max: 100 })
     .withMessage('Customer name must be 2-100 characters'),
   body('customerInfo.phone')
+    .optional()
     .matches(/^[0-9+\-\s()]+$/)
     .withMessage('Invalid phone number format'),
   // Email is optional (not required for storefront orders)
@@ -92,8 +94,8 @@ const validateOrderData = [
     .isEmail()
     .withMessage('Invalid email format'),
   body('paymentMethod.type')
-    .isIn(['mobile_money'])
-    .withMessage('Payment method type must be mobile_money'),
+    .isIn(['mobile_money','bank_transfer','paystack'])
+    .withMessage('Payment method type must be mobile_money, bank_transfer or paystack'),
   body('paymentMethod.reference')
     .optional()
     .isLength({ min: 1, max: 100 })
@@ -155,6 +157,17 @@ router.post(
   validateBusinessName,
   validateOrderData,
   storefrontController.createStorefrontOrder
+);
+
+/**
+ * @route GET /api/storefront/paystack/verify
+ * @desc Verify a Paystack transaction by reference and reconcile storefront order (callback helper)
+ * @access Public
+ */
+router.get(
+  '/paystack/verify',
+  (req, res, next) => { next(); },
+  storefrontController.verifyPaystackTransaction
 );
 
 // =========================================================================
