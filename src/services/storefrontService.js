@@ -693,9 +693,9 @@ class StorefrontService {
         totalTierCost,
         items: storefrontItems,
       },
-      // Use tier cost as the order total — this is what the agent's wallet is charged
-      subtotal: totalTierCost,
-      total: totalTierCost,
+      // Customer-facing total (what customer pays via Paystack); tier cost/markup in storefrontData for split
+      subtotal: totalAmount,
+      total: totalAmount,
       status: 'pending_payment',
       tenantId: storefront.agentId._id || storefront.agentId,
       createdBy: storefront.agentId._id || storefront.agentId
@@ -876,9 +876,9 @@ class StorefrontService {
         return { processed: false, duplicate: true };
       }
 
-      // Validate customer total (compare Paystack amount in smallest unit)
-      const customerTotal = (order.storefrontData.items || []).reduce((s, it) => s + (it.totalPrice || 0), 0);
-      const expectedPesewas = (await import('./paystackService.js')).default.convertToPesewas(customerTotal);
+      // Validate amount: order.total is the customer-facing total (what we charge via Paystack)
+      const customerTotal = Number(order.total) || (order.storefrontData.items || []).reduce((s, it) => s + (it.totalPrice || 0), 0);
+      const expectedPesewas = paystackService.convertToPesewas(customerTotal);
       if (Number(data.amount) !== Number(expectedPesewas)) {
         order.metadata = order.metadata || {};
         order.metadata.paystack = order.metadata.paystack || {};

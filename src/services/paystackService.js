@@ -182,6 +182,83 @@ class PaystackService {
       throw err;
     }
   }
+
+  /**
+   * Create a transfer recipient (mobile money or bank) for payouts.
+   * Ghana: type 'mobile_money' with bank_code MTN|VOD|ATL; type 'nuban' for bank.
+   */
+  async createTransferRecipient(data) {
+    await this.ensureKeys();
+    if (!this.secretKey) throw new Error('Paystack secret key is not configured');
+
+    try {
+      const payload = {
+        type: data.type === 'mobile_money' ? 'mobile_money' : 'nuban',
+        name: data.name,
+        currency: data.currency || 'GHS',
+        account_number: data.account_number,
+        bank_code: data.bank_code,
+      };
+      const resp = await axios.post(`${this.baseUrl}/transferrecipient`, payload, {
+        headers: { Authorization: `Bearer ${this.secretKey}`, 'Content-Type': 'application/json' },
+        timeout: 15000,
+      });
+      if (!resp?.data?.status) throw new Error(resp?.data?.message || 'Failed to create transfer recipient');
+      return resp.data.data;
+    } catch (err) {
+      logger.error('[Paystack] createTransferRecipient error', { message: err.message, data: err.response?.data });
+      throw err;
+    }
+  }
+
+  /**
+   * Initiate a transfer to a recipient.
+   * @param {Object} opts - { source: 'balance', amount (pesewas), recipient (recipient_code), reference, reason }
+   */
+  async initiateTransfer(opts) {
+    await this.ensureKeys();
+    if (!this.secretKey) throw new Error('Paystack secret key is not configured');
+
+    try {
+      const payload = {
+        source: opts.source || 'balance',
+        amount: Number(opts.amount),
+        recipient: opts.recipient,
+        reference: opts.reference,
+        reason: opts.reason || 'Payout',
+      };
+      const resp = await axios.post(`${this.baseUrl}/transfer`, payload, {
+        headers: { Authorization: `Bearer ${this.secretKey}`, 'Content-Type': 'application/json' },
+        timeout: 15000,
+      });
+      if (!resp?.data?.status) throw new Error(resp?.data?.message || 'Failed to initiate transfer');
+      return resp.data.data;
+    } catch (err) {
+      logger.error('[Paystack] initiateTransfer error', { message: err.message, data: err.response?.data });
+      throw err;
+    }
+  }
+
+  /**
+   * Resolve bank account number to get account name (Ghana banks).
+   */
+  async resolveAccountNumber(accountNumber, bankCode) {
+    await this.ensureKeys();
+    if (!this.secretKey) throw new Error('Paystack secret key is not configured');
+
+    try {
+      const resp = await axios.get(`${this.baseUrl}/bank/resolve`, {
+        params: { account_number: accountNumber, bank_code: bankCode },
+        headers: { Authorization: `Bearer ${this.secretKey}` },
+        timeout: 10000,
+      });
+      if (!resp?.data?.status) throw new Error(resp?.data?.message || 'Failed to resolve account');
+      return resp.data.data;
+    } catch (err) {
+      logger.error('[Paystack] resolveAccountNumber error', { message: err.message });
+      throw err;
+    }
+  }
 }
 
 export default new PaystackService();

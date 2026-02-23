@@ -70,12 +70,13 @@ class StorefrontController {
         const reference = `storefront_${order._id}`;
         const amountPesewas = paystackService.convertToPesewas(order.total || 0);
 
+        const callbackOverride = process.env.PAYSTACK_CALLBACK_URL || (process.env.NODE_ENV === 'production' ? process.env.PAYSTACK_CALLBACK_URL_PROD : process.env.PAYSTACK_CALLBACK_URL_DEV);
         const initPayload = {
           email: customerEmail,
           amount: amountPesewas,
           reference,
           currency: 'GHS',
-          callback_url: `${process.env.FRONTEND_URL || ''}/storefront/${order.storefrontData.storefrontId}/callback`,
+          callback_url: callbackOverride || `${process.env.FRONTEND_URL || ''}/storefront/${order.storefrontData.storefrontId}/callback`,
           metadata: { orderId: order._id.toString() }
         };
 

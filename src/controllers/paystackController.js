@@ -1,6 +1,7 @@
 import paystackService from '../services/paystackService.js';
 import walletService from '../services/walletService.js';
 import storefrontService from '../services/storefrontService.js';
+import payoutService from '../services/payoutService.js';
 import WalletTransaction from '../models/WalletTransaction.js';
 import Order from '../models/Order.js';
 import logger from '../utils/logger.js';
@@ -43,6 +44,10 @@ class PaystackController {
           break;
         case 'charge.failed':
           await this.handleChargeFailed(event);
+          break;
+        case 'transfer.success':
+        case 'transfer.failed':
+          await payoutService.handleTransferWebhook(event);
           break;
         default:
           logger.info('[Paystack Webhook] unhandled event', { event: event.event });

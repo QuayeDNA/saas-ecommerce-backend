@@ -9,13 +9,13 @@ const earningsTransactionSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['credit', 'debit'],
+    enum: ['credit', 'debit', 'payout'],
     required: true
   },
   amount: {
     type: Number,
-    required: true,
-    min: 0.01
+    required: true
+    // credit/debit: positive; payout: negative (withdrawal)
   },
   balanceAfter: {
     type: Number,

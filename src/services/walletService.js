@@ -583,7 +583,7 @@ class WalletService {
         amount: amountPesewas,
         reference,
         currency: 'GHS',
-        callback_url: returnUrl || `${process.env.FRONTEND_URL || ''}/wallet/topup/callback`,
+        callback_url: returnUrl || process.env.PAYSTACK_CALLBACK_URL || (process.env.NODE_ENV === 'production' ? process.env.PAYSTACK_CALLBACK_URL_PROD : process.env.PAYSTACK_CALLBACK_URL_DEV) || `${process.env.FRONTEND_URL || ''}/wallet/topup/callback`,
         // pass user's full name in metadata (already present) and include it in description so Paystack's hosted/redirect page can surface the name
         metadata: { userId: userId.toString(), type: 'wallet_topup', userName: user.fullName },
         channels: ['card', 'mobile_money', 'bank_transfer']
@@ -634,6 +634,11 @@ class WalletService {
       const metadata = data.metadata || {};
 
       if (metadata.type !== 'wallet_topup') return { processed: false, reason: 'not_wallet_topup' };
+
+      if (data.currency && data.currency !== 'GHS') {
+        logger.error('[Paystack Webhook] Wallet top-up rejected: non-GHS currency', { reference, currency: data.currency });
+        return { processed: false, reason: 'currency_mismatch' };
+      }
 
       // Atomically claim the pending WalletTransaction for processing to avoid double-credit
       const claimedTx = await WalletTransaction.findOneAndUpdate(
@@ -701,7 +706,7 @@ class WalletService {
       // Reconcile any other pending top-up requests for the same user + amount
       try {
         const otherPending = await WalletTransaction.find({
-          user: user._id,
+          user: updatedUser._id,
           type: 'credit',
           status: 'pending',
           amount: tx.amount,
@@ -710,10 +715,10 @@ class WalletService {
         });
 
         if (otherPending && otherPending.length > 0) {
-          logger.info(`[WalletService] Reconciling ${otherPending.length} pending request(s) for user ${user._id} after Paystack success`, { reference });
+          logger.info(`[WalletService] Reconciling ${otherPending.length} pending request(s) for user ${updatedUser._id} after Paystack success`, { reference });
           for (const pendingTx of otherPending) {
             pendingTx.status = 'completed';
-            pendingTx.balanceAfter = user.walletBalance; // reflect actual new balance
+            pendingTx.balanceAfter = updatedUser.walletBalance; // reflect actual new balance
             pendingTx.description = `${pendingTx.description} - Auto-completed (reconciled via Paystack)`;
             pendingTx.metadata = pendingTx.metadata || {};
             pendingTx.metadata.reconciled = {
@@ -738,23 +743,23 @@ class WalletService {
 
       // Emit websocket update for the paystack transaction
       try {
-        const recentTransactions = await WalletTransaction.find({ user: user._id }).sort({ createdAt: -1 }).limit(10).populate([
+        const recentTransactions = await WalletTransaction.find({ user: updatedUser._id }).sort({ createdAt: -1 }).limit(10).populate([
           { path: 'approvedBy', select: 'fullName' },
           { path: 'relatedOrder', select: 'orderNumber' }
         ]);
 
-        websocketService.sendToUser(user._id.toString(), {
+        websocketService.sendToUser(updatedUser._id.toString(), {
           type: 'wallet_update',
-          userId: user._id.toString(),
-          balance: user.walletBalance,
+          userId: updatedUser._id.toString(),
+          balance: updatedUser.walletBalance,
           recentTransactions,
-          message: `Your wallet has been credited with GH₵${tx.amount}. New balance: GH₵${user.walletBalance}`
+          message: `Your wallet has been credited with GH₵${tx.amount}. New balance: GH₵${updatedUser.walletBalance}`
         });
       } catch (wsErr) {
         logger.warn(`WebSocket wallet update failed: ${wsErr.message}`);
       }
 
-      return { processed: true, transaction: tx, user };
+      return { processed: true, transaction: tx, user: updatedUser };
     } catch (err) {
       logger.error(`processPaystackWebhook error: ${err.message}`);
       throw err;

@@ -1,6 +1,7 @@
 // src/routes/walletRoutes.js
 import express from "express";
 import walletController from "../controllers/walletController.js";
+import payoutController from "../controllers/payoutController.js";
 import {
   authenticate,
   authorize,
@@ -58,6 +59,11 @@ router.get(
   walletController.verifyPaystackTransaction
 );
 
+// Earnings & payouts (agents with storefront earnings)
+router.get("/earnings/dashboard", authenticate, payoutController.getEarningsDashboard);
+router.get("/payouts", authenticate, payoutController.getPayouts);
+router.post("/payouts/request", authenticate, payoutController.requestPayout);
+
 // Routes for admins/super_admins
 router.post(
   "/top-up",
@@ -98,5 +104,11 @@ router.get(
   authorize("super_admin"),
   walletController.getAdminTransactions
 );
+
+// Admin: payout review queue and actions
+router.get("/admin/payouts", authenticate, authorize("super_admin"), payoutController.getPendingPayouts);
+router.put("/admin/payouts/:id/approve", authenticate, authorize("super_admin"), payoutController.approvePayout);
+router.put("/admin/payouts/:id/reject", authenticate, authorize("super_admin"), payoutController.rejectPayout);
+router.post("/admin/payouts/:id/process", authenticate, authorize("super_admin"), payoutController.processPayout);
 
 export default router;
