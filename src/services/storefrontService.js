@@ -10,263 +10,197 @@ import notificationService from './notificationService.js';
 import paystackService from './paystackService.js';
 import { calculateStorefrontSplit } from '../utils/paystackHelpers.js';
 import logger from '../utils/logger.js';
-import mongoose from 'mongoose';
 import WalletTransaction from '../models/WalletTransaction.js';
 import EarningsTransaction from '../models/EarningsTransaction.js';
+import websocketService from './websocketService.js';
 
 class StorefrontService {
-  
+
   // =========================================================================
-  // Storefront CRUD Operations
+  // Private helpers
   // =========================================================================
-  
+
   /**
-   * Create a new storefront for an authenticated user
-   * Checks auto-approve setting to determine if store goes live immediately
+   * Extract the MongoDB Order._id string from a Paystack reference.
+   * Storefron references always follow the pattern: storefront_<orderId>
    */
+  _orderIdFromReference(reference) {
+    if (!reference) return null;
+    if (reference.startsWith('storefront_')) {
+      return reference.replace('storefront_', '');
+    }
+    return null;
+  }
+
+  /**
+   * Send a real-time notification to an agent's connected browser when their
+   * storefront receives a payment. Fails silently — must never break finances.
+   */
+  async _notifyAgent(agentId, orderId, orderNumber, amount) {
+    try {
+      websocketService.sendToUser(agentId.toString(), {
+        type: 'storefront_order_paid',
+        orderId: orderId.toString(),
+        orderNumber,
+        amount,
+        message: `Storefront order ${orderNumber} has been paid (GH₵${amount.toFixed(2)}).`,
+      });
+    } catch (err) {
+      logger.warn(`[StorefrontService] WebSocket notify failed for agent ${agentId}: ${err.message}`);
+    }
+  }
+
+  // =========================================================================
+  // Storefront CRUD
+  // =========================================================================
+
   async createStorefront(userId, storefrontData) {
-    const existingStorefront = await AgentStorefront.findOne({ agentId: userId });
-    if (existingStorefront) {
-      throw new Error('You already have a storefront');
-    }
-    
+    const existing = await AgentStorefront.findOne({ agentId: userId });
+    if (existing) throw new Error('You already have a storefront');
+
     const user = await User.findById(userId);
-    if (!user) {
-      throw new Error('User not found');
-    }
-    
-    if (!user.isActive) {
-      throw new Error('Your account is not active');
-    }
-    
-    // Check if auto-approve is enabled
+    if (!user) throw new Error('User not found');
+    if (!user.isActive) throw new Error('Your account is not active');
+
     const settings = await Settings.getInstance();
     const autoApprove = settings.autoApproveStorefronts || false;
-    
+
     const storefront = new AgentStorefront({
       agentId: userId,
       ...storefrontData,
       isApproved: autoApprove,
       isActive: autoApprove,
-      ...(autoApprove ? { approvedAt: new Date() } : {})
+      ...(autoApprove ? { approvedAt: new Date() } : {}),
     });
-    
+
     const saved = await storefront.save();
-    
-    // Notify admins about new storefront
+
     try {
       const admins = await User.find({ userType: 'super_admin', isActive: true }).select('_id');
       for (const admin of admins) {
         await notificationService.createInAppNotification(
           admin._id.toString(),
           'New Storefront Created',
-          `${user.fullName} has created a new storefront "${storefrontData.displayName}"${autoApprove ? ' (auto-approved)' : ' - awaiting approval'}`,
+          `${user.fullName} created storefront "${storefrontData.displayName}"${autoApprove ? ' (auto-approved)' : ' — awaiting approval'}`,
           'info',
           { type: 'storefront_created', storefrontId: saved._id }
         );
       }
-    } catch (notifErr) {
-      logger.error('Failed to send storefront creation notification:', notifErr);
+    } catch (err) {
+      logger.error('[StorefrontService] Storefront creation notification failed:', err);
     }
-    
+
     return saved;
   }
-  
-  /**
-   * Get user's storefront
-   * If suspended by admin, returns store with suspension info so agent sees the message
-   */
+
   async getAgentStorefront(userId) {
-    const storefront = await AgentStorefront.findOne({ agentId: userId })
-      .populate('agentId', 'fullName userType');
-    
-    if (!storefront) return null;
-    
-    // If suspended by admin, include that info so frontend can show appropriate message
-    return storefront;
+    return AgentStorefront.findOne({ agentId: userId }).populate('agentId', 'fullName userType');
   }
-  
-  /**
-   * Update storefront (with ownership check)
-   * Blocked if suspended by admin
-   */
+
   async updateStorefront(storefrontId, updateData, userId) {
     const storefront = await AgentStorefront.findById(storefrontId);
-    if (!storefront) {
-      throw new Error('Storefront not found');
-    }
-    
-    if (userId && storefront.agentId.toString() !== userId.toString()) {
-      throw new Error('Not authorized to update this storefront');
-    }
-    
-    if (storefront.suspendedByAdmin) {
-      throw new Error('Your storefront has been suspended by an administrator. Please contact support.');
-    }
-    
-    // Prevent changing certain fields directly
+    if (!storefront) throw new Error('Storefront not found');
+    if (userId && storefront.agentId.toString() !== userId.toString()) throw new Error('Not authorized to update this storefront');
+    if (storefront.suspendedByAdmin) throw new Error('Your storefront has been suspended. Contact support.');
+
+    // Block sensitive fields from being changed directly
     delete updateData.isActive;
     delete updateData.isApproved;
     delete updateData.suspendedByAdmin;
     delete updateData.agentId;
-    
+
     Object.assign(storefront, updateData);
-    return await storefront.save();
-  }
-  
-  /**
-   * Agent deactivates their own storefront (soft - they can still see it, public can't)
-   */
-  async deactivateStorefront(storefrontId, userId) {
-    const storefront = await AgentStorefront.findById(storefrontId);
-    if (!storefront) {
-      throw new Error('Storefront not found');
-    }
-    
-    if (userId && storefront.agentId.toString() !== userId.toString()) {
-      throw new Error('Not authorized to deactivate this storefront');
-    }
-    
-    if (storefront.suspendedByAdmin) {
-      throw new Error('Your storefront has been suspended by an administrator. Please contact support.');
-    }
-    
-    storefront.isActive = false;
-    return await storefront.save();
-  }
-  
-  /**
-   * Agent reactivates their own storefront
-   */
-  async reactivateStorefront(storefrontId, userId) {
-    const storefront = await AgentStorefront.findById(storefrontId);
-    if (!storefront) {
-      throw new Error('Storefront not found');
-    }
-    
-    if (userId && storefront.agentId.toString() !== userId.toString()) {
-      throw new Error('Not authorized');
-    }
-    
-    if (storefront.suspendedByAdmin) {
-      throw new Error('Your storefront has been suspended by an administrator. Please contact support.');
-    }
-    
-    if (!storefront.isApproved) {
-      throw new Error('Your storefront has not been approved yet');
-    }
-    
-    storefront.isActive = true;
-    return await storefront.save();
+    return storefront.save();
   }
 
-  /**
-   * Create Paystack subaccount for an agent's storefront (requires bank account details to exist)
-   * - saves `paystackSubaccountId` to the AgentStorefront document
-   */
+  async deactivateStorefront(storefrontId, userId) {
+    const storefront = await AgentStorefront.findById(storefrontId);
+    if (!storefront) throw new Error('Storefront not found');
+    if (userId && storefront.agentId.toString() !== userId.toString()) throw new Error('Not authorized');
+    if (storefront.suspendedByAdmin) throw new Error('Your storefront has been suspended. Contact support.');
+    storefront.isActive = false;
+    return storefront.save();
+  }
+
+  async reactivateStorefront(storefrontId, userId) {
+    const storefront = await AgentStorefront.findById(storefrontId);
+    if (!storefront) throw new Error('Storefront not found');
+    if (userId && storefront.agentId.toString() !== userId.toString()) throw new Error('Not authorized');
+    if (storefront.suspendedByAdmin) throw new Error('Your storefront has been suspended. Contact support.');
+    if (!storefront.isApproved) throw new Error('Your storefront has not been approved yet');
+    storefront.isActive = true;
+    return storefront.save();
+  }
+
   async createPaystackSubaccount(userId) {
     const storefront = await AgentStorefront.findOne({ agentId: userId });
     if (!storefront) throw new Error('Storefront not found');
 
-    // Look for a bank_transfer payment method to use for settlement
-    const bankMethod = (storefront.paymentMethods || []).find(pm => pm.type === 'bank_transfer' && pm.isActive && pm.details?.bank && pm.details?.account && pm.details?.name);
+    const bankMethod = (storefront.paymentMethods || []).find(
+      pm => pm.type === 'bank_transfer' && pm.isActive && pm.details?.bank && pm.details?.account && pm.details?.name
+    );
     if (!bankMethod) {
-      throw new Error('Please add an active bank transfer payment method with account details before creating a Paystack subaccount');
+      throw new Error('Add an active bank transfer payment method with account details before creating a Paystack subaccount');
     }
 
     const agent = await User.findById(userId).select('fullName email phone');
-
-    // Build subaccount payload for Paystack
     const payload = {
       business_name: storefront.displayName || storefront.businessName,
       settlement_bank: bankMethod.details.bank,
       account_number: bankMethod.details.account,
-      percentage_charge: 0, // agent receives full amount by default; platform may charge a split later
+      percentage_charge: 0,
       primary_contact_name: agent?.fullName || bankMethod.details.name,
       primary_contact_email: agent?.email || '',
-      primary_contact_phone: agent?.phone || storefront.contactInfo?.phone || ''
+      primary_contact_phone: agent?.phone || storefront.contactInfo?.phone || '',
     };
 
-    // Create subaccount via Paystack
-    const sub = await (await import('./../../src/services/paystackService.js').catch(() => import('../services/paystackService.js'))).default.createSubaccount(payload);
-
-    // Persist subaccount code on storefront
-    storefront.paystackSubaccountId = sub.subaccount_code || sub.subaccountCode || sub.id || sub.subaccount_code;
+    const ps = (await import('./paystackService.js')).default;
+    const sub = await ps.createSubaccount(payload);
+    storefront.paystackSubaccountId = sub.subaccount_code || sub.subaccountCode || sub.id;
     await storefront.save();
-
     return { storefront, subaccount: sub };
   }
 
-  /**
-   * Agent deletes their storefront (graceful - checks for active orders)
-   */
   async deleteStorefront(storefrontId, userId) {
     const storefront = await AgentStorefront.findById(storefrontId);
-    if (!storefront) {
-      throw new Error('Storefront not found');
-    }
-    
-    if (userId && storefront.agentId.toString() !== userId.toString()) {
-      throw new Error('Not authorized');
-    }
-    
-    // Check for active orders
-    const activeOrders = await Order.countDocuments({
+    if (!storefront) throw new Error('Storefront not found');
+    if (userId && storefront.agentId.toString() !== userId.toString()) throw new Error('Not authorized');
+
+    const active = await Order.countDocuments({
       orderType: 'storefront',
       'storefrontData.storefrontId': storefrontId,
-      status: { $in: ['pending', 'confirmed', 'processing'] }
+      status: { $in: ['pending', 'confirmed', 'processing'] },
     });
-    
-    if (activeOrders > 0) {
-      throw new Error(`Cannot delete storefront with ${activeOrders} active order(s). Please complete or cancel all pending orders first.`);
-    }
-    
-    // Clean up pricing records
+    if (active > 0) throw new Error(`Cannot delete storefront with ${active} active order(s). Complete or cancel them first.`);
+
     await StorefrontPricing.deleteMany({ storefrontId });
-    
-    // Delete the storefront
     await AgentStorefront.findByIdAndDelete(storefrontId);
-    
     return { deleted: true };
   }
-  
+
   // =========================================================================
-  // Bundle & Pricing Operations
+  // Bundle & Pricing
   // =========================================================================
-  
-  /**
-   * Get ALL active bundles with agent's tier pricing + any custom pricing they've set.
-   * Shows every bundle the admin has made active, with:
-   * - tierPrice (agent's cost based on user type)
-   * - customPrice (if agent set one)
-   * - isEnabled (whether agent has enabled this bundle in their store)
-   */
+
   async getAgentBundlesForPricing(userId) {
     const user = await User.findById(userId);
-    if (!user) {
-      throw new Error('User not found');
-    }
-    
+    if (!user) throw new Error('User not found');
+
     const storefront = await AgentStorefront.findOne({ agentId: userId });
-    
-    // Get ALL active bundles from admin
+
     const bundles = await Bundle.find({ isActive: true })
       .populate('providerId', 'name code logo')
       .populate('packageId', 'name');
-    
-    // Get agent's existing pricing/selections
-    let pricingMap = new Map();
+
+    const pricingMap = new Map();
     if (storefront) {
-      const existingPricing = await StorefrontPricing.find({ storefrontId: storefront._id });
-      for (const p of existingPricing) {
-        pricingMap.set(p.bundleId.toString(), p);
-      }
+      const existing = await StorefrontPricing.find({ storefrontId: storefront._id });
+      for (const p of existing) pricingMap.set(p.bundleId.toString(), p);
     }
-    
+
     return bundles.map(bundle => {
       const tierPrice = bundle.getPriceForUserType(user.userType);
-      const existingPricing = pricingMap.get(bundle._id.toString());
-      
+      const ep = pricingMap.get(bundle._id.toString());
       return {
         _id: bundle._id,
         name: bundle.name,
@@ -277,60 +211,38 @@ class StorefrontService {
         validityUnit: bundle.validityUnit,
         category: bundle.category,
         bundleCode: bundle.bundleCode,
-        provider: bundle.providerId ? {
-          _id: bundle.providerId._id,
-          name: bundle.providerId.name,
-          code: bundle.providerId.code,
-        } : null,
+        provider: bundle.providerId ? { _id: bundle.providerId._id, name: bundle.providerId.name, code: bundle.providerId.code } : null,
         packageName: bundle.packageId?.name || null,
         tierPrice,
-        // Custom pricing info (if agent has set any)
-        customPrice: existingPricing?.hasCustomPrice ? existingPricing.customPrice : null,
-        markup: existingPricing?.hasCustomPrice ? existingPricing.markup : null,
-        // Whether this bundle is enabled in the agent's store
-        isEnabled: existingPricing?.isActive || false,
+        customPrice: ep?.hasCustomPrice ? ep.customPrice : null,
+        markup: ep?.hasCustomPrice ? ep.markup : null,
+        isEnabled: ep?.isActive || false,
       };
     });
   }
-  
-  /**
-   * Set custom pricing for bundles
-   * If customPrice is provided, use it. Otherwise enable bundle at tier price.
-   */
+
   async setPricing(storefrontId, pricingData) {
     const storefront = await AgentStorefront.findById(storefrontId).populate('agentId');
-    if (!storefront) {
-      throw new Error('Storefront not found');
-    }
-    
+    if (!storefront) throw new Error('Storefront not found');
+
     const results = { updated: 0, created: 0 };
-    
-    for (const pricing of pricingData) {
-      const { bundleId, customPrice } = pricing;
-      
+
+    for (const { bundleId, customPrice } of pricingData) {
       const bundle = await Bundle.findById(bundleId);
-      if (!bundle) {
-        throw new Error(`Bundle not found: ${bundleId}`);
-      }
-      
-      if (!bundle.isActive) {
-        throw new Error(`Bundle is not active: ${bundleId}`);
-      }
-      
+      if (!bundle) throw new Error(`Bundle not found: ${bundleId}`);
+      if (!bundle.isActive) throw new Error(`Bundle not active: ${bundleId}`);
+
       const tierPrice = bundle.getPriceForUserType(storefront.agentId.userType);
-      if (!tierPrice) {
-        throw new Error(`Bundle not available for your account type: ${bundleId}`);
-      }
-      
+      if (!tierPrice) throw new Error(`Bundle not available for your account type: ${bundle.name}`);
+
       const hasCustomPrice = customPrice !== undefined && customPrice !== null;
       const finalPrice = hasCustomPrice ? customPrice : tierPrice;
-      
+
       if (hasCustomPrice && customPrice < tierPrice) {
-        throw new Error(`Custom price cannot be less than tier price (${tierPrice}) for bundle: ${bundle.name}`);
+        throw new Error(`Custom price cannot be less than tier price (${tierPrice}) for: ${bundle.name}`);
       }
-      
+
       const existing = await StorefrontPricing.findOne({ storefrontId, bundleId });
-      
       if (existing) {
         existing.tierPrice = tierPrice;
         existing.customPrice = finalPrice;
@@ -342,146 +254,89 @@ class StorefrontService {
         results.updated++;
       } else {
         await StorefrontPricing.create({
-          storefrontId,
-          bundleId,
-          tierPrice,
-          customPrice: finalPrice,
+          storefrontId, bundleId, tierPrice, customPrice: finalPrice,
           markup: finalPrice - tierPrice,
           markupPercentage: tierPrice > 0 ? ((finalPrice - tierPrice) / tierPrice) * 100 : 0,
-          hasCustomPrice,
-          isActive: true
+          hasCustomPrice, isActive: true,
         });
         results.created++;
       }
     }
-    
+
     return results;
   }
-  
-  /**
-   * Toggle bundle visibility in agent's store (enable/disable bundles)
-   * Agent can choose which bundles to show regardless of whether they set custom pricing
-   */
+
   async toggleBundles(storefrontId, bundleUpdates, userId) {
     const storefront = await AgentStorefront.findById(storefrontId).populate('agentId');
-    if (!storefront) {
-      throw new Error('Storefront not found');
-    }
-    
-    if (storefront.agentId._id.toString() !== userId.toString()) {
-      throw new Error('Not authorized');
-    }
-    
+    if (!storefront) throw new Error('Storefront not found');
+    if (storefront.agentId._id.toString() !== userId.toString()) throw new Error('Not authorized');
+
     const results = { enabled: 0, disabled: 0 };
-    
-    for (const update of bundleUpdates) {
-      const { bundleId, isEnabled } = update;
-      
+
+    for (const { bundleId, isEnabled } of bundleUpdates) {
       const bundle = await Bundle.findById(bundleId);
       if (!bundle) continue;
-      
       const tierPrice = bundle.getPriceForUserType(storefront.agentId.userType);
-      
+
       if (isEnabled) {
-        // Enable bundle - create pricing record at tier price if none exists
         await StorefrontPricing.findOneAndUpdate(
           { storefrontId, bundleId },
           {
-            $setOnInsert: {
-              tierPrice,
-              customPrice: tierPrice,
-              markup: 0,
-              markupPercentage: 0,
-              hasCustomPrice: false
-            },
-            isActive: true
+            $setOnInsert: { tierPrice, customPrice: tierPrice, markup: 0, markupPercentage: 0, hasCustomPrice: false },
+            isActive: true,
           },
           { upsert: true, new: true }
         );
         results.enabled++;
       } else {
-        // Disable bundle - just set isActive to false (keep the record for potential re-enable)
-        await StorefrontPricing.findOneAndUpdate(
-          { storefrontId, bundleId },
-          { isActive: false }
-        );
+        await StorefrontPricing.findOneAndUpdate({ storefrontId, bundleId }, { isActive: false });
         results.disabled++;
       }
     }
-    
+
     return results;
   }
-  
-  /**
-   * Get storefront pricing (agent view - includes tier prices, custom prices, enabled status)
-   */
+
   async getStorefrontPricing(storefrontId) {
-    return await StorefrontPricing.find({ storefrontId })
+    return StorefrontPricing.find({ storefrontId })
       .populate({
         path: 'bundleId',
         select: 'name description dataVolume dataUnit validity validityUnit category bundleCode providerId isActive',
-        populate: { path: 'providerId', select: 'name code' }
+        populate: { path: 'providerId', select: 'name code' },
       })
       .sort({ isActive: -1, createdAt: -1 });
   }
-  
+
   // =========================================================================
-  // Public Operations (Customer-facing)
+  // Public Storefront
   // =========================================================================
-  
-  /**
-   * Get public storefront by business name
-   * Shows ALL admin-active bundles EXCEPT those the agent explicitly disabled.
-   * Price = customPrice if agent set one, otherwise agent's tier price.
-   */
+
   async getPublicStorefront(businessName) {
     const storefront = await AgentStorefront.findPublicStore(businessName);
-    if (!storefront) {
-      throw new Error('Storefront not found or not available');
-    }
-    
+    if (!storefront) throw new Error('Storefront not found or not available');
+
     const agentUserType = storefront.agentId?.userType || 'agent';
-    
-    // Get ALL StorefrontPricing records for this store (active AND disabled)
-    const allPricing = await StorefrontPricing.find({ 
-      storefrontId: storefront._id 
-    });
-    
-    // Build a map: bundleId string -> StorefrontPricing record
+
+    const allPricing = await StorefrontPricing.find({ storefrontId: storefront._id });
     const pricingMap = new Map();
-    for (const p of allPricing) {
-      pricingMap.set(p.bundleId.toString(), p);
-    }
-    
-    // Get ALL active bundles from the system (include AFA fields + packageId for grouping)
+    for (const p of allPricing) pricingMap.set(p.bundleId.toString(), p);
+
     const allBundles = await Bundle.find({ isActive: true, isDeleted: { $ne: true } })
       .select('name description dataVolume dataUnit validity validityUnit category providerId packageId pricingTiers price requiresGhanaCard afaRequirements')
-      .populate('providerId', 'name code logo') // include logo so public storefront can render provider cards
+      .populate('providerId', 'name code logo')
       .populate('packageId', 'name category')
       .lean();
-    
-    // For each bundle: show unless agent explicitly disabled it
-    const bundles = [];
 
-    // Build provider → package → bundles grouping so frontend can render provider cards + package groups
-    const providersMap = new Map(); // providerCode -> { code, name, logo, packages: Map(packageName -> { _id, name, category, bundles: [] }) }
+    const bundles = [];
+    const providersMap = new Map();
 
     for (const bundle of allBundles) {
       const pricing = pricingMap.get(bundle._id.toString());
+      if (pricing && !pricing.isActive) continue;
 
-      if (pricing && !pricing.isActive) {
-        // Agent explicitly disabled this bundle — hide it
-        continue;
-      }
-
-      let price;
-      if (pricing) {
-        // Agent has an active pricing record
-        price = pricing.hasCustomPrice ? pricing.customPrice : pricing.tierPrice;
-      } else {
-        // No pricing record — show at agent's tier price
-        price = bundle.pricingTiers?.[agentUserType] ?? bundle.pricingTiers?.default ?? bundle.price;
-      }
+      const price = pricing
+        ? (pricing.hasCustomPrice ? pricing.customPrice : pricing.tierPrice)
+        : (bundle.pricingTiers?.[agentUserType] ?? bundle.pricingTiers?.default ?? bundle.price);
 
       const publicBundle = {
         _id: bundle._id,
@@ -497,37 +352,37 @@ class StorefrontService {
         packageName: bundle.packageId?.name || bundle.category || 'General',
         packageCategory: bundle.packageId?.category || bundle.category,
         price,
-        // AFA-specific fields
         requiresGhanaCard: bundle.requiresGhanaCard || false,
         afaRequirements: bundle.afaRequirements || [],
       };
 
       bundles.push(publicBundle);
 
-      // --- populate providersMap for grouped response ---
       const provCode = bundle.providerId?.code || 'Unknown';
       const provName = bundle.providerId?.name || provCode;
       const provLogo = bundle.providerId?.logo || null;
+
       if (!providersMap.has(provCode)) {
         providersMap.set(provCode, { code: provCode, name: provName, logo: provLogo, packages: new Map() });
       }
       const provEntry = providersMap.get(provCode);
-
-      const pkgId = bundle.packageId?._id || null;
       const pkgName = bundle.packageId?.name || bundle.category || 'General';
-      const pkgCategory = bundle.packageId?.category || bundle.category || null;
       if (!provEntry.packages.has(pkgName)) {
-        provEntry.packages.set(pkgName, { _id: pkgId, name: pkgName, category: pkgCategory, bundles: [] });
+        provEntry.packages.set(pkgName, {
+          _id: bundle.packageId?._id || null,
+          name: pkgName,
+          category: bundle.packageId?.category || bundle.category || null,
+          bundles: [],
+        });
       }
       provEntry.packages.get(pkgName).bundles.push(publicBundle);
     }
 
-    // Convert providersMap -> array with packages arrays
     const providers = Array.from(providersMap.values()).map(p => ({
       code: p.code,
       name: p.name,
       logo: p.logo,
-      packages: Array.from(p.packages.values()).map(pkg => ({ _id: pkg._id, name: pkg.name, category: pkg.category, bundles: pkg.bundles }))
+      packages: Array.from(p.packages.values()),
     }));
 
     return {
@@ -538,89 +393,69 @@ class StorefrontService {
         contactInfo: storefront.contactInfo,
         settings: storefront.settings,
         branding: storefront.branding || {},
-        paymentMethods: storefront.paymentMethods.filter(pm => pm.isActive)
+        paymentMethods: storefront.paymentMethods.filter(pm => pm.isActive),
       },
-      bundles,      // backward-compatible flat list
-      providers    // new grouped provider -> packages -> bundles structure
+      bundles,
+      providers,
     };
   }
-  
-  /**
-   * Create storefront order (customer places order)
-   * Email is optional. Supports optional payment proof screenshot URL.
-   */
+
+  // =========================================================================
+  // Order Creation
+  // =========================================================================
+
   async createStorefrontOrder(businessName, orderData) {
     const storefront = await AgentStorefront.findPublicStore(businessName);
-    if (!storefront) {
-      throw new Error('Storefront not found or not available');
-    }
-    
+    if (!storefront) throw new Error('Storefront not found or not available');
+
     const { items, customerInfo, paymentMethod } = orderData;
-    
-    // Validate and calculate order items
-    let totalAmount = 0;
-    let totalMarkup = 0;
-    let totalTierCost = 0;
+
+    let totalAmount = 0, totalMarkup = 0, totalTierCost = 0;
     let hasAfaBundles = false;
-    const storefrontItems = [];   // For storefrontData.items (customer-facing prices)
-    const systemItems = [];       // For top-level items[] (tier prices for agent processing)
-    
+    const storefrontItems = [];
+    const systemItems = [];
+
     for (const item of items) {
-      // Look up ANY pricing record (active or disabled) to check agent intent
       const pricingRecord = await StorefrontPricing.findOne({
         storefrontId: storefront._id,
-        bundleId: item.bundleId
+        bundleId: item.bundleId,
       }).populate({ path: 'bundleId', populate: { path: 'providerId', select: 'name code' } });
-      
+
       let bundle, displayPrice, tierPrice;
-      
+
       if (pricingRecord) {
-        // Agent has a record — reject if they've disabled this bundle
-        if (!pricingRecord.isActive) {
-          throw new Error(`Bundle not available in this store: ${item.bundleId}`);
-        }
+        if (!pricingRecord.isActive) throw new Error(`Bundle not available in this store: ${item.bundleId}`);
         bundle = pricingRecord.bundleId;
         tierPrice = pricingRecord.tierPrice;
         displayPrice = pricingRecord.hasCustomPrice ? pricingRecord.customPrice : pricingRecord.tierPrice;
       } else {
-        // No pricing record — bundle is available at tier price by default
         bundle = await Bundle.findOne({ _id: item.bundleId, isActive: true, isDeleted: { $ne: true } })
           .populate('providerId', 'name code');
-        if (!bundle) {
-          throw new Error(`Bundle not available in this store: ${item.bundleId}`);
-        }
+        if (!bundle) throw new Error(`Bundle not available in this store: ${item.bundleId}`);
         const agentUserType = storefront.agentId?.userType || 'agent';
         tierPrice = bundle.pricingTiers?.[agentUserType] ?? bundle.pricingTiers?.default ?? bundle.price;
         displayPrice = tierPrice;
       }
-      
-      const itemTotal = displayPrice * item.quantity;
-      const itemMarkup = (displayPrice - tierPrice) * item.quantity;
+
+      const itemTotal    = displayPrice * item.quantity;
+      const itemMarkup   = (displayPrice - tierPrice) * item.quantity;
       const itemTierCost = tierPrice * item.quantity;
-      
-      totalAmount += itemTotal;
-      totalMarkup += itemMarkup;
+
+      totalAmount   += itemTotal;
+      totalMarkup   += itemMarkup;
       totalTierCost += itemTierCost;
 
-      const phone = item.customerPhone || customerInfo.phone;
-      
-      // Resolve provider code from populated providerId
+      const phone       = item.customerPhone || customerInfo.phone;
       const providerCode = bundle.providerId?.code || 'Unknown';
 
-      // Validate AFA requirements
       if (providerCode === 'AFA' && bundle.requiresGhanaCard) {
         hasAfaBundles = true;
-        if (!customerInfo.ghanaCardNumber) {
-          throw new Error(`Ghana Card number is required for AFA bundle: ${bundle.name}`);
-        }
-        // Validate Ghana Card format
-        const ghanaCardRegex = /^GHA-\d{9}-\d$/i;
-        if (!ghanaCardRegex.test(customerInfo.ghanaCardNumber.toUpperCase())) {
-          throw new Error(`Invalid Ghana Card format for AFA bundle: ${bundle.name}. Must be in format GHA-XXXXXXXXX-X`);
+        if (!customerInfo.ghanaCardNumber) throw new Error(`Ghana Card number is required for AFA bundle: ${bundle.name}`);
+        if (!/^GHA-\d{9}-\d$/i.test(customerInfo.ghanaCardNumber.toUpperCase())) {
+          throw new Error(`Invalid Ghana Card format for: ${bundle.name}. Must be GHA-XXXXXXXXX-X`);
         }
       }
 
-      // Storefront-specific item (customer-facing prices)
       storefrontItems.push({
         bundleId: bundle._id,
         bundleName: bundle.name,
@@ -632,12 +467,10 @@ class StorefrontService {
         quantity: item.quantity,
         customerPhone: phone,
         unitPrice: displayPrice,
-        tierPrice: tierPrice,
-        totalPrice: itemTotal
+        tierPrice,
+        totalPrice: itemTotal,
       });
 
-      // System item — matches the orderItemSchema format used by regular/single/bulk orders
-      // Uses TIER prices (what the agent actually pays) for the standard processing pipeline
       systemItems.push({
         packageGroup: bundle.packageId,
         packageItem: bundle._id,
@@ -654,27 +487,21 @@ class StorefrontService {
         unitPrice: tierPrice,
         totalPrice: itemTierCost,
         customerPhone: phone,
-        bundleSize: {
-          value: bundle.dataVolume,
-          unit: bundle.dataUnit || 'GB',
-        },
+        bundleSize: { value: bundle.dataVolume, unit: bundle.dataUnit || 'GB' },
         processingStatus: 'pending',
       });
     }
-    
-    // Create order with both storefront data AND standard items for display compatibility
+
     const order = new Order({
       orderType: 'storefront',
       customer: null,
-      // For AFA orders, populate top-level customerInfo like regular AFA orders
       ...(hasAfaBundles ? {
         customerInfo: {
           name: customerInfo.name,
           phone: customerInfo.phone,
-          ...(customerInfo.ghanaCardNumber ? { ghanaCardNumber: customerInfo.ghanaCardNumber } : {})
-        }
+          ...(customerInfo.ghanaCardNumber ? { ghanaCardNumber: customerInfo.ghanaCardNumber } : {}),
+        },
       } : {}),
-      // Top-level items in standard format — agent dashboard reads these
       items: systemItems,
       storefrontData: {
         storefrontId: storefront._id,
@@ -682,40 +509,33 @@ class StorefrontService {
           name: customerInfo.name,
           phone: customerInfo.phone,
           ...(customerInfo.email ? { email: customerInfo.email } : {}),
-          ...(customerInfo.ghanaCardNumber ? { ghanaCardNumber: customerInfo.ghanaCardNumber } : {})
+          ...(customerInfo.ghanaCardNumber ? { ghanaCardNumber: customerInfo.ghanaCardNumber } : {}),
         },
         paymentMethod: {
           type: paymentMethod.type,
           reference: paymentMethod.reference || '',
           paymentProofUrl: paymentMethod.paymentProofUrl || '',
-          verified: false
+          verified: false,
         },
         totalMarkup,
         totalTierCost,
         items: storefrontItems,
       },
-      // Customer-facing total (what customer pays via Paystack); tier cost/markup in storefrontData for split
       subtotal: totalAmount,
       total: totalAmount,
+      // Paystack orders are pending_payment until webhook/verify confirms payment.
+      // Mobile money orders are also pending_payment — agent verifies manually.
       status: 'pending_payment',
       tenantId: storefront.agentId._id || storefront.agentId,
-      createdBy: storefront.agentId._id || storefront.agentId
+      createdBy: storefront.agentId._id || storefront.agentId,
     });
 
-    // For AFA orders, add notes like regular AFA orders
     if (hasAfaBundles && customerInfo.ghanaCardNumber) {
-      order.notes = `AFA Registration - ${systemItems[0]?.packageDetails?.name || 'AFA Bundle'} for ${customerInfo.name}${customerInfo.phone ? ` (${customerInfo.phone})` : ''} - Ghana Card: ${customerInfo.ghanaCardNumber}`;
+      order.notes = `AFA Registration — ${systemItems[0]?.packageDetails?.name || 'AFA Bundle'} for ${customerInfo.name}${customerInfo.phone ? ` (${customerInfo.phone})` : ''} — Ghana Card: ${customerInfo.ghanaCardNumber}`;
     }
-    
+
     await order.save();
 
-    // Attach storefront Paystack subaccount id (if present) to storefrontData so controller can initialize Paystack with subaccount
-    if (storefront.paystackSubaccountId) {
-      order.storefrontData = order.storefrontData || {};
-      order.storefrontData.paystackSubaccountId = storefront.paystackSubaccountId;
-    }
-    
-    // Notify the store owner about the new order
     try {
       const agentId = (storefront.agentId._id || storefront.agentId).toString();
       await notificationService.createInAppNotification(
@@ -725,82 +545,244 @@ class StorefrontService {
         'info',
         { orderId: order._id, orderNumber: order.orderNumber, type: 'storefront_order' }
       );
-    } catch (notifErr) {
-      logger.error('Failed to send storefront order notification:', notifErr);
+    } catch (err) {
+      logger.error('[StorefrontService] New order notification failed:', err);
     }
-    
+
     return order;
   }
-  
+
   // =========================================================================
-  // Order Management (Agent-facing)
+  // Paystack Payment Processing
   // =========================================================================
-  
+
   /**
-   * Get storefront orders for agent
+   * Confirm a storefront Paystack payment — called from BOTH the webhook handler
+   * and the frontend verify endpoint so the payment is never missed regardless of
+   * whether the webhook arrives before or after the user's browser callback.
+   *
+   * Design mirrors walletService.processPaystackWebhook:
+   *  - NO MongoDB sessions → works on standalone MongoDB (no replica set needed)
+   *  - Idempotency via order.storefrontData.paymentMethod.verified flag
+   *  - Order ID extracted from reference directly (no dependency on metadata.orderId)
+   *  - Agent balances updated with atomic $inc
+   *
+   * @param {object} paystackData  The raw Paystack transaction object (from verifyTransaction or webhook).
    */
-  async getStorefrontOrders(storefrontId, filters = {}, pagination = {}) {
-    const { status } = filters;
-    const { limit = 50, offset = 0 } = pagination;
-    
-    const query = {
-      orderType: 'storefront',
-      'storefrontData.storefrontId': storefrontId
-    };
-    
-    if (status) {
-      query.status = status;
+  async processPaystackPayment(paystackData) {
+    const reference = paystackData.reference;
+
+    // ── 1. Derive order ID from reference ────────────────────────────────────
+    const orderId = this._orderIdFromReference(reference);
+    if (!orderId) {
+      // Not a storefront reference — silently skip (wallet handler will pick it up)
+      return { processed: false, reason: 'not_storefront_reference' };
     }
-    
-    const [orders, total] = await Promise.all([
-      Order.find(query)
-        .sort({ createdAt: -1 })
-        .skip(offset)
-        .limit(limit),
-      Order.countDocuments(query)
-    ]);
-    
-    return { orders, total };
-  }
-  
-  /**
-   * Verify payment - deducts agent wallet at tier cost, then sets order to 'pending'
-   * to enter the existing order flow (admin processes it from pending → processing → completed).
-   * Does NOT auto-process/fulfill the order.
-   */
-  async verifyPayment(orderId, verificationData, userId) {
+
+    // ── 2. Load order ─────────────────────────────────────────────────────────
     const order = await Order.findById(orderId);
     if (!order || order.orderType !== 'storefront') {
-      throw new Error('Order not found');
+      logger.warn('[StorefrontService] Order not found for Paystack payment', { orderId, reference });
+      return { processed: false, reason: 'order_not_found' };
     }
-    
-    // Ownership check - verify the order belongs to this agent's storefront
+
+    // ── 3. Idempotency — if already processed, return success immediately ─────
+    if (order.storefrontData?.paymentMethod?.verified === true) {
+      logger.info('[StorefrontService] Payment already processed — idempotency guard triggered', { orderId, reference });
+      return { processed: false, duplicate: true, order };
+    }
+
+    // ── 4. Validate payment status ────────────────────────────────────────────
+    if (paystackData.status !== 'success') {
+      logger.warn('[StorefrontService] Paystack transaction not successful', { reference, status: paystackData.status });
+      return { processed: false, reason: 'payment_not_successful' };
+    }
+
+    // ── 5. Amount validation ──────────────────────────────────────────────────
+    const customerTotal = Number(order.total) || 0;
+    const expectedPesewas = paystackService.convertToPesewas(customerTotal);
+
+    if (Number(paystackData.amount) !== Number(expectedPesewas)) {
+      logger.error('[StorefrontService] Amount mismatch', { orderId, expectedPesewas, received: paystackData.amount });
+      // Record the mismatch but don't block the order (amounts can vary by fractions due to fee rounding)
+      order.metadata = order.metadata || {};
+      order.metadata.paystackAmountMismatch = { expected: expectedPesewas, received: paystackData.amount };
+      await order.save();
+      return { processed: false, reason: 'amount_mismatch' };
+    }
+
+    // ── 6. Load storefront & agent ─────────────────────────────────────────────
+    const storefront = await AgentStorefront.findById(order.storefrontData.storefrontId);
+    if (!storefront) throw new Error('Storefront not found for order');
+
+    const agentId = storefront.agentId;
+
+    // ── 7. Compute split ──────────────────────────────────────────────────────
+    const tierCost    = order.storefrontData.totalTierCost
+      || (order.storefrontData.items || []).reduce((s, it) => s + ((it.tierPrice || 0) * (it.quantity || 1)), 0);
+    const totalMarkup = order.storefrontData.totalMarkup || 0;
+
+    const paystackFeePesewas = Number(paystackData.fees) || 0;
+    const { netReceived, shortfall } = calculateStorefrontSplit({ customerTotal, paystackFeePesewas, tierCost });
+
+    if (shortfall > 0) {
+      logger.error('[StorefrontService] Insufficient net after Paystack fees', { orderId, netReceived, tierCost });
+      order.metadata = order.metadata || {};
+      order.metadata.paystackShortfall = { netReceived, tierCost };
+      await order.save();
+      return { processed: false, reason: 'insufficient_net' };
+    }
+
+    // ── 8. Credit agent wallet (atomic $inc — safe without session) ───────────
+    const updatedAgent = await User.findByIdAndUpdate(
+      agentId,
+      {
+        $inc: {
+          walletBalance: tierCost,
+          ...(totalMarkup > 0 ? { earningsBalance: totalMarkup } : {}),
+        },
+      },
+      { new: true, runValidators: false }
+    );
+    if (!updatedAgent) throw new Error(`Agent user ${agentId} not found when processing payment`);
+
+    // ── 9. Record wallet transaction ──────────────────────────────────────────
+    const walletTx = new WalletTransaction({
+      user: agentId,
+      type: 'credit',
+      amount: tierCost,
+      balanceAfter: updatedAgent.walletBalance,
+      description: `Storefront fulfillment funded — Order ${order.orderNumber}`,
+      relatedOrder: order._id,
+      status: 'completed',
+      reference,
+      metadata: {
+        paystackReference: reference,
+        transactionId: paystackData.id,
+        customerPaid: customerTotal,
+        paystackCollectionFee: paystackFeePesewas / 100,
+        netReceived,
+        channel: paystackData.channel,
+      },
+    });
+    await walletTx.save();
+
+    // ── 10. Record earnings transaction (markup only, if any) ─────────────────
+    if (totalMarkup > 0) {
+      const earnTx = new EarningsTransaction({
+        user: agentId,
+        type: 'credit',
+        amount: totalMarkup,
+        balanceAfter: updatedAgent.earningsBalance,
+        description: `Storefront profit — Order ${order.orderNumber}`,
+        relatedOrder: order._id,
+        metadata: { tierCost, customerPaid: customerTotal },
+      });
+      await earnTx.save();
+    }
+
+    // ── 11. Mark order as paid and advance to processing queue ────────────────
+    order.storefrontData.paymentMethod.verified   = true;
+    order.storefrontData.paymentMethod.verifiedAt = new Date();
+    order.storefrontData.paymentMethod.verificationNotes = `Paystack auto-verified (${paystackData.channel || 'online'})`;
+    order.storefrontData.paymentMethod.gateway    = 'paystack';
+    order.storefrontData.paymentMethod.reference  = reference;
+    order.paymentStatus = 'paid';
+    order.status        = 'pending'; // enters admin processing queue
+    order.metadata      = order.metadata || {};
+    order.metadata.paystack = {
+      reference,
+      transactionId: paystackData.id,
+      customerPaid: customerTotal,
+      paystackCollectionFee: paystackFeePesewas / 100,
+      netReceived,
+      processedAt: new Date(),
+    };
+
+    await order.save();
+
+    logger.info(`[StorefrontService] Paystack payment confirmed — Order ${order.orderNumber}, GH₵${customerTotal}, ref: ${reference}`);
+
+    // ── 12. Real-time & in-app notifications (non-critical) ───────────────────
+    await this._notifyAgent(agentId, order._id, order.orderNumber, customerTotal);
+
+    try {
+      const admins = await User.find({ userType: 'super_admin', isActive: true }).select('_id');
+      for (const admin of admins) {
+        await notificationService.createInAppNotification(
+          admin._id.toString(),
+          'Storefront Order Paid',
+          `Order ${order.orderNumber} paid via Paystack — ready for processing.`,
+          'info',
+          { orderId: order._id, orderNumber: order.orderNumber, type: 'storefront_order_paid' }
+        );
+      }
+
+      await notificationService.createInAppNotification(
+        agentId.toString(),
+        'Storefront Order Paid',
+        `Order ${order.orderNumber} from ${order.storefrontData?.customerInfo?.name || 'customer'} has been paid (GH₵${customerTotal.toFixed(2)}). It is now queued for processing.`,
+        'success',
+        { orderId: order._id, orderNumber: order.orderNumber, type: 'storefront_order_paid' }
+      );
+    } catch (err) {
+      logger.error('[StorefrontService] Notification failed after payment processing:', err);
+    }
+
+    return { processed: true, order };
+  }
+
+  /**
+   * Called by the Paystack webhook handler (paystackRoutes → paystackService).
+   * Thin router: wallet top-ups go to walletService, storefront orders come here.
+   */
+  async processPaystackOrderWebhook(event) {
+    const { data } = event;
+    const reference = data?.reference;
+
+    if (!reference) return { processed: false, reason: 'no_reference' };
+
+    if (reference.startsWith('storefront_')) {
+      return this.processPaystackPayment(data);
+    }
+
+    // Not a storefront reference — caller should route elsewhere
+    return { processed: false, reason: 'not_storefront_reference' };
+  }
+
+  // =========================================================================
+  // Agent manual payment verification (Mobile Money / Bank Transfer)
+  // =========================================================================
+
+  /**
+   * Agent manually verifies a mobile money or bank transfer payment.
+   * Deducts the tier cost from the agent's wallet and advances the order.
+   * This path is only for non-Paystack payment methods.
+   */
+  async verifyManualPayment(orderId, verificationData, userId) {
+    const order = await Order.findById(orderId);
+    if (!order || order.orderType !== 'storefront') throw new Error('Order not found');
+
     const storefront = await AgentStorefront.findById(order.storefrontData.storefrontId);
     if (!storefront || storefront.agentId.toString() !== userId.toString()) {
       throw new Error('Not authorized to verify this order');
     }
-    
-    if (order.storefrontData.paymentMethod.verified) {
-      throw new Error('Payment already verified for this order');
+
+    if (order.storefrontData.paymentMethod.verified) throw new Error('Payment already verified for this order');
+    if (order.status === 'cancelled') throw new Error('Cannot verify a cancelled order');
+    if (order.status !== 'pending_payment') throw new Error('Order is not awaiting payment');
+
+    // Paystack orders should go through processPaystackPayment — not this path
+    if (order.storefrontData.paymentMethod.type === 'paystack') {
+      throw new Error('Paystack orders are verified automatically. Use the Paystack verify endpoint instead.');
     }
-    
-    if (order.status === 'cancelled') {
-      throw new Error('Cannot verify a cancelled order');
-    }
-    
-    if (order.status !== 'pending_payment') {
-      throw new Error('Order is not awaiting payment verification');
-    }
-    
-    // Calculate the agent's cost (tier prices, not storefront prices)
-    const tierCost = order.storefrontData.totalTierCost || 
-      (order.storefrontData.items || []).reduce((sum, item) => sum + (item.tierPrice * item.quantity), 0);
-    
-    if (tierCost <= 0) {
-      throw new Error('Unable to calculate order cost');
-    }
-    
-    // Deduct from agent's wallet at tier price
+
+    const tierCost = order.storefrontData.totalTierCost
+      || (order.storefrontData.items || []).reduce((s, it) => s + (it.tierPrice * it.quantity), 0);
+
+    if (tierCost <= 0) throw new Error('Unable to calculate order cost');
+
+    // Deduct from agent wallet — throws if insufficient balance
     try {
       await walletService.debitWallet(
         userId.toString(),
@@ -809,233 +791,76 @@ class StorefrontService {
         order._id,
         { orderType: 'storefront', storefrontId: storefront._id.toString() }
       );
-    } catch (walletErr) {
-      throw new Error(`Insufficient wallet balance. You need GHS ${tierCost.toFixed(2)} to fulfill this order.`);
+    } catch {
+      throw new Error(`Insufficient wallet balance. You need GH₵${tierCost.toFixed(2)} to fulfil this order.`);
     }
-    
-    // Update payment verification - order stays at 'pending' for admin processing
-    order.storefrontData.paymentMethod.verified = true;
+
+    order.storefrontData.paymentMethod.verified   = true;
     order.storefrontData.paymentMethod.verifiedAt = new Date();
     order.storefrontData.paymentMethod.verificationNotes = verificationData.notes || '';
     order.paymentStatus = 'paid';
-    // Transition from pending_payment → pending — order now enters admin processing queue
-    order.status = 'pending';
-    
+    order.status        = 'pending'; // enters admin processing queue
+
     await order.save();
-    
-    // Notify admins about verified storefront order ready for processing
+
     try {
       const admins = await User.find({ userType: 'super_admin', isActive: true }).select('_id');
       for (const admin of admins) {
         await notificationService.createInAppNotification(
           admin._id.toString(),
           'Storefront Order Ready',
-          `Storefront order ${order.orderNumber} payment verified. Ready for processing.`,
+          `Storefront order ${order.orderNumber} payment manually verified. Ready for processing.`,
           'info',
           { orderId: order._id, orderNumber: order.orderNumber, type: 'storefront_order_verified' }
         );
       }
-    } catch (notifErr) {
-      logger.error('Failed to send order verification notification to admins:', notifErr);
+    } catch (err) {
+      logger.error('[StorefrontService] Notification failed after manual verification:', err);
     }
-    
+
     return order;
   }
 
-  /**
-   * Process Paystack webhook for a storefront order (auto-verify)
-   * @param {Object} event - Paystack webhook event
-   */
-  async processPaystackOrderWebhook(event) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
-    try {
-      const { data } = event;
-      const metadata = data.metadata || {};
-      const orderId = metadata.orderId;
-      if (!orderId) {
-        logger.warn('[Storefront] Paystack webhook missing orderId metadata');
-        await session.abortTransaction();
-        session.endSession();
-        return { processed: false, reason: 'missing_orderId' };
-      }
-
-      const order = await Order.findById(orderId).session(session);
-      if (!order || order.orderType !== 'storefront') {
-        logger.warn('[Storefront] Order not found for Paystack webhook', { orderId });
-        await session.abortTransaction();
-        session.endSession();
-        return { processed: false, reason: 'order_not_found' };
-      }
-
-      // Idempotency: already processed
-      if (order.storefrontData.paymentMethod?.verified) {
-        logger.info('[Storefront] Paystack webhook ignored — already verified', { orderId });
-        await session.abortTransaction();
-        session.endSession();
-        return { processed: false, duplicate: true };
-      }
-
-      // Validate amount: order.total is the customer-facing total (what we charge via Paystack)
-      const customerTotal = Number(order.total) || (order.storefrontData.items || []).reduce((s, it) => s + (it.totalPrice || 0), 0);
-      const expectedPesewas = paystackService.convertToPesewas(customerTotal);
-      if (Number(data.amount) !== Number(expectedPesewas)) {
-        order.metadata = order.metadata || {};
-        order.metadata.paystack = order.metadata.paystack || {};
-        order.metadata.paystack.amountMismatch = { expected: expectedPesewas, received: data.amount };
-        order.storefrontData.paymentMethod.verificationNotes = `Amount mismatch: expected ${customerTotal}, received ${data.amount / 100}`;
-        await order.save({ session });
-        logger.error('[Storefront] Paystack amount mismatch for order', { orderId, expectedPesewas, received: data.amount });
-        await session.abortTransaction();
-        session.endSession();
-        return { processed: false, reason: 'amount_mismatch' };
-      }
-
-      // Compute split amounts
-      const tierCost = order.storefrontData.totalTierCost || (order.storefrontData.items || []).reduce((sum, it) => sum + ((it.tierPrice || 0) * (it.quantity || 1)), 0);
-      const totalMarkup = order.storefrontData.totalMarkup || 0;
-
-      // Ensure platform net after Paystack collection fee can cover tier cost
-      const paystackFeePesewas = (data.fees || 0);
-      const { netReceived, shortfall } = calculateStorefrontSplit({
-        customerTotal,
-        paystackFeePesewas,
-        tierCost,
-      });
-
-      if (shortfall > 0) {
-        order.metadata = order.metadata || {};
-        order.metadata.paystack = order.metadata.paystack || {};
-        order.metadata.paystack.amountShortfall = { netReceived, tierCost };
-        await order.save({ session });
-        logger.error('[Storefront] Net received after Paystack fees is insufficient', { orderId, netReceived, tierCost });
-        await session.abortTransaction();
-        session.endSession();
-        return { processed: false, reason: 'insufficient_net' };
-      }
-
-      // Get storefront & agent
-      const storefront = await AgentStorefront.findById(order.storefrontData.storefrontId).session(session);
-      if (!storefront) {
-        throw new Error('Storefront not found for order');
-      }
-
-      const agentId = storefront.agentId;
-      const agent = await User.findById(agentId).session(session);
-      if (!agent) throw new Error('Agent user not found');
-
-      // Update agent balances (walletBalance for tier cost; earningsBalance for markup)
-      agent.walletBalance = (agent.walletBalance || 0) + tierCost;
-      if (totalMarkup > 0) {
-        agent.earningsBalance = (agent.earningsBalance || 0) + totalMarkup;
-      }
-      await agent.save({ session, validateBeforeSave: false });
-
-      // Create wallet transaction for the tier cost
-      const walletTx = new WalletTransaction({
-        user: agentId,
-        type: 'credit',
-        amount: tierCost,
-        balanceAfter: agent.walletBalance,
-        description: `Storefront fulfillment (Order: ${order.orderNumber})`,
-        relatedOrder: order._id,
-        metadata: {
-          paystackReference: data.reference,
-          customerPaid: customerTotal,
-          paystackCollectionFee: paystackFeePesewas / 100,
-          netReceived
-        }
-      });
-      await walletTx.save({ session });
-
-      // Create earnings transaction for markup (if any)
-      if (totalMarkup > 0) {
-        const earnTx = new EarningsTransaction({
-          user: agentId,
-          type: 'credit',
-          amount: totalMarkup,
-          balanceAfter: agent.earningsBalance,
-          description: `Storefront profit (Order: ${order.orderNumber})`,
-          relatedOrder: order._id,
-          metadata: { tierCost, customerPaid: customerTotal }
-        });
-        await earnTx.save({ session });
-      }
-
-      // Update order payment fields
-      order.storefrontData.paymentMethod.verified = true;
-      order.storefrontData.paymentMethod.verifiedAt = new Date();
-      order.storefrontData.paymentMethod.verificationNotes = `Paystack auto-verified (${data.channel})`;
-      order.storefrontData.paymentMethod.gateway = 'paystack';
-      order.storefrontData.paymentMethod.reference = data.reference;
-      order.paymentStatus = 'paid';
-      order.status = 'pending';
-      order.metadata = order.metadata || {};
-      order.metadata.paystack = {
-        reference: data.reference,
-        transactionId: data.id,
-        customerPaid: customerTotal,
-        paystackCollectionFee: paystackFeePesewas / 100,
-        netReceived,
-        processedAt: new Date()
-      };
-
-      await order.save({ session });
-
-      // Commit transaction
-      await session.commitTransaction();
-      session.endSession();
-
-      // Notify admins that storefront order is ready for processing (outside transaction)
-      try {
-        const admins = await User.find({ userType: 'super_admin', isActive: true }).select('_id');
-        for (const admin of admins) {
-          await notificationService.createInAppNotification(
-            admin._id.toString(),
-            'Storefront Order Paid',
-            `Storefront order ${order.orderNumber} was paid via Paystack and is ready for processing.`,
-            'info',
-            { orderId: order._id, orderNumber: order.orderNumber, type: 'storefront_order_paid' }
-          );
-        }
-      } catch (notifErr) {
-        logger.error('Failed to notify admins for Paystack storefront order:', notifErr);
-      }
-
-      return { processed: true, order };
-    } catch (err) {
-      await session.abortTransaction();
-      session.endSession();
-      logger.error('[Storefront] processPaystackOrderWebhook error', { message: err.message });
-      throw err;
-    }
+  // Keep the old name as an alias so existing controller code doesn't break
+  async verifyPayment(orderId, verificationData, userId) {
+    return this.verifyManualPayment(orderId, verificationData, userId);
   }
-  
-  /**
-   * Reject order (with ownership check)
-   */
+
+  // =========================================================================
+  // Order Management (Agent-facing)
+  // =========================================================================
+
+  async getStorefrontOrders(storefrontId, filters = {}, pagination = {}) {
+    const { status } = filters;
+    const { limit = 50, offset = 0 } = pagination;
+
+    const query = { orderType: 'storefront', 'storefrontData.storefrontId': storefrontId };
+    if (status) query.status = status;
+
+    const [orders, total] = await Promise.all([
+      Order.find(query).sort({ createdAt: -1 }).skip(offset).limit(limit),
+      Order.countDocuments(query),
+    ]);
+
+    return { orders, total };
+  }
+
   async rejectOrder(orderId, rejectionReason, userId) {
     const order = await Order.findById(orderId);
-    if (!order || order.orderType !== 'storefront') {
-      throw new Error('Order not found');
-    }
-    
-    // Ownership check
+    if (!order || order.orderType !== 'storefront') throw new Error('Order not found');
+
     const storefront = await AgentStorefront.findById(order.storefrontData.storefrontId);
-    if (!storefront || storefront.agentId.toString() !== userId.toString()) {
-      throw new Error('Not authorized to reject this order');
+    if (!storefront || storefront.agentId.toString() !== userId.toString()) throw new Error('Not authorized');
+
+    if (['completed', 'processing'].includes(order.status)) {
+      throw new Error('Cannot reject an order already being processed');
     }
-    
-    if (order.status === 'completed' || order.status === 'processing') {
-      throw new Error('Cannot reject an order that is already being processed');
-    }
-    
-    // If payment was already verified and wallet deducted, refund the agent
-    if (order.storefrontData.paymentMethod.verified && order.paymentStatus === 'paid') {
-      const tierCost = order.storefrontData.totalTierCost || 
-        (order.storefrontData.items || []).reduce((sum, item) => sum + (item.tierPrice * item.quantity), 0);
-      
+
+    // Refund wallet if agent already paid (manual verify path only)
+    if (order.storefrontData.paymentMethod.verified && order.paymentStatus === 'paid'
+        && order.storefrontData.paymentMethod.type !== 'paystack') {
+      const tierCost = order.storefrontData.totalTierCost
+        || (order.storefrontData.items || []).reduce((s, it) => s + (it.tierPrice * it.quantity), 0);
       if (tierCost > 0) {
         try {
           await walletService.creditWallet(
@@ -1045,133 +870,98 @@ class StorefrontService {
             order._id,
             { orderType: 'storefront', reason: 'order_rejected' }
           );
-        } catch (refundErr) {
-          logger.error(`Refund failed for rejected storefront order ${order._id}:`, refundErr);
+        } catch (err) {
+          logger.error(`[StorefrontService] Refund failed for rejected order ${order._id}:`, err);
         }
       }
     }
-    
+
     order.status = 'cancelled';
     order.storefrontData.paymentMethod.verificationNotes = rejectionReason;
-    
-    return await order.save();
+    return order.save();
   }
-  
+
   // =========================================================================
   // Analytics
   // =========================================================================
-  
-  /**
-   * Get storefront analytics
-   */
+
   async getStorefrontAnalytics(storefrontId, dateRange = {}) {
-    const matchQuery = {
-      orderType: 'storefront',
-      'storefrontData.storefrontId': storefrontId
-    };
-    
+    const matchQuery = { orderType: 'storefront', 'storefrontData.storefrontId': storefrontId };
+
     if (dateRange.startDate || dateRange.endDate) {
       matchQuery.createdAt = {};
       if (dateRange.startDate) matchQuery.createdAt.$gte = new Date(dateRange.startDate);
-      if (dateRange.endDate) matchQuery.createdAt.$lte = new Date(dateRange.endDate);
+      if (dateRange.endDate)   matchQuery.createdAt.$lte = new Date(dateRange.endDate);
     }
-    
-    const analytics = await Order.aggregate([
+
+    const [result] = await Order.aggregate([
       { $match: matchQuery },
       {
         $group: {
           _id: null,
-          totalOrders: { $sum: 1 },
-          totalRevenue: { $sum: '$total' },
-          totalProfit: { $sum: '$storefrontData.totalMarkup' },
-          averageOrderValue: { $avg: '$total' },
-          completedOrders: {
-            $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] }
-          },
-          confirmedOrders: {
-            $sum: { $cond: [{ $eq: ['$status', 'confirmed'] }, 1, 0] }
-          },
-          pendingOrders: {
-            $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] }
-          },
-          cancelledOrders: {
-            $sum: { $cond: [{ $eq: ['$status', 'cancelled'] }, 1, 0] }
-          }
-        }
-      }
+          totalOrders:        { $sum: 1 },
+          totalRevenue:       { $sum: '$total' },
+          totalProfit:        { $sum: '$storefrontData.totalMarkup' },
+          averageOrderValue:  { $avg: '$total' },
+          completedOrders:    { $sum: { $cond: [{ $eq: ['$status', 'completed']  }, 1, 0] } },
+          confirmedOrders:    { $sum: { $cond: [{ $eq: ['$status', 'confirmed']  }, 1, 0] } },
+          pendingOrders:      { $sum: { $cond: [{ $eq: ['$status', 'pending']    }, 1, 0] } },
+          cancelledOrders:    { $sum: { $cond: [{ $eq: ['$status', 'cancelled']  }, 1, 0] } },
+        },
+      },
     ]);
-    
-    return analytics[0] || {
-      totalOrders: 0,
-      totalRevenue: 0,
-      totalProfit: 0,
-      averageOrderValue: 0,
-      completedOrders: 0,
-      confirmedOrders: 0,
-      pendingOrders: 0,
-      cancelledOrders: 0
+
+    return result || {
+      totalOrders: 0, totalRevenue: 0, totalProfit: 0, averageOrderValue: 0,
+      completedOrders: 0, confirmedOrders: 0, pendingOrders: 0, cancelledOrders: 0,
     };
   }
-  
+
   // =========================================================================
-  // Admin Operations (Super Admin)
+  // Admin Operations
   // =========================================================================
-  
-  /**
-   * Get all storefronts (admin view)
-   */
+
   async getAllStorefronts(filters = {}, pagination = {}) {
     const { status, search } = filters;
     const { limit = 20, offset = 0 } = pagination;
-    
     const query = {};
-    
-    if (status === 'active') { query.isActive = true; query.suspendedByAdmin = { $ne: true }; }
-    else if (status === 'inactive') query.isActive = false;
-    else if (status === 'pending') query.isApproved = false;
-    else if (status === 'approved') query.isApproved = true;
+
+    if (status === 'active')    { query.isActive = true; query.suspendedByAdmin = { $ne: true }; }
+    else if (status === 'inactive')  query.isActive = false;
+    else if (status === 'pending')   query.isApproved = false;
+    else if (status === 'approved')  query.isApproved = true;
     else if (status === 'suspended') query.suspendedByAdmin = true;
-    
+
     if (search) {
       query.$or = [
         { businessName: { $regex: search, $options: 'i' } },
-        { displayName: { $regex: search, $options: 'i' } }
+        { displayName:  { $regex: search, $options: 'i' } },
       ];
     }
-    
+
     const [storefronts, total] = await Promise.all([
       AgentStorefront.find(query)
         .populate('agentId', 'fullName email phone userType walletBalance')
         .sort({ createdAt: -1 })
         .skip(offset)
         .limit(limit),
-      AgentStorefront.countDocuments(query)
+      AgentStorefront.countDocuments(query),
     ]);
-    
+
     return { storefronts, total };
   }
-  
-  /**
-   * Approve a storefront (admin)
-   */
+
   async approveStorefront(storefrontId, adminId) {
     const storefront = await AgentStorefront.findById(storefrontId);
-    if (!storefront) {
-      throw new Error('Storefront not found');
-    }
-    
-    if (storefront.isApproved) {
-      throw new Error('Storefront is already approved');
-    }
-    
+    if (!storefront) throw new Error('Storefront not found');
+    if (storefront.isApproved) throw new Error('Storefront is already approved');
+
     storefront.isApproved = true;
-    storefront.isActive = true;
+    storefront.isActive   = true;
     storefront.approvedAt = new Date();
     storefront.approvedBy = adminId;
-    
     await storefront.save();
-    
-    // Notify store owner
+
     try {
       await notificationService.createInAppNotification(
         storefront.agentId.toString(),
@@ -1180,188 +970,132 @@ class StorefrontService {
         'success',
         { type: 'storefront_approved', storefrontId: storefront._id }
       );
-    } catch (notifErr) {
-      logger.error('Failed to send approval notification:', notifErr);
+    } catch (err) {
+      logger.error('[StorefrontService] Approval notification failed:', err);
     }
-    
+
     return storefront;
   }
-  
-  /**
-   * Admin suspends a storefront (agent cannot see it, public cannot access)
-   * Different from agent deactivation - this blocks the agent too
-   */
+
   async adminSuspendStorefront(storefrontId, adminId, reason) {
     const storefront = await AgentStorefront.findById(storefrontId);
-    if (!storefront) {
-      throw new Error('Storefront not found');
-    }
-    
-    if (storefront.suspendedByAdmin) {
-      throw new Error('Storefront is already suspended');
-    }
-    
-    storefront.isActive = false;
+    if (!storefront) throw new Error('Storefront not found');
+    if (storefront.suspendedByAdmin) throw new Error('Storefront is already suspended');
+
+    storefront.isActive         = false;
     storefront.suspendedByAdmin = true;
     storefront.suspensionReason = reason || 'Suspended by administrator';
-    storefront.suspendedAt = new Date();
-    storefront.suspendedBy = adminId;
-    
+    storefront.suspendedAt      = new Date();
+    storefront.suspendedBy      = adminId;
     await storefront.save();
-    
-    // Notify store owner
+
     try {
       await notificationService.createInAppNotification(
         storefront.agentId.toString(),
         'Storefront Suspended',
-        `Your storefront "${storefront.displayName}" has been suspended by an administrator. ${reason ? `Reason: ${reason}` : ''} Please contact support for assistance.`,
+        `Your storefront "${storefront.displayName}" has been suspended.${reason ? ` Reason: ${reason}` : ''} Contact support.`,
         'error',
         { type: 'storefront_suspended', storefrontId: storefront._id }
       );
-    } catch (notifErr) {
-      logger.error('Failed to send suspension notification:', notifErr);
+    } catch (err) {
+      logger.error('[StorefrontService] Suspension notification failed:', err);
     }
-    
+
     return storefront;
   }
-  
-  /**
-   * Admin unsuspends a storefront (lifts the admin ban)
-   */
-  async adminUnsuspendStorefront(storefrontId, adminId) {
+
+  async adminUnsuspendStorefront(storefrontId) {
     const storefront = await AgentStorefront.findById(storefrontId);
-    if (!storefront) {
-      throw new Error('Storefront not found');
-    }
-    
-    if (!storefront.suspendedByAdmin) {
-      throw new Error('Storefront is not suspended');
-    }
-    
+    if (!storefront) throw new Error('Storefront not found');
+    if (!storefront.suspendedByAdmin) throw new Error('Storefront is not suspended');
+
     storefront.suspendedByAdmin = false;
     storefront.suspensionReason = null;
-    storefront.suspendedAt = null;
-    storefront.suspendedBy = null;
-    // Restore active status if it was approved
-    storefront.isActive = storefront.isApproved;
-    
+    storefront.suspendedAt      = null;
+    storefront.suspendedBy      = null;
+    storefront.isActive         = storefront.isApproved;
     await storefront.save();
-    
-    // Notify store owner
+
     try {
       await notificationService.createInAppNotification(
         storefront.agentId.toString(),
         'Storefront Unsuspended',
-        `Your storefront "${storefront.displayName}" has been reactivated by an administrator. Your store is now live again!`,
+        `Your storefront "${storefront.displayName}" has been reactivated.`,
         'success',
         { type: 'storefront_unsuspended', storefrontId: storefront._id }
       );
-    } catch (notifErr) {
-      logger.error('Failed to send unsuspension notification:', notifErr);
+    } catch (err) {
+      logger.error('[StorefrontService] Unsuspension notification failed:', err);
     }
-    
+
     return storefront;
   }
-  
-  /**
-   * Admin deletes a storefront (graceful - checks active orders, notifies agent)
-   */
+
   async adminDeleteStorefront(storefrontId, adminId, reason) {
     const storefront = await AgentStorefront.findById(storefrontId).populate('agentId', 'fullName');
-    if (!storefront) {
-      throw new Error('Storefront not found');
-    }
-    
-    // Check for active orders
-    const activeOrders = await Order.countDocuments({
+    if (!storefront) throw new Error('Storefront not found');
+
+    const active = await Order.countDocuments({
       orderType: 'storefront',
       'storefrontData.storefrontId': storefrontId,
-      status: { $in: ['pending', 'confirmed', 'processing'] }
+      status: { $in: ['pending', 'confirmed', 'processing'] },
     });
-    
-    if (activeOrders > 0) {
-      throw new Error(`Cannot delete storefront with ${activeOrders} active order(s). Please ensure all orders are completed or cancelled first.`);
-    }
-    
-    const agentId = storefront.agentId._id || storefront.agentId;
+    if (active > 0) throw new Error(`Cannot delete storefront with ${active} active order(s).`);
+
+    const agentId    = storefront.agentId._id || storefront.agentId;
     const displayName = storefront.displayName;
-    
-    // Clean up pricing records
+
     await StorefrontPricing.deleteMany({ storefrontId });
-    
-    // Delete the storefront
     await AgentStorefront.findByIdAndDelete(storefrontId);
-    
-    // Notify the agent
+
     try {
       await notificationService.createInAppNotification(
         agentId.toString(),
         'Storefront Removed',
-        `Your storefront "${displayName}" has been removed by an administrator. ${reason ? `Reason: ${reason}` : ''} Please contact support if you have questions.`,
+        `Your storefront "${displayName}" has been removed by an administrator.${reason ? ` Reason: ${reason}` : ''}`,
         'error',
         { type: 'storefront_deleted' }
       );
-    } catch (notifErr) {
-      logger.error('Failed to send deletion notification:', notifErr);
+    } catch (err) {
+      logger.error('[StorefrontService] Deletion notification failed:', err);
     }
-    
+
     return { deleted: true };
   }
-  
-  /**
-   * Toggle auto-approve setting
-   */
+
   async toggleAutoApprove(enabled) {
     const settings = await Settings.getInstance();
     settings.autoApproveStorefronts = enabled;
     await settings.save();
     return { autoApproveStorefronts: settings.autoApproveStorefronts };
   }
-  
-  /**
-   * Get auto-approve setting
-   */
+
   async getAutoApproveSetting() {
     const settings = await Settings.getInstance();
     return { autoApproveStorefronts: settings.autoApproveStorefronts || false };
   }
-  
-  /**
-   * Get admin analytics dashboard data
-   */
+
   async getAdminStorefrontStats() {
     const [totalStores, activeStores, pendingApproval, suspendedStores, totalStorefrontOrders] = await Promise.all([
       AgentStorefront.countDocuments(),
       AgentStorefront.countDocuments({ isActive: true, isApproved: true, suspendedByAdmin: { $ne: true } }),
       AgentStorefront.countDocuments({ isApproved: false }),
       AgentStorefront.countDocuments({ suspendedByAdmin: true }),
-      Order.countDocuments({ orderType: 'storefront' })
+      Order.countDocuments({ orderType: 'storefront' }),
     ]);
-    
-    // Get revenue stats
-    const revenueStats = await Order.aggregate([
+
+    const [revenueStats] = await Order.aggregate([
       { $match: { orderType: 'storefront', status: { $in: ['completed', 'confirmed'] } } },
-      {
-        $group: {
-          _id: null,
-          totalRevenue: { $sum: '$total' },
-          totalProfit: { $sum: '$storefrontData.totalMarkup' }
-        }
-      }
+      { $group: { _id: null, totalRevenue: { $sum: '$total' }, totalProfit: { $sum: '$storefrontData.totalMarkup' } } },
     ]);
-    
-    // Get auto-approve setting
+
     const settings = await Settings.getInstance();
-    
+
     return {
-      totalStores,
-      activeStores,
-      pendingApproval,
-      suspendedStores,
-      totalStorefrontOrders,
-      totalRevenue: revenueStats[0]?.totalRevenue || 0,
-      totalProfit: revenueStats[0]?.totalProfit || 0,
-      autoApproveStorefronts: settings.autoApproveStorefronts || false
+      totalStores, activeStores, pendingApproval, suspendedStores, totalStorefrontOrders,
+      totalRevenue: revenueStats?.totalRevenue || 0,
+      totalProfit:  revenueStats?.totalProfit  || 0,
+      autoApproveStorefronts: settings.autoApproveStorefronts || false,
     };
   }
 }
