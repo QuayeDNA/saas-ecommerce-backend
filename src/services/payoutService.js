@@ -6,9 +6,9 @@ import User from '../models/User.js';
 import paystackService from './paystackService.js';
 import notificationService from './notificationService.js';
 import logger from '../utils/logger.js';
+import settingsService from './settingsService.js';
 
-const MIN_PAYOUT_MOMO = 1;
-const MIN_PAYOUT_BANK = 50;
+// constants removed; values come from settings
 
 class PayoutService {
   async requestPayout(userId, amount, destination) {
@@ -24,7 +24,11 @@ class PayoutService {
         throw new Error(`Insufficient earnings. Available: GHS ${balance.toFixed(2)}`);
       }
 
-      const minPayout = destination.type === 'bank_account' ? MIN_PAYOUT_BANK : MIN_PAYOUT_MOMO;
+      // fetch configured minimums
+      const { minimumPayoutAmounts } = await settingsService.getPayoutSettings();
+      const minPayout = destination.type === 'bank_account'
+        ? minimumPayoutAmounts.bank_account
+        : minimumPayoutAmounts.mobile_money;
       if (amount < minPayout) {
         throw new Error(`Minimum payout: GHS ${minPayout}`);
       }
@@ -410,7 +414,8 @@ class PayoutService {
       totalEarned: earnings[0]?.totalEarned || 0,
       totalWithdrawn: Math.abs(earnings[0]?.totalWithdrawn || 0),
       recentPayouts,
-      canRequestPayout: (Number(user.earningsBalance) || 0) >= MIN_PAYOUT_MOMO,
+      // determine based on smallest mobile money threshold since it's the lowest
+      canRequestPayout: (Number(user.earningsBalance) || 0) >= (await settingsService.getPayoutSettings()).minimumPayoutAmounts.mobile_money,
     };
   }
 

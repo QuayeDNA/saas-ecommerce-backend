@@ -8,6 +8,7 @@ import Settings from '../models/Settings.js';
 import walletService from './walletService.js';
 import notificationService from './notificationService.js';
 import paystackService from './paystackService.js';
+import { calculateStorefrontSplit } from '../utils/paystackHelpers.js';
 import logger from '../utils/logger.js';
 import mongoose from 'mongoose';
 import WalletTransaction from '../models/WalletTransaction.js';
@@ -897,11 +898,13 @@ class StorefrontService {
 
       // Ensure platform net after Paystack collection fee can cover tier cost
       const paystackFeePesewas = (data.fees || 0);
-      const customerPaidPesewas = Number(data.amount);
-      const netReceivedPesewas = customerPaidPesewas - paystackFeePesewas;
-      const netReceived = netReceivedPesewas / 100;
+      const { netReceived, shortfall } = calculateStorefrontSplit({
+        customerTotal,
+        paystackFeePesewas,
+        tierCost,
+      });
 
-      if (netReceived < tierCost) {
+      if (shortfall > 0) {
         order.metadata = order.metadata || {};
         order.metadata.paystack = order.metadata.paystack || {};
         order.metadata.paystack.amountShortfall = { netReceived, tierCost };

@@ -62,5 +62,12 @@ export const walletValidation = {
     query('endDate')
       .optional()
       .isISO8601().withMessage('End date must be a valid date')
+  ],
+
+  // Validate cancelling a Paystack checkout
+  paystackCancel: [
+    query('reference')
+      .notEmpty().withMessage('Reference is required')
+      .isString().withMessage('Reference must be a string')
   ]
 };

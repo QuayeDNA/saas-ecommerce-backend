@@ -1,6 +1,7 @@
 // src/controllers/storefrontController.js
 import storefrontService from '../services/storefrontService.js';
 import paystackService from '../services/paystackService.js';
+import { initializePaystackCheckout } from '../utils/paystackHelpers.js';
 import { validationResult } from 'express-validator';
 import logger from '../utils/logger.js';
 
@@ -71,19 +72,14 @@ class StorefrontController {
         const amountPesewas = paystackService.convertToPesewas(order.total || 0);
 
         const callbackOverride = process.env.PAYSTACK_CALLBACK_URL || (process.env.NODE_ENV === 'production' ? process.env.PAYSTACK_CALLBACK_URL_PROD : process.env.PAYSTACK_CALLBACK_URL_DEV);
-        const initPayload = {
+        const callbackUrl = callbackOverride || `${process.env.FRONTEND_URL || ''}/storefront/${order.storefrontData.storefrontId}/callback`;
+        const init = await initializePaystackCheckout({
           email: customerEmail,
-          amount: amountPesewas,
+          amountPesewas,
           reference,
-          currency: 'GHS',
-          callback_url: callbackOverride || `${process.env.FRONTEND_URL || ''}/storefront/${order.storefrontData.storefrontId}/callback`,
+          callbackUrl,
           metadata: { orderId: order._id.toString() }
-        };
-
-        // Public storefront payments route to the *platform* Paystack account (server will perform a server-side split on webhook).
-        // Do NOT include agent subaccount/subaccount routing for public checkout to centralize funds and auditing.
-
-        const init = await paystackService.initializeTransaction(initPayload);
+        });
 
         return res.status(201).json({
           success: true,

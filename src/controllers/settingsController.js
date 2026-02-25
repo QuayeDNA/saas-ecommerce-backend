@@ -256,6 +256,32 @@ class SettingsController {
       res.status(500).json({ error: "Failed to update wallet settings" });
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Payout Settings
+  // ---------------------------------------------------------------------------
+  async getPayoutSettings(req, res) {
+    try {
+      const settings = await settingsService.getPayoutSettings();
+      res.json(settings);
+    } catch (error) {
+      logger.error("Error getting payout settings:", error);
+      res.status(500).json({ error: "Failed to get payout settings" });
+    }
+  }
+
+  async updatePayoutSettings(req, res) {
+    try {
+      const { minimumPayoutAmounts } = req.body;
+      const settings = await settingsService.updatePayoutSettings({
+        minimumPayoutAmounts,
+      });
+      res.json(settings);
+    } catch (error) {
+      logger.error("Error updating payout settings:", error);
+      res.status(500).json({ error: "Failed to update payout settings" });
+    }
+  }
 }
 
 export default new SettingsController();

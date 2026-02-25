@@ -394,6 +394,48 @@ class SettingsService {
     logger.info("Wallet settings updated:", walletSettings);
     return { minimumTopUpAmounts: settings.minimumTopUpAmounts };
   }
+
+  // ---------------------------------------------------------------------------
+  // Payout Settings
+  // ---------------------------------------------------------------------------
+
+  async getPayoutSettings() {
+    try {
+      const settings = await Settings.getInstance();
+      const result = {
+        minimumPayoutAmounts: settings.minimumPayoutAmounts || {
+          mobile_money: 1.0,
+          bank_account: 50.0,
+        },
+      };
+
+      return result;
+    } catch (error) {
+      logger.error(`Error getting payout settings: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async updatePayoutSettings(payoutSettings) {
+    const settings = await Settings.getInstance();
+    if (payoutSettings.minimumPayoutAmounts) {
+      settings.minimumPayoutAmounts = {
+        mobile_money:
+          payoutSettings.minimumPayoutAmounts.mobile_money ||
+          settings.minimumPayoutAmounts?.mobile_money ||
+          1.0,
+        bank_account:
+          payoutSettings.minimumPayoutAmounts.bank_account ||
+          settings.minimumPayoutAmounts?.bank_account ||
+          50.0,
+      };
+    }
+
+    await settings.save();
+
+    logger.info("Payout settings updated:", payoutSettings);
+    return { minimumPayoutAmounts: settings.minimumPayoutAmounts };
+  }
 }
 
 export default new SettingsService();

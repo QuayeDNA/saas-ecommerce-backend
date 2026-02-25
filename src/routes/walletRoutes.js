@@ -12,7 +12,7 @@ import { walletValidation } from "../validators/walletValidator.js";
 
 const router = express.Router();
 
-// Routes for all authenticated users
+// ── Authenticated users ───────────────────────────────────────────────────────
 router.get("/info", authenticate, walletController.getWalletInfo);
 router.get(
   "/transactions",
@@ -21,7 +21,7 @@ router.get(
   walletController.getTransactionHistory
 );
 
-// Routes for wallet-enabled users (can request top-up)
+// ── Wallet-enabled users (agents etc.) ───────────────────────────────────────
 router.get(
   "/check-pending-topup",
   authenticate,
@@ -36,7 +36,14 @@ router.post(
   walletController.requestWalletTopUp
 );
 
-// Paystack: initiate checkout for wallet top-up
+// Paystack: get public key for inline checkout
+router.get(
+  "/paystack/public-key",
+  authenticate,
+  walletController.getPaystackPublicKey
+);
+
+// Paystack: generate checkout config (no DB write — safe to call and abandon)
 router.post(
   "/paystack/initiate",
   authenticate,
@@ -45,26 +52,19 @@ router.post(
   walletController.initiatePaystackTopUp
 );
 
-// Get Paystack public key for frontend
-router.get(
-  "/paystack/public-key",
-  authenticate,
-  walletController.getPaystackPublicKey
-);
-
-// Verify a Paystack transaction (used by frontend callback to confirm payment quickly)
+// Paystack: verify payment after inline modal callback
 router.get(
   "/paystack/verify",
   authenticate,
   walletController.verifyPaystackTransaction
 );
 
-// Earnings & payouts (agents with storefront earnings)
+// ── Earnings & payouts ────────────────────────────────────────────────────────
 router.get("/earnings/dashboard", authenticate, payoutController.getEarningsDashboard);
 router.get("/payouts", authenticate, payoutController.getPayouts);
 router.post("/payouts/request", authenticate, payoutController.requestPayout);
 
-// Routes for admins/super_admins
+// ── Admin / super_admin ───────────────────────────────────────────────────────
 router.post(
   "/top-up",
   authenticate,
@@ -105,7 +105,7 @@ router.get(
   walletController.getAdminTransactions
 );
 
-// Admin: payout review queue and actions
+// Admin payout queue
 router.get("/admin/payouts", authenticate, authorize("super_admin"), payoutController.getPendingPayouts);
 router.put("/admin/payouts/:id/approve", authenticate, authorize("super_admin"), payoutController.approvePayout);
 router.put("/admin/payouts/:id/reject", authenticate, authorize("super_admin"), payoutController.rejectPayout);

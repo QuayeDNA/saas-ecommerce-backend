@@ -1,341 +1,225 @@
 // app.js
-import "dotenv/config";
-import express from "express";
-import cors from "cors";
-import helmet from "helmet";
-import fs from "fs";
-import https from "https";
-import { createServer } from "http";
-import connectDB from "./src/config/db.js";
-import logger from "./src/utils/logger.js";
-import websocketService from "./src/services/websocketService.js";
-import { logNetworkInfo } from "./src/utils/networkUtil.js";
-import { scheduleNotificationCleanup } from "./src/jobs/clearOldNotifications.js";
-import commissionFinalizationJob from "./src/jobs/commissionFinalization.js";
-import { scheduleDailyCommissionGeneration } from "./src/jobs/dailyCommissionGeneration.js";
-import { initializeReportedOrdersCleanupJob } from "./src/jobs/reportedOrdersCleanup.js";
-import announcementExpirationJob from "./src/jobs/announcementExpiration.js";
-import authRoutes from "./src/routes/authRoutes.js";
-import orderRouter from "./src/routes/orderRoutes.js";
-import packageRoutes from "./src/routes/packageRoutes.js";
-import bundleRoutes from "./src/routes/bundleRoutes.js";
-import publicRoutes from "./src/routes/publicRoutes.js";
-import userRoutes from "./src/routes/userRoutes.js";
-import providerRoutes from "./src/routes/providerRoutes.js";
-import walletRoutes from "./src/routes/walletRoutes.js";
-import settingsRoutes from "./src/routes/settingsRoutes.js";
-import notificationRoutes from "./src/routes/notificationRoutes.js";
-import analyticsRoutes from "./src/routes/analyticsRoutes.js";
-import commissionRoutes from "./src/routes/commissionRoutes.js";
-import pushNotificationRoutes from "./src/routes/pushNotificationRoutes.js";
-import announcementRoutes from "./src/routes/announcementRoutes.js";
-import storefrontRoutes from "./src/routes/storefrontRoutes.js";
-import paystackRoutes from "./src/routes/paystackRoutes.js";
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import { createServer } from 'http';
+import connectDB from './src/config/db.js';
+import logger from './src/utils/logger.js';
+import websocketService from './src/services/websocketService.js';
+import { logNetworkInfo } from './src/utils/networkUtil.js';
+import { scheduleNotificationCleanup } from './src/jobs/clearOldNotifications.js';
+import commissionFinalizationJob from './src/jobs/commissionFinalization.js';
+import { scheduleDailyCommissionGeneration } from './src/jobs/dailyCommissionGeneration.js';
+import { initializeReportedOrdersCleanupJob } from './src/jobs/reportedOrdersCleanup.js';
+import announcementExpirationJob from './src/jobs/announcementExpiration.js';
+import authRoutes from './src/routes/authRoutes.js';
+import orderRouter from './src/routes/orderRoutes.js';
+import packageRoutes from './src/routes/packageRoutes.js';
+import bundleRoutes from './src/routes/bundleRoutes.js';
+import publicRoutes from './src/routes/publicRoutes.js';
+import userRoutes from './src/routes/userRoutes.js';
+import providerRoutes from './src/routes/providerRoutes.js';
+import walletRoutes from './src/routes/walletRoutes.js';
+import settingsRoutes from './src/routes/settingsRoutes.js';
+import notificationRoutes from './src/routes/notificationRoutes.js';
+import analyticsRoutes from './src/routes/analyticsRoutes.js';
+import commissionRoutes from './src/routes/commissionRoutes.js';
+import pushNotificationRoutes from './src/routes/pushNotificationRoutes.js';
+import announcementRoutes from './src/routes/announcementRoutes.js';
+import storefrontRoutes from './src/routes/storefrontRoutes.js';
+import paystackRoutes from './src/routes/paystackRoutes.js';
+
+// ─── App & Server ─────────────────────────────────────────────────────────────
 
 const app = express();
+const httpServer = createServer(app); // single HTTP server — WebSocket attaches here
 const PORT = process.env.PORT || 5050;
-// determine whether we'll run HTTPS
-let httpServer;
-if (process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH) {
-  try {
-    const key = fs.readFileSync(process.env.SSL_KEY_PATH);
-    const cert = fs.readFileSync(process.env.SSL_CERT_PATH);
-    httpServer = https.createServer({ key, cert }, app);
-    process.env.FORCE_HTTPS = 'true';
-    logger.info('HTTPS server configured from provided cert files');
-  } catch (e) {
-    logger.warn('Failed to load SSL key/cert; falling back to HTTP', { message: e.message });
-    httpServer = createServer(app);
-  }
-} else if (process.env.NODE_ENV !== 'production') {
-  // non-production: generate a self-signed certificate automatically
-  try {
-    const selfsigned = await import('selfsigned');
-    const attrs = [{ name: 'commonName', value: 'localhost' }];
-    // generate a stronger key to satisfy modern OpenSSL security requirements
-    const pems = selfsigned.generate(attrs, { days: 365, keySize: 2048, algorithm: 'sha256' });
-    httpServer = https.createServer({ key: pems.private, cert: pems.cert }, app);
-    process.env.FORCE_HTTPS = 'true';
-    logger.info('HTTPS server started with autogenerated self-signed certificate (development)');
-  } catch (e) {
-    logger.warn('Failed to create self-signed certificate; falling back to HTTP', { message: e.message });
-    httpServer = createServer(app);
-  }
-} else {
-  httpServer = createServer(app);
-}
+
+// ─── Startup ──────────────────────────────────────────────────────────────────
+
 logger.info('Starting SaaS E-Commerce backend...');
-
-// Database connection
 connectDB();
-
-// print local network address and webhook suggestion
 logNetworkInfo();
 
-// Start notification cleanup job
+// ─── Background Jobs ──────────────────────────────────────────────────────────
+
 scheduleNotificationCleanup();
-
-// Start commission finalization job (1 minute after midnight on 1st of each month)
-// This replaces the old generation/archive/expire workflow with real-time commission tracking
 commissionFinalizationJob.start();
-
-// Start daily commission generation job (every day at 2:00 AM)
-// This creates daily commission records for users to see accumulation throughout the month
 scheduleDailyCommissionGeneration();
-
-// Start reported orders cleanup job (24hr auto-mark + 10min resolved cleanup)
 initializeReportedOrdersCleanupJob();
-
-// Start announcement expiration job (every hour)
 announcementExpirationJob();
 
-// Security middleware
+// ─── Security Middleware ──────────────────────────────────────────────────────
+
 app.use(helmet());
 app.use(
   cors({
-    origin: function (origin, callback) {
-      const allowedOrigins = [
+    origin(origin, callback) {
+      const allowed = [
         process.env.FRONTEND_URL,
-        "https://brytelink-chi.vercel.app",
-        "https://saas-ecommerce.vercel.app",
-        "http://localhost:5173",
-        "http://localhost:3000",
+        'https://brytelink-chi.vercel.app',
+        'https://saas-ecommerce.vercel.app',
+        'http://localhost:5173',
+        'http://localhost:3000',
       ].filter(Boolean);
 
-      // Allow requests with no origin (mobile apps, curl, etc.)
+      // Allow requests with no origin (mobile apps, curl, Postman, etc.)
       if (!origin) return callback(null, true);
-
-      // Allow any Vercel preview deployment for this project
-      if (
-        allowedOrigins.includes(origin) ||
-        /^https:\/\/saas-ecommerce[a-z0-9-]*\.vercel\.app$/.test(origin)
-      ) {
+      // Allow any Vercel preview for this project
+      if (allowed.includes(origin) || /^https:\/\/saas-ecommerce[a-z0-9-]*\.vercel\.app$/.test(origin)) {
         return callback(null, true);
       }
-
-      callback(new Error("Not allowed by CORS"));
+      callback(new Error('Not allowed by CORS'));
     },
     credentials: true,
   })
 );
 
-// Body parsing middleware
-// Capture raw body for Paystack webhook signature verification (route-specific)
-app.use('/api/webhooks/paystack', (req, res, next) => {
-  let data = '';
+// ─── Body Parsing ─────────────────────────────────────────────────────────────
+
+// Paystack webhook needs the raw body for HMAC signature verification.
+// We capture it BEFORE express.json() consumes the stream.
+app.use('/api/webhooks/paystack', (req, _res, next) => {
+  let raw = '';
   req.setEncoding('utf8');
-  req.on('data', (chunk) => { data += chunk; });
-  req.on('end', () => { req.rawBody = data || ''; next(); });
+  req.on('data', chunk => { raw += chunk; });
+  req.on('end', () => { req.rawBody = raw; next(); });
 });
 
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Request logging (only verbose when needed)
-app.use((req, res, next) => {
-  const verbose = process.env.NODE_ENV === 'development' || process.env.VERBOSE_REQUEST_LOGS === 'true';
-  if (verbose) {
-    logger.info(`${req.method} ${req.url} - ${req.ip}`);
-  }
+// ─── Request Logging ──────────────────────────────────────────────────────────
+
+app.use((req, _res, next) => {
+  logger.info(`${req.method} ${req.url} - ${req.ip}`);
   next();
 });
 
-// Dynamic PWA manifest route (served from root for PWA compatibility)
-app.get("/manifest", (req, res) => {
-  const { theme = "#142850" } = req.query;
+// ─── Dynamic PWA Manifest ─────────────────────────────────────────────────────
 
-  const manifest = {
-    name: "BryteLinks - Telecom Solutions",
-    short_name: "BryteLinks",
-    description:
-      "A modern SaaS platform for telecommunication services. Purchase airtime for MTN, Vodafone, and AirtelTigo networks in Ghana.",
+app.get('/manifest', (req, res) => {
+  const { theme = '#142850' } = req.query;
+  res.setHeader('Content-Type', 'application/manifest+json');
+  res.json({
+    name: 'BryteLinks - Telecom Solutions',
+    short_name: 'BryteLinks',
+    description: 'A modern SaaS platform for telecommunication services.',
     icons: [
-      {
-        src: "/favicon.svg",
-        sizes: "any",
-        type: "image/svg+xml",
-        purpose: "any maskable",
-      },
-      {
-        src: "/favicon-16x16.png",
-        sizes: "16x16",
-        type: "image/png",
-      },
-      {
-        src: "/favicon-32x32.png",
-        sizes: "32x32",
-        type: "image/png",
-      },
-      {
-        src: "/logo-192.svg",
-        sizes: "192x192",
-        type: "image/svg+xml",
-      },
-      {
-        src: "/android-chrome-192x192.png",
-        sizes: "192x192",
-        type: "image/png",
-      },
-      {
-        src: "/logo-512.svg",
-        sizes: "512x512",
-        type: "image/svg+xml",
-      },
-      {
-        src: "/android-chrome-512x512.png",
-        sizes: "512x512",
-        type: "image/png",
-      },
+      { src: '/favicon.svg',               sizes: 'any',     type: 'image/svg+xml', purpose: 'any maskable' },
+      { src: '/favicon-16x16.png',          sizes: '16x16',   type: 'image/png' },
+      { src: '/favicon-32x32.png',          sizes: '32x32',   type: 'image/png' },
+      { src: '/android-chrome-192x192.png', sizes: '192x192', type: 'image/png' },
+      { src: '/android-chrome-512x512.png', sizes: '512x512', type: 'image/png' },
     ],
     theme_color: theme,
     background_color: theme,
-    display: "standalone",
-    start_url: "/",
-    orientation: "portrait-primary",
-    categories: ["business", "finance", "utilities"],
-  };
-
-  res.setHeader("Content-Type", "application/manifest+json");
-  res.json(manifest);
+    display: 'standalone',
+    start_url: '/',
+    orientation: 'portrait-primary',
+    categories: ['business', 'finance', 'utilities'],
+  });
 });
 
-// Routes
-app.use("/api/auth", authRoutes);
-app.use("/api/orders", orderRouter);
-app.use("/api/users", userRoutes);
-app.use("/api/providers", providerRoutes);
-app.use("/api/wallet", walletRoutes);
-app.use("/api/settings", settingsRoutes);
-app.use("/api/notifications", notificationRoutes);
-app.use("/api/analytics", analyticsRoutes);
-app.use("/api/commissions", commissionRoutes);
-app.use("/api/push", pushNotificationRoutes);
-app.use("/api/announcements", announcementRoutes);
-app.use("/api/packages", packageRoutes);
-app.use("/api/bundles", bundleRoutes);
-app.use("/api/storefront", storefrontRoutes);
+// ─── Paystack Browser Callback Redirect ──────────────────────────────────────
+// When NGROK_URL points at the backend and Paystack redirects the user's
+// browser here after payment, forward them on to the frontend.
+
+app.get('/wallet/topup/callback', async (req, res) => {
+  const frontendBase = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
+  const qs = req.originalUrl.includes('?') ? '?' + req.originalUrl.split('?')[1] : '';
+  const ref = String(req.query.trxref || req.query.reference || '');
+
+  try {
+    if (ref.startsWith('storefront_')) {
+      // Storefront order — resolve the storefront's business name for a clean redirect
+      try {
+        const Order = (await import('./src/models/Order.js')).default;
+        const AgentStorefront = (await import('./src/models/AgentStorefront.js')).default;
+        const order = await Order.findById(ref.replace(/^storefront_/, '')).lean();
+        const storefrontId = order?.storefrontData?.storefrontId;
+        if (storefrontId) {
+          const sf = await AgentStorefront.findById(storefrontId).lean();
+          if (sf?.businessName) {
+            return res.redirect(302, `${frontendBase}/store/${sf.businessName}`);
+          }
+        }
+      } catch (e) {
+        logger.warn('[Redirect] Could not resolve storefront for callback redirect', { message: e.message });
+      }
+      return res.redirect(302, `${frontendBase}/storefront/callback${qs}`);
+    }
+
+    // Default: wallet top-up callback
+    return res.redirect(302, `${frontendBase}/wallet/topup/callback${qs}`);
+  } catch (e) {
+    logger.error('[Redirect] Callback redirect failed', { message: e.message });
+    return res.redirect(302, frontendBase);
+  }
+});
+
+// ─── API Routes ───────────────────────────────────────────────────────────────
+
+app.use('/api/auth',          authRoutes);
+app.use('/api/orders',        orderRouter);
+app.use('/api/users',         userRoutes);
+app.use('/api/providers',     providerRoutes);
+app.use('/api/wallet',        walletRoutes);
+app.use('/api/settings',      settingsRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/analytics',     analyticsRoutes);
+app.use('/api/commissions',   commissionRoutes);
+app.use('/api/push',          pushNotificationRoutes);
+app.use('/api/announcements', announcementRoutes);
+app.use('/api/packages',      packageRoutes);
+app.use('/api/bundles',       bundleRoutes);
+app.use('/api/storefront',    storefrontRoutes);
 app.use('/api/webhooks/paystack', paystackRoutes);
-app.use("/api", publicRoutes);
+app.use('/api',               publicRoutes);
 
-// Health check
-app.get("/health", (req, res) => {
-  res.json({ status: "OK", timestamp: new Date().toISOString() });
+// ─── Health Check ─────────────────────────────────────────────────────────────
+
+app.get('/health', (_req, res) => {
+  res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Root endpoint - ASCII Landing Page
-app.get("/", (req, res) => {
-  const asciiArt = `
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                                                                              ║
-║                    🚀 SAAS E-COMMERCE BACKEND API 🚀                          ║
-║                                                                              ║
-║              ███████╗ █████╗  █████╗ ███████╗                               ║
-║              ██╔════╝██╔══██╗██╔══██╗██╔════╝                               ║
-║              ███████╗███████║███████║███████╗                               ║
-║              ╚════██║██╔══██║██╔══██║╚════██║                               ║
-║              ███████║██║  ██║██║  ██║███████║                               ║
-║              ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝                               ║
-║                                                                              ║
-║                    🛒 Multi-Vendor E-Commerce Platform 🛒                      ║
-║                                                                              ║
-╠══════════════════════════════════════════════════════════════════════════════╣
-║                                                                              ║
-║  🎯 WELCOME TO THE BACKEND API!                                              ║
-║                                                                              ║
-║  This is a secure multi-vendor e-commerce platform backend built with       ║
-║  modern technologies for scalable and reliable operations.                  ║
-║                                                                              ║
-╠══════════════════════════════════════════════════════════════════════════════╣
-║                                                                              ║
-║  🏥 SYSTEM STATUS:                                                            ║
-║                                                                              ║
-║  ✅ API Status:       Online                                                 ║
-║  � Environment:      ${
-    process.env.NODE_ENV?.toUpperCase() || "DEVELOPMENT"
-  } MODE                        ║
-║  ⏰ Server Time:       ${new Date().toLocaleString()}                              ║
-║  🌐 Health Check:      /health                                               ║
-║                                                                              ║
-╠══════════════════════════════════════════════════════════════════════════════╣
-║                                                                              ║
-║  🛠️  TECHNOLOGIES:                                                           ║
-║                                                                              ║
-║  • Node.js + Express.js (RESTful API)                                       ║
-║  • MongoDB (Primary Database)                                               ║
-║  • Redis (Caching & Sessions)                                               ║
-║  • WebSocket (Real-time Communication)                                      ║
-║  • JWT (Authentication & Security)                                          ║
-║  • Push Notifications (VAPID)                                               ║
-║                                                                              ║
-╠══════════════════════════════════════════════════════════════════════════════╣
-║                                                                              ║
-║  � API DOCUMENTATION:                                                       ║
-║                                                                              ║
-║  � Check the /docs/ folder for detailed API documentation                  ║
-║  🔗 Frontend Application: http://localhost:5173                             ║
-║                                                                              ║
-╠══════════════════════════════════════════════════════════════════════════════╣
-║                                                                              ║
-║  � SECURITY NOTICE:                                                         ║
-║                                                                              ║
-║  This API is secured with JWT authentication and role-based access control. ║
-║  All endpoints require proper authentication and authorization.              ║
-║                                                                              ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-`;
+// ─── Error Handlers ───────────────────────────────────────────────────────────
 
-  res.setHeader("Content-Type", "text/plain");
-  res.send(asciiArt);
+// 404
+app.use((_req, res) => {
+  res.status(404).json({ success: false, message: 'Route not found' });
 });
 
-// Error handling middleware
-app.use((err, req, res) => {
-  logger.error(`Server error: ${err.message}`);
+// Global error handler (must have 4 params for Express to treat it as error middleware)
+// eslint-disable-next-line no-unused-vars
+app.use((err, _req, res, _next) => {
+  logger.error(`Server error: ${err?.message ?? String(err)}`);
   res.status(500).json({
     success: false,
-    message:
-      process.env.NODE_ENV === "development"
-        ? err.message
-        : "Internal server error",
+    message: process.env.NODE_ENV === 'development' ? err?.message : 'Internal server error',
   });
 });
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: "Route not found",
+// ─── Start ────────────────────────────────────────────────────────────────────
+
+httpServer.listen(PORT, '0.0.0.0', () => {
+  logger.info(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
+});
+
+// ─── WebSocket ────────────────────────────────────────────────────────────────
+
+websocketService.initialize(httpServer);
+
+// ─── Graceful Shutdown ────────────────────────────────────────────────────────
+
+const shutdown = (signal) => {
+  logger.info(`${signal} received — shutting down gracefully`);
+  httpServer.close(() => {
+    logger.info('HTTP server closed');
+    process.exit(0);
   });
-});
-
-const HOST = process.env.HOST || "0.0.0.0";
-
-httpServer.listen(PORT, HOST, () => {
-  logger.info(`Server running in ${process.env.NODE_ENV} mode on ${HOST}:${PORT}`);
-  // If FORCE_HTTPS is set we started an HTTPS server (self-signed or provided certs)
-  if (process.env.FORCE_HTTPS === 'true') {
-    logger.info('Server running with HTTPS');
-  }
-});
-
-// Graceful shutdown
-const shutdown = async (signal) => {
-  try {
-    logger.info(`${signal} received, shutting down gracefully`);
-    httpServer.close(async (err) => {
-      if (err) logger.error('Error closing server', err);
-      logger.info('HTTP server closed');
-      process.exit(0);
-    });
-  } catch (e) {
-    logger.error('Error during shutdown', e);
-    process.exit(1);
-  }
 };
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
-
-// Initialize WebSocket server
-// Initialize WebSocket server using the actual HTTP(S) server instance
-websocketService.initialize(httpServer);
+process.on('SIGINT',  () => shutdown('SIGINT'));

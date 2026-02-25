@@ -1,769 +1,465 @@
 // src/services/walletService.js
-import User from "../models/User.js";
-import WalletTransaction from "../models/WalletTransaction.js";
-import logger from "../utils/logger.js";
-import notificationService from "./notificationService.js";
-import websocketService from "./websocketService.js";
-import { canHaveWallet } from "../utils/userTypeHelpers.js";
+import User from '../models/User.js';
+import WalletTransaction from '../models/WalletTransaction.js';
+import logger from '../utils/logger.js';
+import notificationService from './notificationService.js';
+import websocketService from './websocketService.js';
+import { canHaveWallet } from '../utils/userTypeHelpers.js';
+import { initializePaystackCheckout } from '../utils/paystackHelpers.js';
+import paystackService from './paystackService.js';
 
 class WalletService {
+  // ─── Shared Helpers ──────────────────────────────────────────────────────────
+
   /**
-   * Credit a user's wallet
-   * @param {string} userId - The user ID
-   * @param {number} amount - Amount to credit
-   * @param {string} description - Transaction description
-   * @param {string|null} approvedBy - Admin ID who approved the credit
-   * @param {object} metadata - Additional transaction metadata
-   * @returns {Promise<object>} Transaction object
+   * Push a real-time wallet update to the user via WebSocket.
+   * Fails silently — a WebSocket error must never break a financial operation.
    */
-  async creditWallet(
-    userId,
-    amount,
-    description,
-    approvedBy = null,
-    metadata = {}
-  ) {
+  async _notifyUser(userId, balance, message) {
     try {
-      const user = await User.findById(userId);
-      if (!user) {
-        throw new Error("User not found");
-      }
+      const recentTransactions = await WalletTransaction.find({ user: userId })
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .populate([
+          { path: 'approvedBy', select: 'fullName' },
+          { path: 'relatedOrder', select: 'orderNumber' },
+        ]);
 
-      // Validate amount
-      if (amount <= 0) {
-        throw new Error("Credit amount must be greater than zero");
-      }
-
-      // Update wallet balance
-      user.walletBalance += amount;
-      await user.save({ validateBeforeSave: false });
-
-      // Record transaction
-      const transaction = new WalletTransaction({
-        user: userId,
-        type: "credit",
-        amount,
-        balanceAfter: user.walletBalance,
-        description,
-        approvedBy,
-        metadata,
+      websocketService.sendToUser(userId.toString(), {
+        type: 'wallet_update',
+        userId: userId.toString(),
+        balance,
+        recentTransactions,
+        message,
       });
-
-      await transaction.save();
-      logger.info(
-        `Wallet credited: ${amount} GH₵ for user ${userId}. New balance: ${user.walletBalance} GH₵`
-      );
-
-      // Send WebSocket update
-      try {
-        const recentTransactions = await WalletTransaction.find({
-          user: userId,
-        })
-          .sort({ createdAt: -1 })
-          .limit(10)
-          .populate([
-            { path: "approvedBy", select: "fullName" },
-            { path: "relatedOrder", select: "orderNumber" },
-          ]);
-
-        websocketService.sendToUser(userId, {
-          type: "wallet_update",
-          userId: userId,
-          balance: user.walletBalance,
-          recentTransactions: recentTransactions,
-          message: `Your wallet has been credited with GH₵${amount}. New balance: GH₵${user.walletBalance}`,
-        });
-      } catch (wsError) {
-        logger.warn(
-          `Failed to send WebSocket update for credit: ${wsError.message}`
-        );
-      }
-
-      return transaction;
-    } catch (error) {
-      logger.error(`Wallet credit error: ${error.message}`);
-      throw error;
+    } catch (err) {
+      logger.warn(`[WalletService] WebSocket notify failed for user ${userId}: ${err.message}`);
     }
   }
 
   /**
-   * Debit a user's wallet
-   * @param {string} userId - The user ID
-   * @param {number} amount - Amount to debit
-   * @param {string} description - Transaction description
-   * @param {string|null} relatedOrder - Related order ID
-   * @param {object} metadata - Additional transaction metadata
-   * @returns {Promise<object>} Transaction object
+   * Persist a completed (credit or debit) transaction record.
+   * Only called after the user's balance has already been updated successfully.
    */
-  async debitWallet(
-    userId,
-    amount,
-    description,
-    relatedOrder = null,
-    metadata = {}
-  ) {
-    try {
-      const user = await User.findById(userId);
-      if (!user) {
-        throw new Error("User not found");
-      }
+  async _recordTransaction({ userId, type, amount, balanceAfter, description, approvedBy = null, relatedOrder = null, reference = null, metadata = {} }) {
+    const transaction = new WalletTransaction({
+      user: userId,
+      type,
+      amount,
+      balanceAfter,
+      description,
+      status: 'completed',
+      approvedBy,
+      relatedOrder,
+      reference,
+      metadata,
+    });
+    await transaction.save();
+    return transaction;
+  }
 
-      // Validate amount and check sufficient balance
-      if (amount <= 0) {
-        throw new Error("Debit amount must be greater than zero");
-      }
+  // ─── Core Wallet Operations ───────────────────────────────────────────────────
 
-      if (user.walletBalance < amount) {
-        throw new Error(
-          `Insufficient wallet balance. Required: GH₵${amount}, Available: GH₵${user.walletBalance}`
-        );
-      }
+  /**
+   * Credit a user's wallet and record the transaction.
+   * Only call this once payment/approval is confirmed.
+   */
+  async creditWallet(userId, amount, description, approvedBy = null, metadata = {}) {
+    const user = await User.findById(userId);
+    if (!user) throw new Error('User not found');
+    if (amount <= 0) throw new Error('Credit amount must be greater than zero');
 
-      // Update wallet balance
-      user.walletBalance -= amount;
-      await user.save({ validateBeforeSave: false });
+    user.walletBalance += amount;
+    await user.save({ validateBeforeSave: false });
 
-      // Record transaction
-      const transaction = new WalletTransaction({
-        user: userId,
-        type: "debit",
-        amount,
-        balanceAfter: user.walletBalance,
-        description,
-        relatedOrder,
-        metadata,
-      });
+    const transaction = await this._recordTransaction({
+      userId,
+      type: 'credit',
+      amount,
+      balanceAfter: user.walletBalance,
+      description,
+      approvedBy,
+      metadata,
+    });
 
-      await transaction.save();
-      logger.info(
-        `Wallet debited: ${amount} GH₵ for user ${userId}. New balance: ${user.walletBalance} GH₵`
-      );
+    logger.info(`[WalletService] Credited GH₵${amount} to user ${userId}. Balance: GH₵${user.walletBalance}`);
+    await this._notifyUser(userId, user.walletBalance, `Your wallet has been credited with GH₵${amount}. New balance: GH₵${user.walletBalance}`);
 
-      // Send WebSocket update
-      try {
-        const recentTransactions = await WalletTransaction.find({
-          user: userId,
-        })
-          .sort({ createdAt: -1 })
-          .limit(10)
-          .populate([
-            { path: "approvedBy", select: "fullName" },
-            { path: "relatedOrder", select: "orderNumber" },
-          ]);
-
-        websocketService.sendToUser(userId, {
-          type: "wallet_update",
-          userId: userId,
-          balance: user.walletBalance,
-          recentTransactions: recentTransactions,
-          message: `Your wallet has been debited by GH₵${amount}. New balance: GH₵${user.walletBalance}`,
-        });
-      } catch (wsError) {
-        logger.warn(
-          `Failed to send WebSocket update for debit: ${wsError.message}`
-        );
-      }
-
-      return transaction;
-    } catch (error) {
-      logger.error(`Wallet debit error: ${error.message}`);
-      throw error;
-    }
+    return transaction;
   }
 
   /**
-   * Get transaction history for a user
-   * @param {string} userId - The user ID
-   * @param {object} filter - Filter criteria
-   * @returns {Promise<Array>} List of transactions
+   * Debit a user's wallet and record the transaction.
+   * Only call this after verifying sufficient balance.
    */
+  async debitWallet(userId, amount, description, relatedOrder = null, metadata = {}) {
+    const user = await User.findById(userId);
+    if (!user) throw new Error('User not found');
+    if (amount <= 0) throw new Error('Debit amount must be greater than zero');
+    if (user.walletBalance < amount) {
+      throw new Error(`Insufficient wallet balance. Required: GH₵${amount}, Available: GH₵${user.walletBalance}`);
+    }
+
+    user.walletBalance -= amount;
+    await user.save({ validateBeforeSave: false });
+
+    const transaction = await this._recordTransaction({
+      userId,
+      type: 'debit',
+      amount,
+      balanceAfter: user.walletBalance,
+      description,
+      relatedOrder,
+      metadata,
+    });
+
+    logger.info(`[WalletService] Debited GH₵${amount} from user ${userId}. Balance: GH₵${user.walletBalance}`);
+    await this._notifyUser(userId, user.walletBalance, `Your wallet has been debited by GH₵${amount}. New balance: GH₵${user.walletBalance}`);
+
+    return transaction;
+  }
+
+  // ─── Transaction History ─────────────────────────────────────────────────────
+
   async getTransactionHistory(userId, filter = {}) {
     try {
-      const query = { user: userId, ...filter };
-      const transactions = await WalletTransaction.find(query)
+      const transactions = await WalletTransaction.find({ user: userId, ...filter })
         .sort({ createdAt: -1 })
-        .populate("approvedBy", "fullName email")
-        .populate("relatedOrder", "orderNumber");
+        .populate('approvedBy', 'fullName email')
+        .populate('relatedOrder', 'orderNumber');
 
-      // Ensure we always return an array
-      if (!Array.isArray(transactions)) {
-        return [];
-      }
-
-      return transactions;
-    } catch (error) {
-      logger.error(`Get transaction history error: ${error.message}`);
-      return []; // Return empty array instead of throwing
+      return Array.isArray(transactions) ? transactions : [];
+    } catch (err) {
+      logger.error(`[WalletService] getTransactionHistory error: ${err.message}`);
+      return [];
     }
   }
 
+  // ─── Manual Top-Up (Admin Approval Flow) ─────────────────────────────────────
+
   /**
-   * Create a wallet top-up request
-   * @param {string} userId - The user ID
-   * @param {number} amount - Amount requested
-   * @param {string} description - Reason for top-up
-   * @returns {Promise<object>} Transaction request object
+   * Create a pending top-up request for admin approval.
+   * This creates a record immediately because the admin needs to see it.
    */
   async createTopUpRequest(userId, amount, description) {
-    try {
-      const user = await User.findById(userId);
-      if (!user) {
-        throw new Error("User not found");
-      }
+    const user = await User.findById(userId);
+    if (!user) throw new Error('User not found');
+    if (amount <= 0) throw new Error('Top-up amount must be greater than zero');
 
-      // Check for existing pending top-up request
-      const existingPendingRequest = await WalletTransaction.findOne({
-        user: userId,
-        type: "credit",
-        status: "pending",
-      });
-
-      if (existingPendingRequest) {
-        throw new Error(
-          "You already have a pending top-up request. Please wait for it to be processed before making a new request."
-        );
-      }
-
-      // Validate amount
-      if (amount <= 0) {
-        throw new Error("Top-up amount must be greater than zero");
-      }
-
-      // Create pending transaction request
-      const transaction = new WalletTransaction({
-        user: userId,
-        type: "credit",
-        amount,
-        balanceAfter: user.walletBalance + amount, // Projected balance
-        description,
-        status: "pending",
-        metadata: { requestedAt: new Date() },
-      });
-
-      await transaction.save();
-      logger.info(
-        `Wallet top-up request created: ${amount} GH₵ for user ${userId}`
-      );
-
-      return transaction;
-    } catch (error) {
-      logger.error(`Create top-up request error: ${error.message}`);
-      throw error;
+    const existingPending = await WalletTransaction.findOne({
+      user: userId,
+      type: 'credit',
+      status: 'pending',
+    });
+    if (existingPending) {
+      throw new Error('You already have a pending top-up request. Please wait for it to be processed.');
     }
+
+    const transaction = new WalletTransaction({
+      user: userId,
+      type: 'credit',
+      amount,
+      balanceAfter: user.walletBalance + amount, // projected, not yet applied
+      description,
+      status: 'pending',
+      metadata: { requestedAt: new Date() },
+    });
+
+    await transaction.save();
+    logger.info(`[WalletService] Top-up request created: GH₵${amount} for user ${userId}`);
+    return transaction;
   }
 
   /**
-   * Approve or reject a top-up request
-   * @param {string} transactionId - The transaction ID
-   * @param {boolean} approve - Whether to approve or reject
-   * @param {string} adminId - ID of admin approving/rejecting
-   * @returns {Promise<object>} Updated transaction
+   * Approve or reject a manual top-up request.
+   * The wallet is only credited here — not during request creation.
    */
   async processTopUpRequest(transactionId, approve, adminId) {
-    try {
-      const transaction = await WalletTransaction.findById(transactionId);
-      if (!transaction) {
-        throw new Error("Transaction not found");
-      }
-
-      if (transaction.status !== "pending") {
-        throw new Error(
-          `Transaction is already ${transaction.status}. Only pending transactions can be processed.`
-        );
-      }
-
-      if (approve) {
-        // Get user
-        const user = await User.findById(transaction.user);
-        if (!user) {
-          throw new Error("User not found");
-        }
-
-        // Credit the wallet
-        user.walletBalance += transaction.amount;
-        await user.save({ validateBeforeSave: false });
-
-        // Update transaction
-        transaction.status = "completed";
-        transaction.approvedBy = adminId;
-        transaction.balanceAfter = user.walletBalance;
-        transaction.description = `${transaction.description} - Approved by admin`;
-
-        logger.info(
-          `Wallet top-up approved: ${transaction.amount} GH₵ for user ${transaction.user}. New balance: ${user.walletBalance} GH₵`
-        );
-
-        // Send WebSocket update for approval
-        try {
-          const recentTransactions = await WalletTransaction.find({
-            user: transaction.user,
-          })
-            .sort({ createdAt: -1 })
-            .limit(10)
-            .populate([
-              { path: "approvedBy", select: "fullName" },
-              { path: "relatedOrder", select: "orderNumber" },
-            ]);
-
-          websocketService.sendToUser(transaction.user.toString(), {
-            type: "wallet_update",
-            userId: transaction.user.toString(),
-            balance: user.walletBalance,
-            recentTransactions: recentTransactions,
-            message: `Your top-up request for GH₵${transaction.amount} has been approved. New balance: GH₵${user.walletBalance}`,
-          });
-        } catch (wsError) {
-          logger.warn(
-            `Failed to send WebSocket update for top-up approval: ${wsError.message}`
-          );
-        }
-      } else {
-        // Reject the transaction
-        transaction.status = "rejected";
-        transaction.approvedBy = adminId;
-        transaction.description = `${transaction.description} - Rejected by admin`;
-        // Keep the original balanceAfter to show what was requested
-        // But mark it clearly as rejected
-
-        logger.info(
-          `Wallet top-up rejected: ${transaction.amount} GH₵ for user ${transaction.user}`
-        );
-
-        // Send WebSocket update for rejection
-        try {
-          const user = await User.findById(transaction.user);
-          const recentTransactions = await WalletTransaction.find({
-            user: transaction.user,
-          })
-            .sort({ createdAt: -1 })
-            .limit(10)
-            .populate([
-              { path: "approvedBy", select: "fullName" },
-              { path: "relatedOrder", select: "orderNumber" },
-            ]);
-
-          websocketService.sendToUser(transaction.user.toString(), {
-            type: "wallet_update",
-            userId: transaction.user.toString(),
-            balance: user.walletBalance,
-            recentTransactions: recentTransactions,
-            message: `Your top-up request for GH₵${transaction.amount} has been rejected.`,
-          });
-        } catch (wsError) {
-          logger.warn(
-            `Failed to send WebSocket update for top-up rejection: ${wsError.message}`
-          );
-        }
-      }
-
-      await transaction.save();
-
-      // Send notification based on approval status
-      if (approve) {
-        await notificationService.sendWalletTopUpApprovalNotification(
-          transaction.user.toString(),
-          transaction.amount,
-          adminId
-        );
-      } else {
-        await notificationService.sendWalletTopUpRejectionNotification(
-          transaction.user.toString(),
-          transaction.amount,
-          "Request rejected by administrator",
-          adminId
-        );
-      }
-
-      return transaction;
-    } catch (error) {
-      logger.error(`Process top-up request error: ${error.message}`);
-      throw error;
+    const transaction = await WalletTransaction.findById(transactionId);
+    if (!transaction) throw new Error('Transaction not found');
+    if (transaction.status !== 'pending') {
+      throw new Error(`Transaction is already ${transaction.status}. Only pending transactions can be processed.`);
     }
-  }
 
-  /**
-   * Initialize wallet for a new agent
-   * @param {string} userId - The user ID
-   * @returns {Promise<object>} Transaction object
-   */
-  async initializeAgentWallet(userId) {
-    try {
-      const user = await User.findById(userId);
-      if (!user) {
-        throw new Error("User not found");
-      }
+    if (approve) {
+      const user = await User.findById(transaction.user);
+      if (!user) throw new Error('User not found');
 
-      if (!canHaveWallet(user.userType)) {
-        throw new Error("Only business user wallets can be initialized");
-      }
-
-      // Check if wallet is already initialized
-      if (user.walletBalance > 0) {
-        throw new Error("Wallet already initialized");
-      }
-
-      const initialAmount = 0; // 100 GH₵
-      user.walletBalance = initialAmount;
+      user.walletBalance += transaction.amount;
       await user.save({ validateBeforeSave: false });
 
-      // Record transaction
-      const transaction = new WalletTransaction({
-        user: userId,
-        type: "credit",
-        amount: initialAmount,
-        balanceAfter: initialAmount,
-        description: "Initial wallet balance for new agent",
-      });
+      transaction.status = 'completed';
+      transaction.approvedBy = adminId;
+      transaction.balanceAfter = user.walletBalance;
+      transaction.description = `${transaction.description} - Approved by admin`;
 
-      await transaction.save();
-      logger.info(
-        `Agent wallet initialized with ${initialAmount} GH₵ for user ${userId}`
+      logger.info(`[WalletService] Top-up approved: GH₵${transaction.amount} for user ${transaction.user}. Balance: GH₵${user.walletBalance}`);
+      await this._notifyUser(
+        transaction.user,
+        user.walletBalance,
+        `Your top-up request for GH₵${transaction.amount} has been approved. New balance: GH₵${user.walletBalance}`
       );
+      await notificationService.sendWalletTopUpApprovalNotification(
+        transaction.user.toString(),
+        transaction.amount,
+        adminId
+      );
+    } else {
+      transaction.status = 'rejected';
+      transaction.approvedBy = adminId;
+      transaction.description = `${transaction.description} - Rejected by admin`;
 
-      return transaction;
-    } catch (error) {
-      logger.error(`Initialize agent wallet error: ${error.message}`);
-      throw error;
+      logger.info(`[WalletService] Top-up rejected: GH₵${transaction.amount} for user ${transaction.user}`);
+
+      const user = await User.findById(transaction.user);
+      if (user) {
+        await this._notifyUser(
+          transaction.user,
+          user.walletBalance,
+          `Your top-up request for GH₵${transaction.amount} has been rejected.`
+        );
+      }
+      await notificationService.sendWalletTopUpRejectionNotification(
+        transaction.user.toString(),
+        transaction.amount,
+        'Request rejected by administrator',
+        adminId
+      );
     }
+
+    await transaction.save();
+    return transaction;
   }
 
-  /**
-   * Get wallet analytics for a tenant or all users
-   * @param {string|null} tenantId - Tenant ID (null for super admin to get all)
-   * @param {object} filter - Filter criteria
-   * @returns {Promise<object>} Analytics object
-   */
-  async getWalletAnalytics(tenantId = null, filter = {}) {
-    try {
-      let userQuery = {};
-      if (tenantId) {
-        userQuery = { tenantId };
-      }
-
-      // Overall stats
-      const totalUsers = await User.countDocuments(userQuery);
-      const usersWithBalance = await User.countDocuments({
-        ...userQuery,
-        walletBalance: { $gt: 0 },
-      });
-
-      // Get sum of all wallet balances
-      const walletAggregation = await User.aggregate([
-        { $match: { ...userQuery } },
-        {
-          $group: {
-            _id: null,
-            totalBalance: { $sum: "$walletBalance" },
-            avgBalance: { $avg: "$walletBalance" },
-            maxBalance: { $max: "$walletBalance" },
-          },
-        },
-      ]);
-
-      // Transaction statistics
-      let txnQuery = {};
-      if (tenantId) {
-        // Get all users for this tenant
-        const tenantUsers = await User.find(userQuery).select("_id");
-        const userIds = tenantUsers.map((user) => user._id);
-        txnQuery = { user: { $in: userIds } };
-      }
-
-      const txnStats = await WalletTransaction.aggregate([
-        { $match: { ...txnQuery, ...filter } },
-        {
-          $group: {
-            _id: "$type",
-            count: { $sum: 1 },
-            total: { $sum: "$amount" },
-          },
-        },
-      ]);
-
-      // Organize transaction stats
-      const txnStatsFormatted = {
-        credit: { count: 0, total: 0 },
-        debit: { count: 0, total: 0 },
-      };
-
-      txnStats.forEach((stat) => {
-        if (stat._id) {
-          txnStatsFormatted[stat._id] = {
-            count: stat.count,
-            total: stat.total,
-          };
-        }
-      });
-
-      // Pending requests count
-      const pendingRequests = await WalletTransaction.countDocuments({
-        ...txnQuery,
-        status: "pending",
-      });
-
-      return {
-        users: {
-          total: totalUsers,
-          withBalance: usersWithBalance,
-          withoutBalance: totalUsers - usersWithBalance,
-        },
-        balance:
-          walletAggregation.length > 0
-            ? {
-                total: walletAggregation[0].totalBalance || 0,
-                average: walletAggregation[0].avgBalance || 0,
-                highest: walletAggregation[0].maxBalance || 0,
-              }
-            : {
-                total: 0,
-                average: 0,
-                highest: 0,
-              },
-        transactions: {
-          credits: txnStatsFormatted.credit,
-          debits: txnStatsFormatted.debit,
-          pendingRequests,
-        },
-      };
-    } catch (error) {
-      logger.error(`Get wallet analytics error: ${error.message}`);
-      throw error;
-    }
-  }
+  // ─── Instant Top-Up (Paystack Flow) ──────────────────────────────────────────
 
   /**
-   * Initialize Paystack wallet top-up (creates pending WalletTransaction + initializes Paystack)
+   * Generate Paystack checkout config WITHOUT writing anything to the database.
+   *
+   * Why: If the user closes the Paystack modal before paying, there is nothing
+   * stuck in the DB to block their next attempt. The transaction is only
+   * recorded inside processPaystackWebhook once payment is confirmed.
    */
   async initiatePaystackTopUp(userId, amount, returnUrl = null) {
-    try {
-      const user = await User.findById(userId);
-      if (!user) throw new Error('User not found');
-      if (amount <= 0) throw new Error('Amount must be greater than zero');
+    const user = await User.findById(userId);
+    if (!user) throw new Error('User not found');
+    if (amount <= 0) throw new Error('Amount must be greater than zero');
 
-      // Prevent multiple pending paystack top-ups
-      const existingPending = await WalletTransaction.findOne({
-        user: userId,
-        type: 'credit',
-        status: 'pending',
-        'metadata.paystack': { $exists: true },
-      });
+    await paystackService.ensureKeys().catch(() => {});
+    const publicKey = paystackService.getPublicKey();
 
-      if (existingPending) {
-        const hoursSince = (Date.now() - new Date(existingPending.createdAt)) / (1000 * 60 * 60);
-        if (hoursSince < 24) {
-          throw new Error('You have a pending Paystack top-up. Please complete or wait for it to expire.');
-        }
-        existingPending.status = 'rejected';
-        existingPending.description = `${existingPending.description} - expired`; 
-        await existingPending.save();
-      }
+    const reference = `wallet_${userId}_${Date.now()}`;
+    const amountPesewas = paystackService.convertToPesewas(amount);
 
-      const reference = `wallet_${userId}_${Date.now()}`;
-      const amountPesewas = (await import('../services/paystackService.js')).default.convertToPesewas(amount);
-
-      // Try to ensure a Paystack Customer exists (this lets Paystack's hosted widget show the customer's name)
-      try {
-        if (user.email && user.fullName) {
-          const [first_name, ...rest] = (user.fullName || '').trim().split(/\s+/);
-          const last_name = rest.join(' ') || undefined;
-          await (await import('../services/paystackService.js')).default.createCustomer({
-            email: user.email,
-            first_name,
-            last_name,
-          });
-        }
-      } catch (custErr) {
-        // Non-fatal — proceed to initialize transaction even if customer creation fails
-        logger.warn(`createCustomer for Paystack failed for user ${userId}: ${custErr.message}`);
-      }
-
-      // Initialize Paystack
-      const paystackData = await (await import('../services/paystackService.js')).default.initializeTransaction({
-        email: user.email || `${user._id}@noemail.local`,
-        amount: amountPesewas,
-        reference,
-        currency: 'GHS',
-        callback_url: returnUrl || process.env.PAYSTACK_CALLBACK_URL || (process.env.NODE_ENV === 'production' ? process.env.PAYSTACK_CALLBACK_URL_PROD : process.env.PAYSTACK_CALLBACK_URL_DEV) || `${process.env.FRONTEND_URL || ''}/wallet/topup/callback`,
-        // pass user's full name in metadata (already present) and include it in description so Paystack's hosted/redirect page can surface the name
-        metadata: { userId: userId.toString(), type: 'wallet_topup', userName: user.fullName },
-        channels: ['card', 'mobile_money', 'bank_transfer']
-      });
-
-      const transaction = new WalletTransaction({
-        user: userId,
-        type: 'credit',
-        amount,
-        balanceAfter: user.walletBalance + amount,
-        // include user's full name in description so Paystack checkout shows a recognizable label instead of only email
-        description: `Wallet top-up for ${user.fullName} (Paystack)`,
-        status: 'pending',
-        reference,
-        metadata: {
-          paystack: {
-            reference,
-            authorization_url: paystackData.authorization_url,
-            access_code: paystackData.access_code,
-            gateway: 'paystack',
-            currency: 'GHS'
-          },
-          requestedAt: new Date()
-        }
-      });
-
-      await transaction.save();
-
-      return {
-        transaction,
-        authorizationUrl: paystackData.authorization_url,
-        reference,
-        accessCode: paystackData.access_code
-      };
-    } catch (error) {
-      logger.error(`initiatePaystackTopUp error: ${error.message}`);
-      throw error;
+    // Ensure a Paystack customer record exists (best-effort)
+    if (user.email && user.fullName) {
+      const [first_name, ...rest] = user.fullName.trim().split(/\s+/);
+      await paystackService.createCustomer({
+        email: user.email,
+        first_name,
+        last_name: rest.join(' ') || undefined,
+      }).catch((err) => logger.warn(`[WalletService] createCustomer failed for user ${userId}: ${err.message}`));
     }
+
+    const callbackUrl =
+      returnUrl ||
+      process.env.PAYSTACK_CALLBACK_URL ||
+      (process.env.NODE_ENV === 'production'
+        ? process.env.PAYSTACK_CALLBACK_URL_PROD
+        : process.env.PAYSTACK_CALLBACK_URL_DEV) ||
+      `${process.env.FRONTEND_URL || ''}/wallet/topup/callback`;
+
+    let authorizationUrl = null;
+    let accessCode = null;
+
+    // If secret key is available, also initialize a hosted transaction (for redirect fallback)
+    if (paystackService.isConfigured()) {
+      try {
+        const paystackData = await initializePaystackCheckout({
+          email: user.email || `${user._id}@noemail.local`,
+          amountPesewas,
+          reference,
+          callbackUrl,
+          metadata: {
+            userId: userId.toString(),
+            type: 'wallet_topup',
+            userName: user.fullName,
+          },
+        });
+        authorizationUrl = paystackData.authorization_url;
+        accessCode = paystackData.access_code;
+      } catch (err) {
+        // Inline modal can still work without a server-side init
+        logger.warn(`[WalletService] Paystack initializeTransaction failed (inline flow continues): ${err.message}`);
+      }
+    }
+
+    logger.info(`[WalletService] Paystack checkout prepared for user ${userId}, ref: ${reference}`);
+
+    return { reference, authorizationUrl, accessCode, publicKey, amount, amountPesewas };
   }
 
   /**
-   * Process Paystack webhook for wallet top-up (idempotent)
+   * Process a confirmed Paystack payment (called from webhook or manual verify).
+   * This is the ONLY place a Paystack top-up transaction is written to the DB.
+   *
+   * We intentionally avoid MongoDB sessions/transactions here so this works on
+   * standalone MongoDB instances (no replica set required). Safety is provided by:
+   *   1. The idempotency guard (findOne by reference + status:'completed') which
+   *      prevents double-crediting the same payment reference.
+   *   2. The atomic $inc on walletBalance which is safe without a session.
+   * In the rare event the process crashes after the $inc but before the transaction
+   * record is saved, re-running (webhook retry or manual verify) will find no
+   * 'completed' record and credit the wallet again — so err on the side of crediting.
    */
   async processPaystackWebhook(webhookEvent) {
-    try {
-      const { data } = webhookEvent;
-      const reference = data.reference;
-      const metadata = data.metadata || {};
+    const { data } = webhookEvent;
+    const reference = data.reference;
 
-      if (metadata.type !== 'wallet_topup') return { processed: false, reason: 'not_wallet_topup' };
+    try {
+      // ── 1. Parse metadata ────────────────────────────────────────────────────
+      let metadata = data.metadata || {};
+      if (typeof metadata === 'string') {
+        try { metadata = JSON.parse(metadata); } catch {
+          logger.warn(`[WalletService] Could not parse Paystack metadata for ref ${reference}`);
+        }
+      }
+
+      // ── 2. Route guards ──────────────────────────────────────────────────────
+      if (metadata.type !== 'wallet_topup') {
+        return { processed: false, reason: 'not_wallet_topup' };
+      }
 
       if (data.currency && data.currency !== 'GHS') {
-        logger.error('[Paystack Webhook] Wallet top-up rejected: non-GHS currency', { reference, currency: data.currency });
+        logger.error(`[WalletService] Webhook rejected — non-GHS currency: ${data.currency}, ref: ${reference}`);
         return { processed: false, reason: 'currency_mismatch' };
       }
 
-      // Atomically claim the pending WalletTransaction for processing to avoid double-credit
-      const claimedTx = await WalletTransaction.findOneAndUpdate(
-        { reference, status: 'pending' },
-        { $set: { status: 'processing', 'metadata.paystack.processingAt': new Date() } },
-        { new: true }
-      );
-
-      let tx = claimedTx;
-
-      if (!tx) {
-        // Check if already completed
-        const completed = await WalletTransaction.findOne({ reference, status: 'completed' });
-        if (completed) return { processed: false, duplicate: true };
-
-        // Check if another worker is already processing it
-        const inProgress = await WalletTransaction.findOne({ reference, status: 'processing' });
-        if (inProgress) return { processed: false, reason: 'already_processing' };
-
-        throw new Error(`WalletTransaction not found for reference ${reference}`);
+      // ── 3. Idempotency guard — never credit the same reference twice ─────────
+      const alreadyProcessed = await WalletTransaction.findOne({ reference, status: 'completed' });
+      if (alreadyProcessed) {
+        logger.info(`[WalletService] Duplicate webhook ignored for ref: ${reference}`);
+        return { processed: false, duplicate: true };
       }
 
-      // Amount validation (Paystack amount is in smallest unit)
-      const expectedPesewas = (await import('../services/paystackService.js')).default.convertToPesewas(tx.amount);
-      if (Number(data.amount) !== Number(expectedPesewas)) {
-        tx.metadata = tx.metadata || {};
-        tx.metadata.paystack = tx.metadata.paystack || {};
-        tx.metadata.paystack.amountMismatch = true;
-        tx.metadata.paystack.expectedAmount = expectedPesewas;
-        tx.metadata.paystack.receivedAmount = data.amount;
-        tx.description = `${tx.description} - AMOUNT MISMATCH - REQUIRES_MANUAL_REVIEW`;
-        // Revert status so admins can retry/inspect
-        tx.status = 'pending';
-        await tx.save();
-        // TODO: notify admins
-        return { processed: false, reason: 'amount_mismatch' };
+      // ── 4. Resolve user ──────────────────────────────────────────────────────
+      const userId = metadata.userId;
+      if (!userId) {
+        throw new Error(`Paystack webhook missing userId in metadata for reference ${reference}`);
       }
 
-      // Atomically credit user's wallet to avoid race conditions
+      const amountGhs = data.amount / 100;
+
+      // ── 5. Credit the wallet (atomic increment — safe without a session) ─────
       const updatedUser = await User.findByIdAndUpdate(
-        tx.user,
-        { $inc: { walletBalance: tx.amount } },
+        userId,
+        { $inc: { walletBalance: amountGhs } },
         { new: true, runValidators: false }
       );
+      if (!updatedUser) throw new Error(`User ${userId} not found for Paystack top-up ref ${reference}`);
 
-      if (!updatedUser) {
-        // revert transaction back to pending so it can be investigated
-        tx.status = 'pending';
-        await tx.save();
-        throw new Error('User not found for wallet top-up');
-      }
+      // ── 6. Record the completed transaction ──────────────────────────────────
+      const transaction = new WalletTransaction({
+        user: userId,
+        type: 'credit',
+        amount: amountGhs,
+        balanceAfter: updatedUser.walletBalance,
+        description: `Wallet top-up via Paystack (${data.channel || 'online'})`,
+        status: 'completed',
+        reference,
+        approvedBy: null,
+        metadata: {
+          paystack: {
+            reference,
+            transactionId: data.id,
+            channel: data.channel,
+            currency: data.currency,
+            paidAt: data.paid_at || new Date(),
+            processedAt: new Date(),
+          },
+          userId,
+        },
+      });
+      await transaction.save();
 
-      tx.status = 'completed';
-      tx.balanceAfter = updatedUser.walletBalance;
-      tx.metadata = tx.metadata || {};
-      tx.metadata.paystack = tx.metadata.paystack || {};
-      tx.metadata.paystack.transactionId = data.id;
-      tx.metadata.paystack.channel = data.channel;
-      tx.metadata.paystack.paidAt = data.paid_at || new Date();
-      tx.metadata.paystack.processedAt = new Date();
-      tx.description = `Wallet top-up via Paystack (${data.channel})`;
+      logger.info(`[WalletService] Paystack top-up complete: GH₵${amountGhs} for user ${userId}, ref: ${reference}`);
 
-      await tx.save();
+      // ── 7. Notify user (non-critical — never let this break the response) ────
+      await this._notifyUser(
+        userId,
+        updatedUser.walletBalance,
+        `Your wallet has been credited with GH₵${amountGhs}. New balance: GH₵${updatedUser.walletBalance}`
+      );
 
-      // Reconcile any other pending top-up requests for the same user + amount
-      try {
-        const otherPending = await WalletTransaction.find({
-          user: updatedUser._id,
-          type: 'credit',
-          status: 'pending',
-          amount: tx.amount,
-          _id: { $ne: tx._id },
-          'metadata.paystack': { $exists: false }
-        });
-
-        if (otherPending && otherPending.length > 0) {
-          logger.info(`[WalletService] Reconciling ${otherPending.length} pending request(s) for user ${updatedUser._id} after Paystack success`, { reference });
-          for (const pendingTx of otherPending) {
-            pendingTx.status = 'completed';
-            pendingTx.balanceAfter = updatedUser.walletBalance; // reflect actual new balance
-            pendingTx.description = `${pendingTx.description} - Auto-completed (reconciled via Paystack)`;
-            pendingTx.metadata = pendingTx.metadata || {};
-            pendingTx.metadata.reconciled = {
-              by: 'paystack_webhook',
-              reference,
-              reconciledAt: new Date()
-            };
-            // Do NOT change user.walletBalance again (already credited above)
-            await pendingTx.save();
-
-            // Notify user about auto-approval of their manual request
-            try {
-              await notificationService.sendWalletTopUpApprovalNotification(pendingTx.user.toString(), pendingTx.amount, 'system');
-            } catch (notifErr) {
-              logger.warn(`Failed to send reconciliation notification for transaction ${pendingTx._id}: ${notifErr.message}`);
-            }
-          }
-        }
-      } catch (reconErr) {
-        logger.warn(`Failed to reconcile other pending requests: ${reconErr.message}`);
-      }
-
-      // Emit websocket update for the paystack transaction
-      try {
-        const recentTransactions = await WalletTransaction.find({ user: updatedUser._id }).sort({ createdAt: -1 }).limit(10).populate([
-          { path: 'approvedBy', select: 'fullName' },
-          { path: 'relatedOrder', select: 'orderNumber' }
-        ]);
-
-        websocketService.sendToUser(updatedUser._id.toString(), {
-          type: 'wallet_update',
-          userId: updatedUser._id.toString(),
-          balance: updatedUser.walletBalance,
-          recentTransactions,
-          message: `Your wallet has been credited with GH₵${tx.amount}. New balance: GH₵${updatedUser.walletBalance}`
-        });
-      } catch (wsErr) {
-        logger.warn(`WebSocket wallet update failed: ${wsErr.message}`);
-      }
-
-      return { processed: true, transaction: tx, user: updatedUser };
+      return { processed: true, transaction, user: updatedUser };
     } catch (err) {
-      logger.error(`processPaystackWebhook error: ${err.message}`);
+      logger.error(`[WalletService] processPaystackWebhook error: ${err.message}`);
       throw err;
     }
+  }
+
+  // ─── Agent Wallet Initialization ─────────────────────────────────────────────
+
+  async initializeAgentWallet(userId) {
+    const user = await User.findById(userId);
+    if (!user) throw new Error('User not found');
+    if (!canHaveWallet(user.userType)) throw new Error('Only business user wallets can be initialized');
+    if (user.walletBalance > 0) throw new Error('Wallet already initialized');
+
+    user.walletBalance = 0;
+    await user.save({ validateBeforeSave: false });
+
+    const transaction = await this._recordTransaction({
+      userId,
+      type: 'credit',
+      amount: 0,
+      balanceAfter: 0,
+      description: 'Initial wallet balance for new agent',
+    });
+
+    logger.info(`[WalletService] Agent wallet initialized for user ${userId}`);
+    return transaction;
+  }
+
+  // ─── Analytics ───────────────────────────────────────────────────────────────
+
+  async getWalletAnalytics(tenantId = null, filter = {}) {
+    const userQuery = tenantId ? { tenantId } : {};
+
+    const [totalUsers, usersWithBalance, walletAggregation] = await Promise.all([
+      User.countDocuments(userQuery),
+      User.countDocuments({ ...userQuery, walletBalance: { $gt: 0 } }),
+      User.aggregate([
+        { $match: userQuery },
+        { $group: { _id: null, totalBalance: { $sum: '$walletBalance' }, avgBalance: { $avg: '$walletBalance' }, maxBalance: { $max: '$walletBalance' } } },
+      ]),
+    ]);
+
+    let txnQuery = {};
+    if (tenantId) {
+      const tenantUsers = await User.find(userQuery).select('_id');
+      txnQuery = { user: { $in: tenantUsers.map((u) => u._id) } };
+    }
+
+    const [txnStats, pendingRequests] = await Promise.all([
+      WalletTransaction.aggregate([
+        { $match: { ...txnQuery, ...filter } },
+        { $group: { _id: '$type', count: { $sum: 1 }, total: { $sum: '$amount' } } },
+      ]),
+      WalletTransaction.countDocuments({ ...txnQuery, status: 'pending' }),
+    ]);
+
+    const txnStatsFormatted = { credit: { count: 0, total: 0 }, debit: { count: 0, total: 0 } };
+    txnStats.forEach(({ _id, count, total }) => {
+      if (_id) txnStatsFormatted[_id] = { count, total };
+    });
+
+    const agg = walletAggregation[0];
+    return {
+      users: { total: totalUsers, withBalance: usersWithBalance, withoutBalance: totalUsers - usersWithBalance },
+      balance: { total: agg?.totalBalance ?? 0, average: agg?.avgBalance ?? 0, highest: agg?.maxBalance ?? 0 },
+      transactions: { credits: txnStatsFormatted.credit, debits: txnStatsFormatted.debit, pendingRequests },
+    };
   }
 }
 

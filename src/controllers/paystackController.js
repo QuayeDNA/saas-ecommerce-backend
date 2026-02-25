@@ -36,6 +36,10 @@ class PaystackController {
       }
 
       const event = req.body;
+      if (!event) {
+        logger.error('[Paystack Webhook] no body parsed (req.body undefined)');
+        return res.status(400).json({ error: 'Invalid payload' });
+      }
       logger.info('[Paystack Webhook] event received', { event: event.event, reference: event.data?.reference });
 
       switch (event.event) {

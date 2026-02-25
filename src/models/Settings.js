@@ -123,6 +123,20 @@ const settingsSchema = new mongoose.Schema(
         min: 0,
       },
     },
+
+    // Payout Settings - minimum amounts per destination type
+    minimumPayoutAmounts: {
+      mobile_money: {
+        type: Number,
+        default: 1.0,
+        min: 0,
+      },
+      bank_account: {
+        type: Number,
+        default: 50.0,
+        min: 0,
+      },
+    },
   },
   {
     timestamps: true,
