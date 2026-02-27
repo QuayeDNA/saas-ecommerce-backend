@@ -10,8 +10,6 @@ import notificationService from './notificationService.js';
 import paystackService from './paystackService.js';
 import { calculateStorefrontSplit } from '../utils/paystackHelpers.js';
 import logger from '../utils/logger.js';
-import WalletTransaction from '../models/WalletTransaction.js';
-import EarningsTransaction from '../models/EarningsTransaction.js';
 import websocketService from './websocketService.js';
 
 class StorefrontService {
@@ -315,7 +313,6 @@ class StorefrontService {
     const storefront = await AgentStorefront.findPublicStore(businessName);
     if (!storefront) throw new Error('Storefront not found or not available');
 
-    const agentUserType = storefront.agentId?.userType || 'agent';
 
     const allPricing = await StorefrontPricing.find({ storefrontId: storefront._id });
     const pricingMap = new Map();
@@ -332,11 +329,18 @@ class StorefrontService {
 
     for (const bundle of allBundles) {
       const pricing = pricingMap.get(bundle._id.toString());
-      if (pricing && !pricing.isActive) continue;
 
-      const price = pricing
-        ? (pricing.hasCustomPrice ? pricing.customPrice : pricing.tierPrice)
-        : (bundle.pricingTiers?.[agentUserType] ?? bundle.pricingTiers?.default ?? bundle.price);
+      // Only include the bundle if the agent has explicitly enabled it. New
+      // storefronts start with *no* pricing records at all, so the absence of a
+      // pricing entry should be treated as "disabled".  This guarantees that
+      // customers never see bundles the agent didn't opt into. System-level
+      // activity is already enforced by the initial query above (`isActive: true`),
+      // so here we only need to consider the store-specific flag.
+      if (!pricing || !pricing.isActive) continue;
+
+      const price = pricing.hasCustomPrice
+        ? pricing.customPrice
+        : pricing.tierPrice;
 
       const publicBundle = {
         _id: bundle._id,
@@ -378,6 +382,24 @@ class StorefrontService {
       provEntry.packages.get(pkgName).bundles.push(publicBundle);
     }
 
+    // compute store-specific "popular" bundles based on completed orders
+    let popularBundles = [];
+    try {
+      const top = await Order.aggregate([
+        { $match: { orderType: 'storefront', 'storefrontData.storefrontId': storefront._id, status: 'completed' } },
+        { $unwind: '$storefrontData.items' },
+        { $group: { _id: '$storefrontData.items.bundleId', qty: { $sum: '$storefrontData.items.quantity' } } },
+        { $sort: { qty: -1 } },
+        { $limit: 8 }
+      ]);
+      const topIds = top.map(r => r._id.toString());
+      popularBundles = bundles
+        .filter(b => topIds.includes(b._id.toString()))
+        .sort((a, b) => topIds.indexOf(a._id.toString()) - topIds.indexOf(b._id.toString()));
+    } catch (err) {
+      logger.error('[StorefrontService] failed to compute popular bundles', err);
+    }
+
     const providers = Array.from(providersMap.values()).map(p => ({
       code: p.code,
       name: p.name,
@@ -397,6 +419,7 @@ class StorefrontService {
       },
       bundles,
       providers,
+      popularBundles,
     };
   }
 
@@ -432,8 +455,7 @@ class StorefrontService {
         bundle = await Bundle.findOne({ _id: item.bundleId, isActive: true, isDeleted: { $ne: true } })
           .populate('providerId', 'name code');
         if (!bundle) throw new Error(`Bundle not available in this store: ${item.bundleId}`);
-        const agentUserType = storefront.agentId?.userType || 'agent';
-        tierPrice = bundle.pricingTiers?.[agentUserType] ?? bundle.pricingTiers?.default ?? bundle.price;
+        tierPrice = bundle.pricingTiers?.[storefront.agentId?.userType || 'agent'] ?? bundle.pricingTiers?.default ?? bundle.price;
         displayPrice = tierPrice;
       }
 
@@ -521,6 +543,8 @@ class StorefrontService {
         totalTierCost,
         items: storefrontItems,
       },
+      // top-level paymentMethod mirrors storefront type so generic code can tell
+      paymentMethod: paymentMethod.type === 'paystack' ? 'card' : paymentMethod.type,
       subtotal: totalAmount,
       total: totalAmount,
       // Paystack orders are pending_payment until webhook/verify confirms payment.
@@ -620,7 +644,6 @@ class StorefrontService {
     // ── 7. Compute split ──────────────────────────────────────────────────────
     const tierCost    = order.storefrontData.totalTierCost
       || (order.storefrontData.items || []).reduce((s, it) => s + ((it.tierPrice || 0) * (it.quantity || 1)), 0);
-    const totalMarkup = order.storefrontData.totalMarkup || 0;
 
     const paystackFeePesewas = Number(paystackData.fees) || 0;
     const { netReceived, shortfall } = calculateStorefrontSplit({ customerTotal, paystackFeePesewas, tierCost });
@@ -633,53 +656,18 @@ class StorefrontService {
       return { processed: false, reason: 'insufficient_net' };
     }
 
-    // ── 8. Credit agent wallet (atomic $inc — safe without session) ───────────
-    const updatedAgent = await User.findByIdAndUpdate(
-      agentId,
-      {
-        $inc: {
-          walletBalance: tierCost,
-          ...(totalMarkup > 0 ? { earningsBalance: totalMarkup } : {}),
-        },
-      },
-      { new: true, runValidators: false }
-    );
-    if (!updatedAgent) throw new Error(`Agent user ${agentId} not found when processing payment`);
-
-    // ── 9. Record wallet transaction ──────────────────────────────────────────
-    const walletTx = new WalletTransaction({
-      user: agentId,
-      type: 'credit',
-      amount: tierCost,
-      balanceAfter: updatedAgent.walletBalance,
-      description: `Storefront fulfillment funded — Order ${order.orderNumber}`,
-      relatedOrder: order._id,
-      status: 'completed',
-      reference,
-      metadata: {
-        paystackReference: reference,
-        transactionId: paystackData.id,
-        customerPaid: customerTotal,
-        paystackCollectionFee: paystackFeePesewas / 100,
-        netReceived,
-        channel: paystackData.channel,
-      },
-    });
-    await walletTx.save();
-
-    // ── 10. Record earnings transaction (markup only, if any) ─────────────────
-    if (totalMarkup > 0) {
-      const earnTx = new EarningsTransaction({
-        user: agentId,
-        type: 'credit',
-        amount: totalMarkup,
-        balanceAfter: updatedAgent.earningsBalance,
-        description: `Storefront profit — Order ${order.orderNumber}`,
-        relatedOrder: order._id,
-        metadata: { tierCost, customerPaid: customerTotal },
-      });
-      await earnTx.save();
-    }
+    // ── 8. Storefront profit is only credited when the order
+    // transitions to **completed** status.  We no longer touch any
+    // wallet/earnings balance during payment verification; the markup
+    // will be applied later by _creditStorefrontProfit when the order is
+    // finalised.
+    //
+    // (This deferral avoids premature earnings for orders that might be
+    // cancelled or fail during processing.)
+    //
+    // NOTE: previous implementation incremented the agent's
+    // earningsBalance here, but that logic was removed per recent
+    // requirements.
 
     // ── 11. Mark order as paid and advance to processing queue ────────────────
     order.storefrontData.paymentMethod.verified   = true;
@@ -748,6 +736,40 @@ class StorefrontService {
 
     // Not a storefront reference — caller should route elsewhere
     return { processed: false, reason: 'not_storefront_reference' };
+  }
+
+  /**
+   * Issue a refund through Paystack for a storefront order.
+   * Only works when the order has a Paystack reference stored in
+   * `storefrontData.paymentMethod.reference`.
+   * Returns whatever the Paystack service returns (promise) or null if no
+   * refund was attempted.
+   */
+  async refundPaystackOrder(orderId) {
+    const order = await Order.findById(orderId);
+    if (!order || order.orderType !== 'storefront') {
+      throw new Error('Order not found or not a storefront order');
+    }
+
+    const pm = order.storefrontData?.paymentMethod;
+    if (!pm || pm.type !== 'paystack') {
+      return null; // nothing to refund
+    }
+
+    const reference = pm.reference;
+    if (!reference) {
+      throw new Error('No Paystack reference available on order');
+    }
+
+    const ps = (await import('./paystackService.js')).default;
+    // paystackService should expose a refundTransaction/refund method
+    if (typeof ps.refundTransaction === 'function') {
+      return ps.refundTransaction(reference);
+    } else if (typeof ps.refund === 'function') {
+      return ps.refund(reference);
+    } else {
+      throw new Error('Paystack service does not support refunds');
+    }
   }
 
   // =========================================================================
@@ -901,7 +923,17 @@ class StorefrontService {
           _id: null,
           totalOrders:        { $sum: 1 },
           totalRevenue:       { $sum: '$total' },
-          totalProfit:        { $sum: '$storefrontData.totalMarkup' },
+          // profit from completed orders only (matches earnings behaviour)
+          totalProfit:        {
+            $sum: { $cond: [{ $eq: ['$status', 'completed'] }, '$storefrontData.totalMarkup', 0] }
+          },
+          // extra fields for reporting/pagination
+          pendingProfit:      {
+            $sum: { $cond: [{ $eq: ['$status', 'pending'] }, '$storefrontData.totalMarkup', 0] }
+          },
+          confirmedProfit:    {
+            $sum: { $cond: [{ $eq: ['$status', 'confirmed'] }, '$storefrontData.totalMarkup', 0] }
+          },
           averageOrderValue:  { $avg: '$total' },
           completedOrders:    { $sum: { $cond: [{ $eq: ['$status', 'completed']  }, 1, 0] } },
           confirmedOrders:    { $sum: { $cond: [{ $eq: ['$status', 'confirmed']  }, 1, 0] } },
@@ -914,6 +946,7 @@ class StorefrontService {
     return result || {
       totalOrders: 0, totalRevenue: 0, totalProfit: 0, averageOrderValue: 0,
       completedOrders: 0, confirmedOrders: 0, pendingOrders: 0, cancelledOrders: 0,
+      pendingProfit: 0, confirmedProfit: 0,
     };
   }
 

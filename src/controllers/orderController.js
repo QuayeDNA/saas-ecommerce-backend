@@ -512,6 +512,21 @@ class OrderController {
         { new: true }
       );
 
+      // If storefront order moved to completed, credit profit via the service helper
+      if (
+        updatedOrder &&
+        updatedOrder.orderType === 'storefront' &&
+        status === 'completed'
+      ) {
+        try {
+          await orderService._creditStorefrontProfit(updatedOrder);
+        } catch (err) {
+          logger.error(
+            `[OrderController] failed to credit storefront profit after manual status update for order ${updatedOrder._id}: ${err.message}`
+          );
+        }
+      }
+
       // REFUND WALLET IF ORDER MARKED AS FAILED (wallet was already deducted at creation)
       if (status === "failed" && updatedOrder.paymentStatus === "paid") {
         try {

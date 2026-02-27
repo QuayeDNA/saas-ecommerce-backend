@@ -11,12 +11,41 @@ import settingsService from './settingsService.js';
 // constants removed; values come from settings
 
 class PayoutService {
-  async requestPayout(userId, amount, destination) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
+  // helper that attempts a mongodb transaction and gracefully falls back to
+  // non-transactional execution if the server isn't a replica set (e.g. local
+  // development).  Mirrors orderService.executeWithTransaction.
+  async withTransaction(operation) {
     try {
-      const user = await User.findById(userId).session(session);
+      const session = await mongoose.startSession();
+      try {
+        session.startTransaction();
+        const result = await operation(session);
+        await session.commitTransaction();
+        session.endSession();
+        return result;
+      } catch (opErr) {
+        // abort if possible then rethrow
+        try {
+          if (session.transaction && session.transaction.state === 'TRANSACTION_STARTED') {
+            await session.abortTransaction();
+          }
+        } catch (abortErr) {
+          logger.warn('[Payout] failed to abort transaction', { message: abortErr.message });
+        }
+        session.endSession();
+        throw opErr;
+      }
+    } catch (startErr) {
+      // transactions not supported (standalone) - warn and run without session
+      logger.warn('[Payout] transactions unavailable, running without session', { message: startErr.message });
+      return await operation(null);
+    }
+  }
+
+  async requestPayout(userId, amount, destination) {
+    return await this.withTransaction(async (session) => {
+      const queryOpts = session ? { session } : undefined;
+      const user = await User.findById(userId, null, queryOpts);
       if (!user) throw new Error('User not found');
 
       const balance = Number(user.earningsBalance) || 0;
@@ -36,7 +65,7 @@ class PayoutService {
       const existingPending = await PayoutRequest.findOne({
         user: userId,
         status: 'pending',
-      }).session(session);
+      }, null, queryOpts);
 
       if (existingPending) {
         throw new Error('You have a pending payout request. Please wait for it to be processed.');
@@ -50,10 +79,11 @@ class PayoutService {
         destination,
         requestedAt: new Date(),
       });
-      await payout.save({ session });
-
-      await session.commitTransaction();
-      session.endSession();
+      if (session) {
+        await payout.save({ session });
+      } else {
+        await payout.save();
+      }
 
       logger.info('[Payout] Request created', { userId, amount, payoutId: payout._id });
 
@@ -73,19 +103,18 @@ class PayoutService {
       }
 
       return payout;
-    } catch (err) {
-      await session.abortTransaction();
-      session.endSession();
-      throw err;
-    }
+    });
   }
 
   async approvePayout(payoutId, adminId, transferReference = null) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
-    try {
-      const payout = await PayoutRequest.findById(payoutId).populate('user').session(session);
+    return await this.withTransaction(async (session) => {
+      const queryOpts = session ? { session } : undefined;
+      let payout;
+      if (session) {
+        payout = await PayoutRequest.findById(payoutId).populate('user').session(session);
+      } else {
+        payout = await PayoutRequest.findById(payoutId).populate('user');
+      }
       if (!payout) throw new Error('Payout not found');
       if (payout.status !== 'pending') {
         throw new Error(`Payout is already ${payout.status}`);
@@ -98,22 +127,28 @@ class PayoutService {
       }
 
       user.earningsBalance = balance - payout.amount;
-      await user.save({ session, validateBeforeSave: false });
+      if (session) {
+        await user.save({ session, validateBeforeSave: false });
+      } else {
+        await user.save({ validateBeforeSave: false });
+      }
 
-      await EarningsTransaction.create(
-        [
-          {
-            user: user._id,
-            type: 'payout',
-            amount: -payout.amount,
-            balanceAfter: user.earningsBalance,
-            description: `Payout request #${payout._id}`,
-            relatedPayout: payout._id,
-            metadata: { destination: payout.destination },
-          },
-        ],
-        { session }
-      );
+      const txData = [
+        {
+          user: user._id,
+          type: 'payout',
+          amount: -payout.amount,
+          balanceAfter: user.earningsBalance,
+          description: `Payout request #${payout._id}`,
+          relatedPayout: payout._id,
+          metadata: { destination: payout.destination },
+        },
+      ];
+      if (session) {
+        await EarningsTransaction.create(txData, { session });
+      } else {
+        await EarningsTransaction.create(txData);
+      }
 
       payout.status = 'approved';
       payout.reviewedBy = adminId;
@@ -125,10 +160,11 @@ class PayoutService {
         payout.paystackTransfer = payout.paystackTransfer || {};
         payout.paystackTransfer.transferReference = transferReference;
       }
-      await payout.save({ session });
-
-      await session.commitTransaction();
-      session.endSession();
+      if (session) {
+        await payout.save({ session });
+      } else {
+        await payout.save();
+      }
 
       logger.info('[Payout] Approved', { payoutId, userId: user._id, amount: payout.amount });
 
@@ -145,11 +181,7 @@ class PayoutService {
       }
 
       return payout;
-    } catch (err) {
-      await session.abortTransaction();
-      session.endSession();
-      throw err;
-    }
+    });
   }
 
   async rejectPayout(payoutId, adminId, rejectionReason) {

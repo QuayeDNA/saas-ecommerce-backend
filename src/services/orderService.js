@@ -2,20 +2,19 @@
 import Order from "../models/Order.js";
 import Bundle from "../models/Bundle.js";
 import User from "../models/User.js";
-import WalletTransaction from "../models/WalletTransaction.js";
 import walletService from "./walletService.js";
 import notificationService from "./notificationService.js";
 import pushNotificationService from "./pushNotificationService.js";
 import duplicateOrderPreventionService from "./duplicateOrderPreventionService.js";
 import commissionService from "./commissionService.js";
 import websocketService from "./websocketService.js";
+import AgentStorefront from "../models/AgentStorefront.js";
+import storefrontService from "./storefrontService.js";
+import EarningsTransaction from "../models/EarningsTransaction.js";
 import mongoose from "mongoose";
 import logger from "../utils/logger.js";
 import { parseBulkOrderRow } from "../utils/parseBulkOrderRow.js";
-import {
-  saveOrderWithRetry,
-  isDuplicateKeyError,
-} from "../utils/orderSaveHelper.js";
+import { saveOrderWithRetry } from "../utils/orderSaveHelper.js";
 import { isBusinessUser } from "../utils/userTypeHelpers.js";
 import { getPriceForUserType } from "../utils/pricingHelpers.js";
 
@@ -1057,6 +1056,21 @@ class OrderService {
         }
       }
 
+      // credit storefront profit when a storefront order reaches completed status
+      if (
+        processedSuccessfully &&
+        order.status === "completed" &&
+        order.orderType === "storefront"
+      ) {
+        try {
+          await this._creditStorefrontProfit(order);
+        } catch (err) {
+          logger.error(
+            `Failed to credit storefront profit for order ${order._id}: ${err.message}`
+          );
+        }
+      }
+
       // Send notification for order processing
       try {
         const orderCreator = await User.findById(order.createdBy);
@@ -1659,12 +1673,58 @@ class OrderService {
     };
   }
 
+
+  /**
+   * Internal helper used by controller and processing logic.
+   * Credits the agent's earningsBalance with the markup for a
+   * completed storefront order.  The operation is idempotent and
+   * will bail out if the profit has already been applied.
+   *
+   * @param {import('mongoose').Document} order  Mongoose order document
+   */
+  async _creditStorefrontProfit(order) {
+    if (!order || order.orderType !== 'storefront') return;
+    if (order.status !== 'completed') return;
+
+    // avoid double-crediting
+    if (order.metadata && order.metadata.profitCredited) return;
+
+    const totalMarkup =
+      (order.storefrontData && order.storefrontData.totalMarkup) || 0;
+    if (totalMarkup <= 0) return;
+
+    const storefront = await AgentStorefront.findById(
+      order.storefrontData.storefrontId
+    );
+    if (!storefront) return;
+
+    const agentId = storefront.agentId;
+    const updatedAgent = await User.findByIdAndUpdate(
+      agentId,
+      { $inc: { earningsBalance: totalMarkup } },
+      { new: true, runValidators: false }
+    );
+
+    if (updatedAgent) {
+      await EarningsTransaction.create({
+        user: agentId,
+        type: 'credit',
+        amount: totalMarkup,
+        balanceAfter: updatedAgent.earningsBalance,
+        description: `Storefront profit — Order ${order.orderNumber}`,
+        relatedOrder: order._id,
+      });
+    }
+
+    order.metadata = order.metadata || {};
+    order.metadata.profitCredited = true;
+    await order.save().catch(() => {}); // best-effort update
+  }
+
   // Cancel order
   async cancelOrder(orderId, tenantId, userId, reason) {
     // Execute the main transaction
     const result = await this.executeWithTransaction(async (session) => {
-      // For super admins (tenantId is null), don't filter by tenant
-      // For regular users, filter by their tenant
       const query = tenantId ? { _id: orderId, tenantId } : { _id: orderId };
 
       const order = session
@@ -1675,12 +1735,10 @@ class OrderService {
         throw new Error("Order not found");
       }
 
-      // Allow cancellation of pending, confirmed, and draft orders
       if (!["pending", "confirmed", "draft"].includes(order.status)) {
         throw new Error("Order cannot be cancelled in current status");
       }
 
-      // For draft orders, permanently delete instead of just cancelling
       if (order.status === "draft") {
         if (session) {
           await Order.deleteOne({ _id: orderId }).session(session);
@@ -1699,30 +1757,29 @@ class OrderService {
         };
       }
 
-      // REFUND WALLET for cancelled orders (if payment was made)
+      // Several flows: generic wallet refund for normal orders, and
+      // storefront-specific reversal (agent debit + optional Paystack refund).
       let refundAmount = 0;
-      let refundTransaction = null;
+      // refundTransaction was previously used to capture wallet credit output but
+      // the value is never consumed. removing to silence lint warning.
 
-      if (
-        order.paymentStatus === "paid" &&
-        order.paymentMethod === "wallet" &&
-        order.total > 0
-      ) {
+      const isStorefront = order.orderType === 'storefront';
+
+      if (!isStorefront &&
+          order.paymentStatus === "paid" &&
+          order.paymentMethod === "wallet" &&
+          order.total > 0) {
         try {
           refundAmount = order.total;
-
-          // Get the order creator for notification
           const orderCreator = await User.findById(order.createdBy);
           if (!orderCreator) {
             throw new Error("Order creator not found");
           }
-
-          // Refund the amount to the user's wallet
-          refundTransaction = await walletService.creditWallet(
+          await walletService.creditWallet(
             order.createdBy.toString(),
             refundAmount,
             `Refund for cancelled order ${order.orderNumber}`,
-            userId, // approvedBy
+            userId,
             {
               orderId: order._id.toString(),
               orderNumber: order.orderNumber,
@@ -1730,19 +1787,20 @@ class OrderService {
               cancelledBy: userId,
             }
           );
-
-          logger.info(
-            `✅ Refunded GH₵${refundAmount.toFixed(2)} for cancelled order ${
-              order.orderNumber
-            } to user ${order.createdBy}`
-          );
+          logger.info(`✅ Refunded GH₵${refundAmount.toFixed(2)} for cancelled order ${order.orderNumber} to user ${order.createdBy}`);
         } catch (refundError) {
-          logger.error(
-            `Failed to process wallet refund for order ${order.orderNumber}: ${refundError.message}`
-          );
-          throw new Error(
-            `Order cancellation failed: Unable to process refund - ${refundError.message}`
-          );
+          logger.error(`Failed to process wallet refund for order ${order.orderNumber}: ${refundError.message}`);
+          throw new Error(`Order cancellation failed: Unable to process refund - ${refundError.message}`);
+        }
+      }
+
+      // storefront orders no longer modify the wallet at all; only handle
+      // optional refund via Paystack if the customer paid that way.
+      if (isStorefront && order.storefrontData.paymentMethod?.type === 'paystack') {
+        try {
+          await storefrontService.refundPaystackOrder(order._id);
+        } catch (err) {
+          logger.warn(`Paystack refund failed for cancelled order ${order.orderNumber}: ${err.message}`);
         }
       }
 
@@ -1776,7 +1834,6 @@ class OrderService {
         canceller: userId,
         isDraft: false,
         refundAmount,
-        refundTransaction,
       };
     });
 
@@ -1788,7 +1845,6 @@ class OrderService {
         canceller,
         isDraft,
         refundAmount,
-        refundTransaction,
       } = result;
 
       if (isDraft) {
