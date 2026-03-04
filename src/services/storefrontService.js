@@ -1156,6 +1156,114 @@ class StorefrontService {
       autoApproveStorefronts: settings.autoApproveStorefronts || false,
     };
   }
+
+  // =========================================================================
+  // Public Order Tracking
+  // =========================================================================
+
+  /**
+   * GET /:businessName/orders/track?ref=<orderId|storefront_orderId>
+   * Public — returns sanitised order status only (no pricing or agent data).
+   */
+  async trackPublicOrder(businessName, rawRef) {
+    const orderId = rawRef.startsWith('storefront_') ? rawRef.slice('storefront_'.length) : rawRef;
+    if (!/^[a-f\d]{24}$/i.test(orderId)) throw new Error('Invalid order reference format');
+
+    const storefront = await AgentStorefront.findOne({ businessName }).lean();
+    if (!storefront) throw new Error('Store not found');
+
+    const order = await Order.findOne({
+      _id: orderId,
+      orderType: 'storefront',
+      'storefrontData.storefrontId': storefront._id,
+    }).lean();
+    if (!order) throw new Error('Order not found');
+
+    const sf  = order.storefrontData || {};
+    const pm  = sf.paymentMethod   || {};
+
+    const maskPhone = (p) => {
+      if (!p) return '';
+      const d = p.replace(/\D/g, '');
+      if (d.length < 7) return p;
+      return d.slice(0, 3) + '***' + d.slice(-3);
+    };
+
+    // normalize item processing status in case the order jumped directly to a final state
+    const items = (sf.items || []).map(item => {
+      let proc = item.processingStatus;
+      if (['completed','partially_completed'].includes(order.status)) {
+        // once the order completes we treat all children as completed as well
+        if (proc !== 'completed' && proc !== 'failed') proc = 'completed';
+      } else if (order.status === 'failed') {
+        proc = 'failed';
+      }
+      return {
+        bundleName:       item.bundleName,
+        provider:         item.provider,
+        dataVolume:       item.dataVolume,
+        dataUnit:         item.dataUnit,
+        validity:         item.validity,
+        validityUnit:     item.validityUnit,
+        quantity:         item.quantity,
+        customerPhone:    maskPhone(item.customerPhone),
+        processingStatus: proc,
+      };
+    });
+
+    // Build timeline from available timestamps
+    const timeline = [
+      { event: 'Order placed', at: order.createdAt, done: true },
+    ];
+
+    if (pm.type === 'paystack') {
+      timeline.push({
+        event: 'Payment verification',
+        at:    pm.verifiedAt || null,
+        done:  pm.verified   || false,
+      });
+    } else if (pm.type === 'mobile_money' || pm.type === 'bank_transfer') {
+      timeline.push({
+        event:   pm.type === 'mobile_money' ? 'Mobile money payment reviewed' : 'Bank transfer reviewed',
+        at:      pm.verifiedAt || null,
+        done:    pm.verified   || false,
+        pending: !(pm.verified),
+      });
+    }
+
+    if (['processing', 'completed', 'partially_completed', 'failed'].includes(order.status)) {
+      timeline.push({
+        event:  'Processing bundle delivery',
+        at:     order.processingStartedAt || null,
+        done:   ['completed', 'partially_completed'].includes(order.status),
+        failed: order.status === 'failed',
+      });
+    }
+
+    if (order.status === 'completed' || order.status === 'partially_completed') {
+      timeline.push({
+        event: order.status === 'completed' ? 'Bundle delivered' : 'Partially delivered',
+        at:    order.processingCompletedAt || order.updatedAt,
+        done:  true,
+      });
+    } else if (order.status === 'failed') {
+      timeline.push({ event: 'Delivery failed',  at: order.updatedAt, done: false, failed: true });
+    } else if (order.status === 'cancelled') {
+      timeline.push({ event: 'Order cancelled',  at: order.updatedAt, done: false, failed: true });
+    }
+
+    return {
+      orderId:        order._id,
+      orderNumber:    order.orderNumber,
+      status:         order.status,
+      paymentType:    pm.type,
+      paymentVerified: pm.verified || false,
+      items,
+      timeline,
+      createdAt:  order.createdAt,
+      updatedAt:  order.updatedAt,
+    };
+  }
 }
 
 export default new StorefrontService();

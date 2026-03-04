@@ -299,6 +299,14 @@ router.put(
 // "admin" will be incorrectly matched as business names.
 // =============================================================================
 
+// Public: Track an order by orderId or storefront_<orderId> reference
+router.get(
+  '/:businessName/orders/track',
+  validateBusinessName,
+  [query('ref').isLength({ min: 1, max: 120 }).withMessage('ref query parameter is required')],
+  storefrontController.trackPublicOrder
+);
+
 router.get('/:businessName', validateBusinessName, storefrontController.getPublicStorefront);
 
 router.post(

@@ -538,6 +538,24 @@ class StorefrontController {
       serverError(res, 'Internal server error');
     }
   }
+
+  /**
+   * GET /api/storefront/:businessName/orders/track?ref=<orderId|storefront_orderId>
+   * Public — returns sanitised order status only.
+   */
+  async trackPublicOrder(req, res) {
+    try {
+      const { businessName } = req.params;
+      const { ref } = req.query;
+      if (!ref) return res.status(400).json({ success: false, message: 'ref query parameter is required' });
+      const data = await storefrontService.trackPublicOrder(businessName, ref.trim());
+      res.json({ success: true, data });
+    } catch (err) {
+      logger.error(`[trackPublicOrder] ${err.message}`);
+      const status = ['Order not found', 'Store not found'].includes(err.message) ? 404 : 400;
+      res.status(status).json({ success: false, message: err.message });
+    }
+  }
 }
 
 export default new StorefrontController();
