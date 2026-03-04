@@ -179,6 +179,18 @@ const settingsSchema = new mongoose.Schema(
       enum: ['platform', 'agent'],
       default: 'agent',
     },
+    // Percentage the platform earns on every payout withdrawal (on top of Paystack's fixed fee)
+    platformPayoutFeePercent: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
+    // When true, agents can withdraw directly via Paystack without admin approval
+    autoPayoutEnabled: {
+      type: Boolean,
+      default: false,
+    },
   },
   {
     timestamps: true,

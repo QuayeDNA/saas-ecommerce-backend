@@ -73,6 +73,8 @@ export async function getFeeConfig() {
         bank_account: settings.paystackTransferFees?.bank_account || 8.0,
       },
       payoutFeeBearer: settings.payoutFeeBearer || 'agent',
+      platformPayoutFeePercent: settings.platformPayoutFeePercent ?? 0,
+      autoPayoutEnabled: settings.autoPayoutEnabled ?? false,
     };
   } catch {
     return {
@@ -81,6 +83,8 @@ export async function getFeeConfig() {
       delegateFeesToCustomer: true,
       paystackTransferFees: { mobile_money: 1.0, bank_account: 8.0 },
       payoutFeeBearer: 'agent',
+      platformPayoutFeePercent: 0,
+      autoPayoutEnabled: false,
     };
   }
 }

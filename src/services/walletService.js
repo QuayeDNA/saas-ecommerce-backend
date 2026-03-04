@@ -5,7 +5,7 @@ import logger from '../utils/logger.js';
 import notificationService from './notificationService.js';
 import websocketService from './websocketService.js';
 import { canHaveWallet } from '../utils/userTypeHelpers.js';
-import { initializePaystackCheckout } from '../utils/paystackHelpers.js';
+import { initializePaystackCheckout, getFeeConfig, calculateChargeWithFees } from '../utils/paystackHelpers.js';
 import paystackService from './paystackService.js';
 
 class WalletService {
@@ -248,8 +248,17 @@ class WalletService {
     await paystackService.ensureKeys().catch(() => {});
     const publicKey = paystackService.getPublicKey();
 
+    // ── Fee gross-up ────────────────────────────────────────────────────────
+    // When delegateFeesToCustomer=true the agent pays the Paystack/platform fee
+    // on top of the amount they requested. The webhook uses targetCreditAmount
+    // (the original requested amount) to credit the wallet — not data.amount
+    // (the gross charge), so the platform never absorbs the fee.
+    const feeConfig = await getFeeConfig();
+    const { chargeAmount, paystackFee, platformFee, totalFee } = calculateChargeWithFees(amount, feeConfig);
+    const targetCreditAmount = amount; // what gets credited to wallet
+    const amountPesewas = paystackService.convertToPesewas(chargeAmount);
+
     const reference = `wallet_${userId}_${Date.now()}`;
-    const amountPesewas = paystackService.convertToPesewas(amount);
 
     // Ensure a Paystack customer record exists (best-effort)
     if (user.email && user.fullName) {
@@ -261,42 +270,26 @@ class WalletService {
       }).catch((err) => logger.warn(`[WalletService] createCustomer failed for user ${userId}: ${err.message}`));
     }
 
-    const callbackUrl =
-      returnUrl ||
-      process.env.PAYSTACK_CALLBACK_URL ||
-      (process.env.NODE_ENV === 'production'
-        ? process.env.PAYSTACK_CALLBACK_URL_PROD
-        : process.env.PAYSTACK_CALLBACK_URL_DEV) ||
-      `${process.env.FRONTEND_URL || ''}/wallet/topup/callback`;
+    logger.info(`[WalletService] Paystack checkout prepared for user ${userId}, ref: ${reference}, chargeAmount: ${chargeAmount}, targetCredit: ${targetCreditAmount}`);
 
-    let authorizationUrl = null;
-    let accessCode = null;
-
-    // If secret key is available, also initialize a hosted transaction (for redirect fallback)
-    if (paystackService.isConfigured()) {
-      try {
-        const paystackData = await initializePaystackCheckout({
-          email: user.email || `${user._id}@noemail.local`,
-          amountPesewas,
-          reference,
-          callbackUrl,
-          metadata: {
-            userId: userId.toString(),
-            type: 'wallet_topup',
-            userName: user.fullName,
-          },
-        });
-        authorizationUrl = paystackData.authorization_url;
-        accessCode = paystackData.access_code;
-      } catch (err) {
-        // Inline modal can still work without a server-side init
-        logger.warn(`[WalletService] Paystack initializeTransaction failed (inline flow continues): ${err.message}`);
-      }
-    }
-
-    logger.info(`[WalletService] Paystack checkout prepared for user ${userId}, ref: ${reference}`);
-
-    return { reference, authorizationUrl, accessCode, publicKey, amount, amountPesewas };
+    // NOTE: We do NOT call Paystack's /transaction/initialize here.
+    // Server-side initialization pre-registers the reference with Paystack, which
+    // causes a "Duplicate Transaction Reference" error when the inline popup also
+    // tries to initialize client-side. Instead, the popup initializes the transaction
+    // and carries the metadata (userId, targetCreditAmount) so the webhook can
+    // credit the correct amount.
+    return {
+      reference,
+      publicKey,
+      amount,             // original requested amount (wallet credit)
+      chargeAmount,       // what Paystack charges the agent (may include fee gross-up)
+      amountPesewas,      // chargeAmount in pesewas -> what goes into PaystackPop.setup
+      targetCreditAmount,
+      paystackFee,
+      platformFee,
+      totalFee,
+      feesDelegate: feeConfig.delegateFeesToCustomer,
+    };
   }
 
   /**
@@ -348,7 +341,13 @@ class WalletService {
         throw new Error(`Paystack webhook missing userId in metadata for reference ${reference}`);
       }
 
-      const amountGhs = data.amount / 100;
+      // Credit the original requested amount if stored in metadata (fee gross-up case).
+      // Fall back to data.amount / 100 for legacy transactions.
+      // Cap at data.amount / 100 to prevent client-supplied metadata inflation.
+      const grossAmountGhs = data.amount / 100;
+      const amountGhs = metadata.targetCreditAmount
+        ? Math.min(parseFloat(metadata.targetCreditAmount), grossAmountGhs)
+        : grossAmountGhs;
 
       // ── 5. Credit the wallet (atomic increment — safe without a session) ─────
       const updatedUser = await User.findByIdAndUpdate(

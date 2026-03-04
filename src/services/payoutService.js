@@ -16,22 +16,27 @@ class PayoutService {
    * Calculate the Paystack transfer fee and net amount for a payout.
    * @param {number} amount - Gross payout amount in GHS
    * @param {'mobile_money'|'bank_account'} destinationType
-   * @returns {{ transferFee: number, netAmount: number, feeBearer: string }}
+   * @returns {{ transferFee: number, paystackFee: number, platformFee: number, netAmount: number, feeBearer: string }}
    */
   async calculateTransferFee(amount, destinationType) {
     const feeConfig = await getFeeConfig();
     const transferFees = feeConfig.paystackTransferFees || {};
-    const transferFee = destinationType === 'bank_account'
-      ? (transferFees.bank_account ?? 8.0)
-      : (transferFees.mobile_money ?? 1.0);
+    // Paystack flat transfer fee per transaction
+    const paystackFee = destinationType === 'bank_account'
+      ? (transferFees.bank_account || 8.0)
+      : (transferFees.mobile_money || 1.0);
+    // Platform's own percentage cut of the payout amount
+    const platformFeePercent = feeConfig.platformPayoutFeePercent || 0;
+    const platformFee = Math.round(amount * platformFeePercent) / 100;
+    const transferFee = Math.round((paystackFee + platformFee) * 100) / 100;
     const feeBearer = feeConfig.payoutFeeBearer || 'agent';
 
     // If agent bears fees, they receive less. If platform bears, they receive full amount.
     const netAmount = feeBearer === 'agent'
-      ? Math.max(0, amount - transferFee)
+      ? Math.max(0, Math.round((amount - transferFee) * 100) / 100)
       : amount;
 
-    return { transferFee, netAmount, feeBearer };
+    return { transferFee, paystackFee, platformFee, netAmount, feeBearer };
   }
 
   // helper that attempts a mongodb transaction and gracefully falls back to
@@ -76,8 +81,9 @@ class PayoutService {
         throw new Error(`Insufficient earnings. Available: GHS ${balance.toFixed(2)}`);
       }
 
-      // fetch configured minimums
-      const { minimumPayoutAmounts } = await settingsService.getPayoutSettings();
+      // fetch configured minimums and auto-payout flag
+      const payoutSettings = await settingsService.getPayoutSettings();
+      const { minimumPayoutAmounts, autoPayoutEnabled } = payoutSettings;
       const minPayout = destination.type === 'bank_account'
         ? minimumPayoutAmounts.bank_account
         : minimumPayoutAmounts.mobile_money;
@@ -87,7 +93,7 @@ class PayoutService {
 
       const existingPending = await PayoutRequest.findOne({
         user: userId,
-        status: 'pending',
+        status: { $in: ['pending', 'approved', 'processing'] },
       }, null, queryOpts);
 
       if (existingPending) {
@@ -97,7 +103,7 @@ class PayoutService {
       await this.validateDestination(destination, user);
 
       // Calculate transfer fee and net amount
-      const { transferFee, netAmount, feeBearer } = await this.calculateTransferFee(amount, destination.type);
+      const { transferFee, paystackFee, platformFee, netAmount, feeBearer } = await this.calculateTransferFee(amount, destination.type);
 
       const payout = new PayoutRequest({
         user: userId,
@@ -106,7 +112,7 @@ class PayoutService {
         netAmount,
         destination,
         requestedAt: new Date(),
-        metadata: { feeBearer },
+        metadata: { feeBearer, paystackFee, platformFee, autoPayoutEnabled },
       });
       if (session) {
         await payout.save({ session });
@@ -114,25 +120,77 @@ class PayoutService {
         await payout.save();
       }
 
-      logger.info('[Payout] Request created', { userId, amount, payoutId: payout._id });
+      logger.info('[Payout] Request created', { userId, amount, payoutId: payout._id, autoPayoutEnabled });
 
       try {
-        const admins = await User.find({ userType: 'super_admin', isActive: true }).select('_id');
-        for (const admin of admins) {
-          await notificationService.createInAppNotification(
-            admin._id.toString(),
-            'New Payout Request',
-            `${user.fullName} requested a payout of GHS ${amount.toFixed(2)}`,
-            'info',
-            { type: 'payout_request', payoutId: payout._id }
-          );
+        if (!autoPayoutEnabled) {
+          const admins = await User.find({ userType: 'super_admin', isActive: true }).select('_id');
+          for (const admin of admins) {
+            await notificationService.createInAppNotification(
+              admin._id.toString(),
+              'New Payout Request',
+              `${user.fullName} requested a payout of GHS ${amount.toFixed(2)}`,
+              'info',
+              { type: 'payout_request', payoutId: payout._id }
+            );
+          }
         }
       } catch (notifErr) {
         logger.warn('[Payout] Failed to notify admins', { message: notifErr.message });
       }
 
-      return payout;
+      return { payout, autoPayoutEnabled: Boolean(autoPayoutEnabled) };
     });
+  }
+
+  /**
+   * Auto-approve and immediately initiate a Paystack transfer for a payout.
+   * Used when autoPayoutEnabled = true — admin step is skipped entirely.
+   */
+  async processAutoRequestedPayout(payoutId) {
+    // Step 1: auto-approve (deducting balance)
+    const payout = await PayoutRequest.findById(payoutId).populate('user');
+    if (!payout) throw new Error('Payout not found');
+    if (payout.status !== 'pending') throw new Error(`Payout already ${payout.status}`);
+
+    // Deduct balance and mark approved in one atomic operation
+    await this.withTransaction(async (session) => {
+      const user = payout.user;
+      const balance = Number(user.earningsBalance) || 0;
+      if (balance < payout.amount) throw new Error('Insufficient earnings balance');
+
+      user.earningsBalance = balance - payout.amount;
+      const saveOpts = session ? { session, validateBeforeSave: false } : { validateBeforeSave: false };
+      await user.save(saveOpts);
+
+      const txData = [{
+        user: user._id,
+        type: 'payout',
+        amount: -payout.amount,
+        balanceAfter: user.earningsBalance,
+        description: `Auto-payout request #${payout._id}`,
+        relatedPayout: payout._id,
+        metadata: { destination: payout.destination, auto: true },
+      }];
+      if (session) {
+        await EarningsTransaction.create(txData, { session });
+      } else {
+        await EarningsTransaction.create(txData);
+      }
+
+      payout.status = 'approved';
+      payout.reviewedAt = new Date();
+      payout.processedAt = new Date();
+      payout.metadata = { ...(payout.metadata || {}), autoApproved: true };
+      if (session) {
+        await payout.save({ session });
+      } else {
+        await payout.save();
+      }
+    });
+
+    // Step 2: immediately initiate transfer
+    return await this.processPayoutAuto(payoutId);
   }
 
   async approvePayout(payoutId, adminId, transferReference = null) {
@@ -497,10 +555,12 @@ class PayoutService {
       totalWithdrawn: Math.abs(earnings[0]?.totalWithdrawn || 0),
       recentPayouts,
       transferFees: {
-        mobile_money: feeConfig.paystackTransferFees?.mobile_money ?? 1.0,
-        bank_account: feeConfig.paystackTransferFees?.bank_account ?? 8.0,
+        mobile_money: feeConfig.paystackTransferFees?.mobile_money || 1.0,
+        bank_account: feeConfig.paystackTransferFees?.bank_account || 8.0,
       },
       payoutFeeBearer: feeConfig.payoutFeeBearer || 'agent',
+      platformPayoutFeePercent: feeConfig.platformPayoutFeePercent || 0,
+      autoPayoutEnabled: payoutSettings.autoPayoutEnabled || false,
       minimumPayoutAmounts: payoutSettings.minimumPayoutAmounts,
       canRequestPayout: (Number(user.earningsBalance) || 0) >= payoutSettings.minimumPayoutAmounts.mobile_money,
     };

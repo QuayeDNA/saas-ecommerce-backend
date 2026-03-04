@@ -36,11 +36,27 @@ class PayoutController {
       if (!destination || !destination.type) {
         return res.status(400).json({ success: false, message: 'Destination (type and details) is required' });
       }
-      const payout = await payoutService.requestPayout(userId, Number(amount), destination);
+      const { payout, autoPayoutEnabled } = await payoutService.requestPayout(userId, Number(amount), destination);
+
+      // If auto-payout is enabled, immediately kick off the Paystack transfer in background
+      if (autoPayoutEnabled) {
+        // Don't await — let it run in background while we return 201 immediately
+        payoutService.processAutoRequestedPayout(payout._id.toString()).catch((err) => {
+          logger.error('[Payout] Background auto-payout failed', { payoutId: payout._id, message: err.message });
+        });
+        return res.status(201).json({
+          success: true,
+          message: 'Payout request submitted. Transfer initiated automatically — you will be notified when it completes.',
+          data: payout,
+          autoPayoutEnabled: true,
+        });
+      }
+
       return res.status(201).json({
         success: true,
         message: 'Payout request submitted. You will be notified when it is processed.',
         data: payout,
+        autoPayoutEnabled: false,
       });
     } catch (err) {
       logger.error('[Payout] requestPayout error', { message: err.message });
@@ -50,7 +66,8 @@ class PayoutController {
 
   async getPendingPayouts(req, res) {
     try {
-      const payouts = await payoutService.getPendingPayoutsForAdmin();
+      const { status } = req.query;
+      const payouts = await payoutService.getPendingPayoutsForAdmin({ status });
       return res.json({ success: true, data: payouts });
     } catch (err) {
       logger.error('[Payout] getPendingPayouts error', { message: err.message });

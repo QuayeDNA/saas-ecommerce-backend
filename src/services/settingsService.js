@@ -407,6 +407,7 @@ class SettingsService {
           mobile_money: 1.0,
           bank_account: 50.0,
         },
+        autoPayoutEnabled: settings.autoPayoutEnabled ?? false,
       };
 
       return result;
@@ -453,6 +454,8 @@ class SettingsService {
           bank_account: settings.paystackTransferFees?.bank_account ?? 8.0,
         },
         payoutFeeBearer: settings.payoutFeeBearer ?? 'agent',
+        platformPayoutFeePercent: settings.platformPayoutFeePercent ?? 0,
+        autoPayoutEnabled: settings.autoPayoutEnabled ?? false,
       };
     } catch (error) {
       logger.error(`Error getting fee settings: ${error.message}`);
@@ -480,6 +483,12 @@ class SettingsService {
     }
     if (feeSettings.payoutFeeBearer !== undefined) {
       settings.payoutFeeBearer = feeSettings.payoutFeeBearer;
+    }
+    if (feeSettings.platformPayoutFeePercent !== undefined) {
+      settings.platformPayoutFeePercent = Number(feeSettings.platformPayoutFeePercent);
+    }
+    if (feeSettings.autoPayoutEnabled !== undefined) {
+      settings.autoPayoutEnabled = Boolean(feeSettings.autoPayoutEnabled);
     }
 
     await settings.save();

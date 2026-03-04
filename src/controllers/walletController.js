@@ -136,10 +136,15 @@ class WalletController {
         message: 'Paystack checkout ready',
         data: {
           reference: result.reference,
-          authorizationUrl: result.authorizationUrl,
-          accessCode: result.accessCode,
           publicKey: result.publicKey || null,
           amount: result.amount,
+          chargeAmount: result.chargeAmount,
+          amountPesewas: result.amountPesewas,
+          targetCreditAmount: result.targetCreditAmount,
+          paystackFee: result.paystackFee,
+          platformFee: result.platformFee,
+          totalFee: result.totalFee,
+          feesDelegate: result.feesDelegate,
         },
       });
     } catch (err) {
