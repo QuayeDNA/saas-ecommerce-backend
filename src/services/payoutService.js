@@ -250,8 +250,8 @@ class PayoutService {
       throw new Error('Payout must be approved first');
     }
 
-    // Recalculate fees if not already set (handles legacy payouts)
-    if (payout.netAmount == null || payout.transferFee == null) {
+    // Recalculate fees if not already set or if transferFee is 0 (legacy/unconfigured payouts)
+    if (payout.netAmount == null || payout.transferFee == null || payout.transferFee === 0) {
       const { transferFee, netAmount, feeBearer } = await this.calculateTransferFee(
         payout.amount,
         payout.destination?.type || 'mobile_money'
@@ -299,13 +299,22 @@ class PayoutService {
       logger.info('[Payout] Transfer initiated', { payoutId, transferCode: transfer.transfer_code });
       return payout;
     } catch (err) {
+      // Save the failure reason before refunding so the original Paystack error is preserved
+      const originalError = err;
       payout.status = 'failed';
       payout.paystackTransfer = payout.paystackTransfer || {};
       payout.paystackTransfer.failureReason = err.message;
-      await payout.save();
+      try { await payout.save(); } catch (saveErr) {
+        logger.warn('[Payout] Failed to save failure status', { payoutId, message: saveErr.message });
+      }
       logger.error('[Payout] Transfer failed', { payoutId, error: err.message });
-      await this.refundFailedPayout(payout);
-      throw err;
+      try {
+        await this.refundFailedPayout(payout);
+      } catch (refundErr) {
+        // Log but don't mask the original Paystack error
+        logger.error('[Payout] Refund failed after transfer failure', { payoutId, message: refundErr.message });
+      }
+      throw originalError;
     }
   }
 
@@ -413,41 +422,33 @@ class PayoutService {
   }
 
   async refundFailedPayout(payout) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
-    try {
+    // Use withTransaction so it gracefully falls back on standalone MongoDB (no replica set)
+    return await this.withTransaction(async (session) => {
       const userId = payout.user?._id || payout.user;
       const updated = await User.findByIdAndUpdate(
         userId,
         { $inc: { earningsBalance: payout.amount } },
-        { session, new: true }
+        session ? { session, new: true } : { new: true }
       );
 
-      await EarningsTransaction.create(
-        [
-          {
-            user: userId,
-            type: 'credit',
-            amount: payout.amount,
-            balanceAfter: updated.earningsBalance,
-            description: `Refund for failed payout #${payout._id}`,
-            relatedPayout: payout._id,
-            metadata: { reason: 'transfer_failed' },
-          },
-        ],
-        { session }
-      );
+      const txData = [{
+        user: userId,
+        type: 'credit',
+        amount: payout.amount,
+        balanceAfter: updated.earningsBalance,
+        description: `Refund for failed payout #${payout._id}`,
+        relatedPayout: payout._id,
+        metadata: { reason: 'transfer_failed' },
+      }];
 
-      await session.commitTransaction();
-      session.endSession();
+      if (session) {
+        await EarningsTransaction.create(txData, { session });
+      } else {
+        await EarningsTransaction.create(txData);
+      }
+
       logger.info('[Payout] Refunded earnings', { payoutId: payout._id, amount: payout.amount });
-    } catch (err) {
-      await session.abortTransaction();
-      session.endSession();
-      logger.error('[Payout] Refund failed', { payoutId: payout._id, error: err.message });
-      throw err;
-    }
+    });
   }
 
   isValidGhanaPhone(phone) {

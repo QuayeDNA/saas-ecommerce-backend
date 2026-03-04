@@ -67,10 +67,12 @@ export async function getFeeConfig() {
       platformFeePercent: settings.platformFeePercent ?? 0,
       delegateFeesToCustomer: settings.delegateFeesToCustomer ?? true,
       paystackTransferFees: {
-        mobile_money: settings.paystackTransferFees?.mobile_money ?? 1.0,
-        bank_account: settings.paystackTransferFees?.bank_account ?? 8.0,
+        // Use || instead of ?? so a stored 0 also falls back to the sensible default.
+        // If you want truly free transfers, set payoutFeeBearer = 'platform' instead.
+        mobile_money: settings.paystackTransferFees?.mobile_money || 1.0,
+        bank_account: settings.paystackTransferFees?.bank_account || 8.0,
       },
-      payoutFeeBearer: settings.payoutFeeBearer ?? 'agent',
+      payoutFeeBearer: settings.payoutFeeBearer || 'agent',
     };
   } catch {
     return {
