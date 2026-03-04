@@ -8,7 +8,7 @@ import Settings from '../models/Settings.js';
 import walletService from './walletService.js';
 import notificationService from './notificationService.js';
 import paystackService from './paystackService.js';
-import { calculateStorefrontSplit } from '../utils/paystackHelpers.js';
+import { calculateStorefrontSplit, getFeeConfig, calculateChargeWithFees } from '../utils/paystackHelpers.js';
 import logger from '../utils/logger.js';
 import websocketService from './websocketService.js';
 
@@ -514,6 +514,30 @@ class StorefrontService {
       });
     }
 
+    // ── Fee delegation for Paystack payments ──────────────────────────────────
+    // When fees are delegated to the customer, we increase the order total so
+    // the platform receives the full base amount after Paystack deductions.
+    let chargeTotal = totalAmount; // what we'll actually charge the customer
+    let feeBreakdown = null;
+
+    if (paymentMethod.type === 'paystack') {
+      try {
+        const feeConfig = await getFeeConfig();
+        const { chargeAmount, paystackFee, platformFee, totalFee } =
+          calculateChargeWithFees(totalAmount, feeConfig);
+        chargeTotal = chargeAmount;
+        feeBreakdown = {
+          baseAmount: totalAmount,
+          paystackFee,
+          platformFee,
+          totalFee,
+          delegated: feeConfig.delegateFeesToCustomer,
+        };
+      } catch (err) {
+        logger.warn('[StorefrontService] Fee calculation failed, using base amount:', err.message);
+      }
+    }
+
     const order = new Order({
       orderType: 'storefront',
       customer: null,
@@ -542,11 +566,12 @@ class StorefrontService {
         totalMarkup,
         totalTierCost,
         items: storefrontItems,
+        ...(feeBreakdown ? { feeBreakdown } : {}),
       },
       // top-level paymentMethod mirrors storefront type so generic code can tell
       paymentMethod: paymentMethod.type === 'paystack' ? 'card' : paymentMethod.type,
       subtotal: totalAmount,
-      total: totalAmount,
+      total: chargeTotal,
       // Paystack orders are pending_payment until webhook/verify confirms payment.
       // Mobile money orders are also pending_payment — agent verifies manually.
       status: 'pending_payment',

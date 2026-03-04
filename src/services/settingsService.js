@@ -436,6 +436,56 @@ class SettingsService {
     logger.info("Payout settings updated:", payoutSettings);
     return { minimumPayoutAmounts: settings.minimumPayoutAmounts };
   }
+
+  // ---------------------------------------------------------------------------
+  // Transaction Fee Settings
+  // ---------------------------------------------------------------------------
+
+  async getFeeSettings() {
+    try {
+      const settings = await Settings.getInstance();
+      return {
+        paystackCollectionFeePercent: settings.paystackCollectionFeePercent ?? 1.95,
+        platformFeePercent: settings.platformFeePercent ?? 0,
+        delegateFeesToCustomer: settings.delegateFeesToCustomer ?? true,
+        paystackTransferFees: {
+          mobile_money: settings.paystackTransferFees?.mobile_money ?? 1.0,
+          bank_account: settings.paystackTransferFees?.bank_account ?? 8.0,
+        },
+        payoutFeeBearer: settings.payoutFeeBearer ?? 'agent',
+      };
+    } catch (error) {
+      logger.error(`Error getting fee settings: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async updateFeeSettings(feeSettings) {
+    const settings = await Settings.getInstance();
+
+    if (feeSettings.paystackCollectionFeePercent !== undefined) {
+      settings.paystackCollectionFeePercent = Number(feeSettings.paystackCollectionFeePercent);
+    }
+    if (feeSettings.platformFeePercent !== undefined) {
+      settings.platformFeePercent = Number(feeSettings.platformFeePercent);
+    }
+    if (feeSettings.delegateFeesToCustomer !== undefined) {
+      settings.delegateFeesToCustomer = Boolean(feeSettings.delegateFeesToCustomer);
+    }
+    if (feeSettings.paystackTransferFees) {
+      settings.paystackTransferFees = {
+        mobile_money: feeSettings.paystackTransferFees.mobile_money ?? settings.paystackTransferFees?.mobile_money ?? 1.0,
+        bank_account: feeSettings.paystackTransferFees.bank_account ?? settings.paystackTransferFees?.bank_account ?? 8.0,
+      };
+    }
+    if (feeSettings.payoutFeeBearer !== undefined) {
+      settings.payoutFeeBearer = feeSettings.payoutFeeBearer;
+    }
+
+    await settings.save();
+    logger.info('Fee settings updated:', feeSettings);
+    return this.getFeeSettings();
+  }
 }
 
 export default new SettingsService();

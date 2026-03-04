@@ -7,10 +7,33 @@ import paystackService from './paystackService.js';
 import notificationService from './notificationService.js';
 import logger from '../utils/logger.js';
 import settingsService from './settingsService.js';
+import { getFeeConfig } from '../utils/paystackHelpers.js';
 
 // constants removed; values come from settings
 
 class PayoutService {
+  /**
+   * Calculate the Paystack transfer fee and net amount for a payout.
+   * @param {number} amount - Gross payout amount in GHS
+   * @param {'mobile_money'|'bank_account'} destinationType
+   * @returns {{ transferFee: number, netAmount: number, feeBearer: string }}
+   */
+  async calculateTransferFee(amount, destinationType) {
+    const feeConfig = await getFeeConfig();
+    const transferFees = feeConfig.paystackTransferFees || {};
+    const transferFee = destinationType === 'bank_account'
+      ? (transferFees.bank_account ?? 8.0)
+      : (transferFees.mobile_money ?? 1.0);
+    const feeBearer = feeConfig.payoutFeeBearer || 'agent';
+
+    // If agent bears fees, they receive less. If platform bears, they receive full amount.
+    const netAmount = feeBearer === 'agent'
+      ? Math.max(0, amount - transferFee)
+      : amount;
+
+    return { transferFee, netAmount, feeBearer };
+  }
+
   // helper that attempts a mongodb transaction and gracefully falls back to
   // non-transactional execution if the server isn't a replica set (e.g. local
   // development).  Mirrors orderService.executeWithTransaction.
@@ -73,11 +96,17 @@ class PayoutService {
 
       await this.validateDestination(destination, user);
 
+      // Calculate transfer fee and net amount
+      const { transferFee, netAmount, feeBearer } = await this.calculateTransferFee(amount, destination.type);
+
       const payout = new PayoutRequest({
         user: userId,
         amount,
+        transferFee,
+        netAmount,
         destination,
         requestedAt: new Date(),
+        metadata: { feeBearer },
       });
       if (session) {
         await payout.save({ session });
@@ -221,6 +250,17 @@ class PayoutService {
       throw new Error('Payout must be approved first');
     }
 
+    // Recalculate fees if not already set (handles legacy payouts)
+    if (payout.netAmount == null || payout.transferFee == null) {
+      const { transferFee, netAmount, feeBearer } = await this.calculateTransferFee(
+        payout.amount,
+        payout.destination?.type || 'mobile_money'
+      );
+      payout.transferFee = transferFee;
+      payout.netAmount = netAmount;
+      payout.metadata = { ...payout.metadata, feeBearer };
+    }
+
     let recipientCode = payout.destination?.recipientCode;
     if (!recipientCode) {
       recipientCode = await this.createPaystackRecipient(payout);
@@ -231,11 +271,16 @@ class PayoutService {
 
     const transferRef = `payout_${payout._id}_${Date.now()}`;
 
+    // Transfer the net amount (after fee deduction if agent bears fees)
+    // Paystack charges the transfer fee on top of the transfer amount,
+    // so we send the net amount the agent should receive.
+    const transferAmountGHS = payout.netAmount;
+
     try {
       await paystackService.ensureKeys();
       const transfer = await paystackService.initiateTransfer({
         source: 'balance',
-        amount: paystackService.convertToPesewas(payout.amount),
+        amount: paystackService.convertToPesewas(transferAmountGHS),
         recipient: recipientCode,
         reference: transferRef,
         reason: `Payout for ${payout.user?.fullName || payout.userId}`,
@@ -440,14 +485,23 @@ class PayoutService {
       .limit(10)
       .lean();
 
+    // Include fee info so frontend can display estimated costs
+    const feeConfig = await getFeeConfig();
+    const payoutSettings = await settingsService.getPayoutSettings();
+
     return {
       availableBalance: Number(user.earningsBalance) || 0,
       walletBalance: Number(user.walletBalance) || 0,
       totalEarned: earnings[0]?.totalEarned || 0,
       totalWithdrawn: Math.abs(earnings[0]?.totalWithdrawn || 0),
       recentPayouts,
-      // determine based on smallest mobile money threshold since it's the lowest
-      canRequestPayout: (Number(user.earningsBalance) || 0) >= (await settingsService.getPayoutSettings()).minimumPayoutAmounts.mobile_money,
+      transferFees: {
+        mobile_money: feeConfig.paystackTransferFees?.mobile_money ?? 1.0,
+        bank_account: feeConfig.paystackTransferFees?.bank_account ?? 8.0,
+      },
+      payoutFeeBearer: feeConfig.payoutFeeBearer || 'agent',
+      minimumPayoutAmounts: payoutSettings.minimumPayoutAmounts,
+      canRequestPayout: (Number(user.earningsBalance) || 0) >= payoutSettings.minimumPayoutAmounts.mobile_money,
     };
   }
 
@@ -458,9 +512,14 @@ class PayoutService {
     return payouts;
   }
 
-  async getPendingPayoutsForAdmin() {
-    const payouts = await PayoutRequest.find({ status: 'pending' })
-      .populate('user', 'fullName email phone earningsBalance')
+  async getPendingPayoutsForAdmin(filters = {}) {
+    // By default return pending, but allow filtering for all actionable statuses
+    const statusFilter = filters.status
+      ? { status: filters.status }
+      : { status: { $in: ['pending', 'approved', 'processing'] } };
+
+    const payouts = await PayoutRequest.find(statusFilter)
+      .populate('user', 'fullName email phone earningsBalance userType')
       .sort({ requestedAt: 1 })
       .lean();
     return payouts;

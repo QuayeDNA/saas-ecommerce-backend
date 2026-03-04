@@ -282,6 +282,29 @@ class SettingsController {
       res.status(500).json({ error: "Failed to update payout settings" });
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Transaction Fee Settings
+  // ---------------------------------------------------------------------------
+  async getFeeSettings(req, res) {
+    try {
+      const settings = await settingsService.getFeeSettings();
+      res.json({ success: true, data: settings });
+    } catch (error) {
+      logger.error("Error getting fee settings:", error);
+      res.status(500).json({ success: false, error: "Failed to get fee settings" });
+    }
+  }
+
+  async updateFeeSettings(req, res) {
+    try {
+      const settings = await settingsService.updateFeeSettings(req.body);
+      res.json({ success: true, data: settings });
+    } catch (error) {
+      logger.error("Error updating fee settings:", error);
+      res.status(500).json({ success: false, error: "Failed to update fee settings" });
+    }
+  }
 }
 
 export default new SettingsController();

@@ -103,21 +103,30 @@ class StorefrontController {
           },
         });
 
+        // Build response – include fee breakdown when fees were delegated
+        const responseData = {
+          orderId:      order._id,
+          orderNumber:  order.orderNumber,
+          total:        order.total,               // amount charged (may include fees)
+          subtotal:     order.subtotal ?? order.total,  // base product price
+          status:       order.status,
+          paymentMethod: 'paystack',
+          paystack: {
+            authorizationUrl: init.authorization_url,
+            reference,
+            accessCode: init.access_code,
+          },
+        };
+
+        // Attach fee breakdown if fees were delegated to customer
+        if (order.storefrontData?.feeBreakdown) {
+          responseData.feeBreakdown = order.storefrontData.feeBreakdown;
+        }
+
         return res.status(201).json({
           success: true,
           message: 'Order created. Paystack checkout initialized.',
-          data: {
-            orderId:      order._id,
-            orderNumber:  order.orderNumber,
-            total:        order.total,
-            status:       order.status,
-            paymentMethod: 'paystack',
-            paystack: {
-              authorizationUrl: init.authorization_url,
-              reference,
-              accessCode: init.access_code,
-            },
-          },
+          data: responseData,
         });
       }
 
@@ -130,6 +139,7 @@ class StorefrontController {
           orderId:       order._id,
           orderNumber:   order.orderNumber,
           total:         order.total,
+          subtotal:      order.subtotal ?? order.total,
           status:        order.status,
           paymentMethod: orderData.paymentMethod?.type,
           instructions: 'Send the exact amount and provide your transaction reference to the store owner for verification.',

@@ -137,6 +137,48 @@ const settingsSchema = new mongoose.Schema(
         min: 0,
       },
     },
+
+    // Transaction Fee Settings
+    // Paystack's actual collection fee (for display/calculation purposes)
+    paystackCollectionFeePercent: {
+      type: Number,
+      default: 1.95,
+      min: 0,
+      max: 100,
+    },
+    // Platform surcharge percentage added on top of Paystack fee
+    platformFeePercent: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
+    // Whether to delegate total fees (paystack + platform) to the customer
+    // When true, the displayed price is increased by the fee so the platform
+    // receives the full intended amount after Paystack deductions.
+    delegateFeesToCustomer: {
+      type: Boolean,
+      default: true,
+    },
+    // Paystack transfer fees (for payout cost tracking)
+    paystackTransferFees: {
+      mobile_money: {
+        type: Number,
+        default: 1.0, // GHS 1 flat
+        min: 0,
+      },
+      bank_account: {
+        type: Number,
+        default: 8.0, // GHS 8 flat
+        min: 0,
+      },
+    },
+    // Who pays the payout transfer fee: 'platform' or 'agent'
+    payoutFeeBearer: {
+      type: String,
+      enum: ['platform', 'agent'],
+      default: 'agent',
+    },
   },
   {
     timestamps: true,
