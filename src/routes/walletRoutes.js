@@ -1,6 +1,7 @@
 // src/routes/walletRoutes.js
 import express from "express";
 import walletController from "../controllers/walletController.js";
+import payoutController from "../controllers/payoutController.js";
 import {
   authenticate,
   authorize,
@@ -11,7 +12,7 @@ import { walletValidation } from "../validators/walletValidator.js";
 
 const router = express.Router();
 
-// Routes for all authenticated users
+// ── Authenticated users ───────────────────────────────────────────────────────
 router.get("/info", authenticate, walletController.getWalletInfo);
 router.get(
   "/transactions",
@@ -20,7 +21,7 @@ router.get(
   walletController.getTransactionHistory
 );
 
-// Routes for wallet-enabled users (can request top-up)
+// ── Wallet-enabled users (agents etc.) ───────────────────────────────────────
 router.get(
   "/check-pending-topup",
   authenticate,
@@ -35,7 +36,35 @@ router.post(
   walletController.requestWalletTopUp
 );
 
-// Routes for admins/super_admins
+// Paystack: get public key for inline checkout
+router.get(
+  "/paystack/public-key",
+  authenticate,
+  walletController.getPaystackPublicKey
+);
+
+// Paystack: generate checkout config (no DB write — safe to call and abandon)
+router.post(
+  "/paystack/initiate",
+  authenticate,
+  authorizeWalletUser,
+  validate(walletValidation.paystackInitiate),
+  walletController.initiatePaystackTopUp
+);
+
+// Paystack: verify payment after inline modal callback
+router.get(
+  "/paystack/verify",
+  authenticate,
+  walletController.verifyPaystackTransaction
+);
+
+// ── Earnings & payouts ────────────────────────────────────────────────────────
+router.get("/earnings/dashboard", authenticate, payoutController.getEarningsDashboard);
+router.get("/payouts", authenticate, payoutController.getPayouts);
+router.post("/payouts/request", authenticate, payoutController.requestPayout);
+
+// ── Admin / super_admin ───────────────────────────────────────────────────────
 router.post(
   "/top-up",
   authenticate,
@@ -75,5 +104,11 @@ router.get(
   authorize("super_admin"),
   walletController.getAdminTransactions
 );
+
+// Admin payout queue
+router.get("/admin/payouts", authenticate, authorize("super_admin"), payoutController.getPendingPayouts);
+router.put("/admin/payouts/:id/approve", authenticate, authorize("super_admin"), payoutController.approvePayout);
+router.put("/admin/payouts/:id/reject", authenticate, authorize("super_admin"), payoutController.rejectPayout);
+router.post("/admin/payouts/:id/process", authenticate, authorize("super_admin"), payoutController.processPayout);
 
 export default router;

@@ -1,654 +1,385 @@
 // src/controllers/walletController.js
-import User from "../models/User.js";
-import WalletTransaction from "../models/WalletTransaction.js";
-import walletService from "../services/walletService.js";
-import websocketService from "../services/websocketService.js";
-import logger from "../utils/logger.js";
-import { isBusinessUser } from "../utils/userTypeHelpers.js";
+import User from '../models/User.js';
+import WalletTransaction from '../models/WalletTransaction.js';
+import walletService from '../services/walletService.js';
+import paystackService from '../services/paystackService.js';
+import logger from '../utils/logger.js';
+import { isBusinessUser } from '../utils/userTypeHelpers.js';
+
+// ─── Shared Helpers ───────────────────────────────────────────────────────────
+
+/**
+ * Safely populate a list of raw Mongoose documents, skipping broken references.
+ * Returns the original doc unpopulated rather than throwing.
+ */
+async function safePopulate(docs, paths) {
+  const results = [];
+  for (const doc of docs) {
+    try {
+      results.push(await doc.populate(paths));
+    } catch (err) {
+      logger.warn(`[WalletController] Population failed for doc ${doc._id}: ${err.message}`);
+      results.push(doc);
+    }
+  }
+  return results;
+}
+
+// ─── Controller ───────────────────────────────────────────────────────────────
 
 class WalletController {
-  /**
-   * Get wallet balance and recent transactions
-   */
+  // ── User-Facing ─────────────────────────────────────────────────────────────
+
   async getWalletInfo(req, res) {
     try {
-      const userId = req.user.userId;
-      // Removed excessive debug logging
-      // Get user with wallet balance
-      const user = await User.findById(userId).select("walletBalance");
-      if (!user) {
-        return res.status(404).json({
+      const { userId } = req.user;
+
+      const user = await User.findById(userId).select('walletBalance');
+      if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+      const rawTxns = await WalletTransaction.find({ user: userId }).sort({ createdAt: -1 }).limit(10);
+      const recentTransactions = await safePopulate(rawTxns, [
+        { path: 'approvedBy', select: 'fullName' },
+        { path: 'relatedOrder', select: 'orderNumber' },
+      ]);
+
+      res.json({ success: true, wallet: { balance: user.walletBalance ?? 0, recentTransactions } });
+    } catch (err) {
+      logger.error(`[getWalletInfo] ${err.message}`, { stack: err.stack });
+      res.status(500).json({ success: false, message: 'Failed to get wallet information' });
+    }
+  }
+
+  async getTransactionHistory(req, res) {
+    try {
+      const { userId } = req.user;
+      const { page = 1, limit = 20, type, startDate, endDate } = req.query;
+
+      const filter = {};
+      if (type && ['credit', 'debit'].includes(type)) filter.type = type;
+      if (startDate || endDate) {
+        filter.createdAt = {};
+        if (startDate) filter.createdAt.$gte = new Date(startDate);
+        if (endDate) filter.createdAt.$lte = new Date(endDate);
+      }
+
+      const skip = (parseInt(page) - 1) * parseInt(limit);
+      const rawTxns = await WalletTransaction.find({ user: userId, ...filter })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit));
+
+      const transactions = await safePopulate(rawTxns, [
+        { path: 'approvedBy', select: 'fullName email' },
+        { path: 'relatedOrder', select: 'orderNumber' },
+      ]);
+
+      const total = await WalletTransaction.countDocuments({ user: userId, ...filter }).catch(() => 0);
+
+      res.json({
+        success: true,
+        transactions,
+        pagination: { total, page: parseInt(page), limit: parseInt(limit), pages: Math.ceil(total / parseInt(limit)) },
+      });
+    } catch (err) {
+      logger.error(`[getTransactionHistory] ${err.message}`, { stack: err.stack });
+      res.status(500).json({ success: false, message: 'Failed to get transaction history' });
+    }
+  }
+
+  async checkPendingTopUpRequest(req, res) {
+    try {
+      const { userId } = req.user;
+      const pendingRequest = await WalletTransaction.findOne({ user: userId, type: 'credit', status: 'pending' });
+      res.json({ success: true, hasPendingRequest: Boolean(pendingRequest) });
+    } catch (err) {
+      logger.error(`[checkPendingTopUpRequest] ${err.message}`);
+      res.status(500).json({ success: false, message: 'Failed to check pending request status' });
+    }
+  }
+
+  // ── Manual Top-Up ────────────────────────────────────────────────────────────
+
+  async requestWalletTopUp(req, res) {
+    try {
+      const { userId } = req.user;
+      const { amount, description } = req.body;
+
+      const transaction = await walletService.createTopUpRequest(userId, parseFloat(amount), description);
+      res.status(201).json({ success: true, message: 'Top-up request created successfully', transaction });
+    } catch (err) {
+      logger.error(`[requestWalletTopUp] ${err.message}`);
+      res.status(err.message.includes('not found') ? 404 : 400).json({ success: false, message: err.message });
+    }
+  }
+
+  // ── Paystack (Instant) Top-Up ─────────────────────────────────────────────────
+
+  /**
+   * Returns Paystack checkout config (reference, public key, etc.) without
+   * creating any DB records. The transaction is only recorded after payment
+   * is confirmed via webhook or manual verify.
+   */
+  async initiatePaystackTopUp(req, res) {
+    try {
+      const { userId } = req.user;
+      const { amount, returnUrl } = req.body;
+
+      if (!amount || Number(amount) <= 0) {
+        return res.status(400).json({ success: false, message: 'A valid amount is required' });
+      }
+
+      const result = await walletService.initiatePaystackTopUp(userId, parseFloat(amount), returnUrl || null);
+
+      res.json({
+        success: true,
+        message: 'Paystack checkout ready',
+        data: {
+          reference: result.reference,
+          publicKey: result.publicKey || null,
+          amount: result.amount,
+          chargeAmount: result.chargeAmount,
+          amountPesewas: result.amountPesewas,
+          targetCreditAmount: result.targetCreditAmount,
+          paystackFee: result.paystackFee,
+          platformFee: result.platformFee,
+          totalFee: result.totalFee,
+          feesDelegate: result.feesDelegate,
+        },
+      });
+    } catch (err) {
+      logger.error(`[initiatePaystackTopUp] ${err.message}`);
+
+      if (err.response?.status === 401 || /401/.test(err.message)) {
+        return res.status(502).json({
           success: false,
-          message: "User not found",
+          message: 'Paystack authentication failed — please configure Paystack keys in Admin → API settings.',
         });
       }
 
-      // Get recent transactions (last 10)
-      let recentTransactions = [];
-      try {
-        // First try without population to see if the basic query works
-        let basicTransactions = await WalletTransaction.find({ user: userId })
-          .sort({ createdAt: -1 })
-          .limit(10);
-
-        // Now try to populate each transaction individually to handle any population errors
-        recentTransactions = [];
-        for (const tx of basicTransactions) {
-          try {
-            const populatedTx = await tx.populate([
-              { path: "approvedBy", select: "fullName" },
-              { path: "relatedOrder", select: "orderNumber" },
-            ]);
-            recentTransactions.push(populatedTx);
-          } catch (populateError) {
-            logger.warn(
-              `[getWalletInfo] Failed to populate recent transaction ${tx._id}: ${populateError.message}`
-            );
-            // Add the transaction without population
-            recentTransactions.push(tx);
-          }
-        }
-
-        if (!Array.isArray(recentTransactions)) {
-          recentTransactions = [];
-        }
-      } catch (txError) {
-        logger.warn(
-          `[getWalletInfo] Failed to get recent transactions: ${txError.message}`
-        );
-        logger.error(txError.stack);
-        recentTransactions = [];
-      }
-
-      res.json({
-        success: true,
-        wallet: {
-          balance: user.walletBalance || 0,
-          recentTransactions: recentTransactions,
-        },
-      });
-    } catch (error) {
-      logger.error(`Get wallet info error: ${error.message}`);
-      logger.error(error.stack);
-      res.status(500).json({
-        success: false,
-        message: "Failed to get wallet information",
-      });
+      res.status(400).json({ success: false, message: err.message });
     }
   }
 
-  /**
-   * Get transaction history with pagination
-   */
-  async getTransactionHistory(req, res) {
+  async verifyPaystackTransaction(req, res) {
     try {
-      const userId = req.user.userId;
-      const { page = 1, limit = 20, type, startDate, endDate } = req.query;
-      logger.debug(
-        `[getTransactionHistory] userId: ${userId}, page: ${page}, limit: ${limit}, type: ${type}, startDate: ${startDate}, endDate: ${endDate}`
-      );
-      // Build filter
-      const filter = {};
-      if (type && ["credit", "debit"].includes(type)) {
-        filter.type = type;
-      }
-      if (startDate || endDate) {
-        filter.createdAt = {};
-        if (startDate) {
-          filter.createdAt.$gte = new Date(startDate);
-        }
-        if (endDate) {
-          filter.createdAt.$lte = new Date(endDate);
-        }
-      }
-      // Get transactions with pagination
-      const skip = (parseInt(page) - 1) * parseInt(limit);
-      let transactions = [];
-      try {
-        // First try without population to see if the basic query works
-        let basicTransactions = await WalletTransaction.find({
-          user: userId,
-          ...filter,
-        })
-          .sort({ createdAt: -1 })
-          .skip(skip)
-          .limit(parseInt(limit));
+      const reference = req.query.reference || req.body.reference;
+      if (!reference) return res.status(400).json({ success: false, message: 'reference is required' });
 
-        logger.debug(
-          `[getTransactionHistory] Basic transactions found: ${basicTransactions.length}`
-        );
+      await paystackService.ensureKeys().catch((e) => logger.warn(`[verifyPaystackTransaction] ensureKeys failed: ${e.message}`));
 
-        // Now try to populate each transaction individually to handle any population errors
-        transactions = [];
-        for (const tx of basicTransactions) {
-          try {
-            const populatedTx = await tx.populate([
-              { path: "approvedBy", select: "fullName email" },
-              { path: "relatedOrder", select: "orderNumber" },
-            ]);
-            transactions.push(populatedTx);
-          } catch (populateError) {
-            logger.warn(
-              `[getTransactionHistory] Failed to populate transaction ${tx._id}: ${populateError.message}`
-            );
-            // Add the transaction without population
-            transactions.push(tx);
-          }
-        }
-
-        logger.debug(
-          `[getTransactionHistory] Final transactions count: ${transactions.length}`
-        );
-        if (!Array.isArray(transactions)) {
-          logger.debug(
-            `[getTransactionHistory] transactions is not an array, setting to []`
-          );
-          transactions = [];
-        }
-      } catch (txError) {
-        logger.warn(
-          `[getTransactionHistory] Failed to get transaction history: ${txError.message}`
-        );
-        logger.error(txError.stack);
-        transactions = [];
+      // Ask Paystack whether this payment actually succeeded
+      const paystackData = await paystackService.verifyTransaction(reference.toString());
+      if (!paystackData || paystackData.status !== 'success') {
+        return res.status(400).json({ success: false, message: 'Paystack transaction not successful' });
       }
-      const totalCount = await WalletTransaction.countDocuments({
-        user: userId,
-        ...filter,
-      }).catch((err) => 0);
-      logger.debug(
-        `[getTransactionHistory] Sending response: transactions.length=${transactions.length}, totalCount=${totalCount}`
-      );
-      res.json({
-        success: true,
-        transactions: transactions,
-        pagination: {
-          total: totalCount,
-          page: parseInt(page),
-          limit: parseInt(limit),
-          pages: Math.ceil(totalCount / parseInt(limit)),
-        },
-      });
-    } catch (error) {
-      logger.error(`Get transaction history error: ${error.message}`);
-      logger.error(error.stack);
-      res.status(500).json({
-        success: false,
-        message: "Failed to get transaction history",
-      });
+
+      // Check idempotency first — if already processed, return success immediately
+      const existing = await WalletTransaction.findOne({ reference: reference.toString(), status: 'completed' });
+      if (existing) {
+        return res.json({ success: true, message: 'Payment already processed — wallet is up to date' });
+      }
+
+      // Process via webhook logic (credits wallet + records transaction)
+      await walletService.processPaystackWebhook({ event: 'charge.success', data: paystackData });
+
+      res.json({ success: true, message: 'Payment verified and wallet credited' });
+    } catch (err) {
+      logger.error(`[verifyPaystackTransaction] ${err.message}`);
+      res.status(500).json({ success: false, message: err.message });
     }
   }
 
-  /**
-   * Check if user has a pending top-up request
-   */
-  async checkPendingTopUpRequest(req, res) {
+  async getPaystackPublicKey(req, res) {
     try {
-      const userId = req.user.userId;
+      await paystackService.ensureKeys().catch((e) => logger.warn(`[getPaystackPublicKey] ensureKeys failed: ${e.message}`));
 
-      // Check for existing pending top-up request
-      const pendingRequest = await WalletTransaction.findOne({
-        user: userId,
-        type: "credit",
-        status: "pending",
-      });
+      let key = paystackService.getPublicKey();
 
-      res.status(200).json({
-        success: true,
-        hasPendingRequest: !!pendingRequest,
-      });
-    } catch (error) {
-      logger.error(`Check pending top-up request error: ${error.message}`);
-      res.status(500).json({
-        success: false,
-        message: "Failed to check pending request status",
-      });
+      // Fallback: read from DB settings if key not found via service
+      if (!key) {
+        try {
+          const settingsService = (await import('../services/settingsService.js')).default;
+          const apiSettings = await settingsService.getApiSettings();
+          key = process.env.NODE_ENV === 'production'
+            ? apiSettings.paystackLivePublicKey || process.env.PAYSTACK_LIVE_PUBLIC_KEY
+            : apiSettings.paystackTestPublicKey || process.env.PAYSTACK_TEST_PUBLIC_KEY;
+        } catch (fallbackErr) {
+          logger.warn(`[getPaystackPublicKey] Settings fallback failed: ${fallbackErr.message}`);
+        }
+      }
+
+      res.set('Cache-Control', 'no-store');
+      res.json({ success: true, publicKey: key || '', configured: Boolean(paystackService.isConfigured()) });
+    } catch (err) {
+      logger.error(`[getPaystackPublicKey] ${err.message}`);
+      res.status(500).json({ success: false, message: 'Failed to get Paystack public key' });
     }
   }
 
-  /**
-   * Request wallet top-up (for agents)
-   */
-  async requestWalletTopUp(req, res) {
-    try {
-      const userId = req.user.userId;
-      const { amount, description } = req.body;
+  // ── Admin Actions ────────────────────────────────────────────────────────────
 
-      // Create top-up request
-      const transaction = await walletService.createTopUpRequest(
-        userId,
-        parseFloat(amount),
-        description
-      );
-
-      res.status(201).json({
-        success: true,
-        message: "Top-up request created successfully",
-        transaction,
-      });
-    } catch (error) {
-      logger.error(`Request wallet top-up error: ${error.message}`);
-      res.status(error.message.includes("not found") ? 404 : 400).json({
-        success: false,
-        message: error.message || "Failed to create top-up request",
-      });
-    }
-  }
-
-  /**
-   * Top up a wallet (admin/super_admin only)
-   */
   async topUpWallet(req, res) {
     try {
       const adminId = req.user.userId;
       const { userId, amount, description } = req.body;
 
-      // Credit the user's wallet
       const transaction = await walletService.creditWallet(
         userId,
         parseFloat(amount),
-        description || "Wallet top-up by admin",
+        description || 'Wallet top-up by admin',
         adminId,
         { adminAction: true }
       );
 
-      // Get updated wallet info for WebSocket update
-      const user = await User.findById(userId).select("walletBalance");
-      const recentTransactions = await WalletTransaction.find({ user: userId })
-        .sort({ createdAt: -1 })
-        .limit(10)
-        .populate([
-          { path: "approvedBy", select: "fullName" },
-          { path: "relatedOrder", select: "orderNumber" },
-        ]);
-
-      // Emit WebSocket wallet update to the user with message
-      websocketService.sendToUser(userId, {
-        type: "wallet_update",
-        userId: userId,
-        balance: user.walletBalance || 0,
-        recentTransactions: recentTransactions,
-        message: `Your wallet has been credited with GH₵${amount}. New balance: GH₵${
-          user.walletBalance || 0
-        }`,
-      });
-
-      res.json({
-        success: true,
-        message: "Wallet topped up successfully",
-        transaction,
-      });
-    } catch (error) {
-      logger.error(`Top up wallet error: ${error.message}`);
-      res.status(error.message.includes("not found") ? 404 : 400).json({
-        success: false,
-        message: error.message || "Failed to top up wallet",
-      });
+      res.json({ success: true, message: 'Wallet topped up successfully', transaction });
+    } catch (err) {
+      logger.error(`[topUpWallet] ${err.message}`);
+      res.status(err.message.includes('not found') ? 404 : 400).json({ success: false, message: err.message });
     }
   }
 
-  /**
-   * Process a top-up request (approve/reject) (admin/super_admin only)
-   */
   async processTopUpRequest(req, res) {
     try {
       const adminId = req.user.userId;
       const { transactionId } = req.params;
       const { approve } = req.body;
 
-      // Process the request
-      const transaction = await walletService.processTopUpRequest(
-        transactionId,
-        !!approve,
-        adminId
-      );
-
-      // If approved, send WebSocket update to the user
-      if (approve && transaction.user) {
-        const user = await User.findById(transaction.user).select(
-          "walletBalance"
-        );
-        const recentTransactions = await WalletTransaction.find({
-          user: transaction.user,
-        })
-          .sort({ createdAt: -1 })
-          .limit(10)
-          .populate([
-            { path: "approvedBy", select: "fullName" },
-            { path: "relatedOrder", select: "orderNumber" },
-          ]);
-
-        // Emit WebSocket wallet update to the user with message
-        websocketService.sendToUser(transaction.user.toString(), {
-          type: "wallet_update",
-          userId: transaction.user.toString(),
-          balance: user.walletBalance || 0,
-          recentTransactions: recentTransactions,
-          message: `Your top-up request for GH₵${
-            transaction.amount
-          } has been approved. New balance: GH₵${user.walletBalance || 0}`,
-        });
-      }
+      const transaction = await walletService.processTopUpRequest(transactionId, Boolean(approve), adminId);
 
       res.json({
         success: true,
-        message: approve
-          ? "Top-up request approved"
-          : "Top-up request rejected",
+        message: approve ? 'Top-up request approved' : 'Top-up request rejected',
         transaction,
       });
-    } catch (error) {
-      logger.error(`Process top-up request error: ${error.message}`);
-      res.status(error.message.includes("not found") ? 404 : 400).json({
-        success: false,
-        message: error.message || "Failed to process top-up request",
-      });
+    } catch (err) {
+      logger.error(`[processTopUpRequest] ${err.message}`);
+      res.status(err.message.includes('not found') ? 404 : 400).json({ success: false, message: err.message });
     }
   }
 
-  /**
-   * Get pending top-up requests (admin/super_admin only)
-   */
   async getPendingTopUpRequests(req, res) {
     try {
       const { page = 1, limit = 20 } = req.query;
-      const userType = req.user.userType;
+      const { userType, userId } = req.user;
 
-      // Build filter based on user type
-      let filter = { status: "pending" };
+      const filter = { status: 'pending' };
 
-      // If business user (admin), only show requests from their customers
       if (isBusinessUser(userType)) {
-        const tenantId = req.user.userId;
-
-        // Get all users belonging to this tenant
-        const tenantUsers = await User.find({ tenantId }).select("_id");
-        const userIds = tenantUsers.map((user) => user._id);
-
-        filter.user = { $in: userIds };
+        const tenantUsers = await User.find({ tenantId: userId }).select('_id');
+        filter.user = { $in: tenantUsers.map((u) => u._id) };
       }
 
-      // Get pending requests with pagination
       const skip = (parseInt(page) - 1) * parseInt(limit);
-
-      const requests = await WalletTransaction.find(filter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit))
-        .populate("user", "fullName email phone userType agentCode");
-
-      const totalCount = await WalletTransaction.countDocuments(filter);
+      const [requests, total] = await Promise.all([
+        WalletTransaction.find(filter)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(parseInt(limit))
+          .populate('user', 'fullName email phone userType agentCode'),
+        WalletTransaction.countDocuments(filter),
+      ]);
 
       res.json({
         success: true,
         requests,
-        pagination: {
-          total: totalCount,
-          page: parseInt(page),
-          limit: parseInt(limit),
-          pages: Math.ceil(totalCount / parseInt(limit)),
-        },
+        pagination: { total, page: parseInt(page), limit: parseInt(limit), pages: Math.ceil(total / parseInt(limit)) },
       });
-    } catch (error) {
-      logger.error(`Get pending top-up requests error: ${error.message}`);
-      res.status(500).json({
-        success: false,
-        message: "Failed to get pending top-up requests",
-      });
+    } catch (err) {
+      logger.error(`[getPendingTopUpRequests] ${err.message}`);
+      res.status(500).json({ success: false, message: 'Failed to get pending top-up requests' });
     }
   }
 
-  /**
-   * Get wallet analytics (admin/super_admin only)
-   */
-  async getWalletAnalytics(req, res) {
-    try {
-      const userType = req.user.userType;
-      const userId = req.user.userId;
-
-      // For business users, only get analytics for their customers
-      const tenantId = isBusinessUser(userType) ? userId : null;
-
-      // Build filter
-      const filter = {};
-      const { startDate, endDate } = req.query;
-      if (startDate || endDate) {
-        filter.createdAt = {};
-        if (startDate) {
-          filter.createdAt.$gte = new Date(startDate);
-        }
-        if (endDate) {
-          filter.createdAt.$lte = new Date(endDate);
-        }
-      }
-
-      const analytics = await walletService.getWalletAnalytics(
-        tenantId,
-        filter
-      );
-
-      res.json({
-        success: true,
-        analytics,
-      });
-    } catch (error) {
-      logger.error(`Get wallet analytics error: ${error.message}`);
-      res.status(500).json({
-        success: false,
-        message: "Failed to get wallet analytics",
-      });
-    }
-  }
-
-  /**
-   * Admin: Debit a user's wallet
-   */
   async adminDebitWallet(req, res) {
     try {
       const { userId, amount, description } = req.body;
       const adminId = req.user.userId;
 
-      logger.debug(
-        `[adminDebitWallet] Admin ${adminId} debiting ${amount} from user ${userId}`
-      );
-
       if (!userId || !amount || amount <= 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid request. User ID and positive amount are required.",
-        });
+        return res.status(400).json({ success: false, message: 'User ID and a positive amount are required' });
       }
 
-      // Check if user exists
-      const user = await User.findById(userId);
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: "User not found",
-        });
-      }
-
-      // Check if user has sufficient balance
-      if (user.walletBalance < amount) {
-        return res.status(400).json({
-          success: false,
-          message: `Insufficient wallet balance. Required: GH₵${amount}, Available: GH₵${user.walletBalance}`,
-        });
-      }
-
-      // Perform debit operation
       const transaction = await walletService.debitWallet(
         userId,
         amount,
-        description || `Wallet debit by admin`,
+        description || 'Wallet debit by admin',
         null,
         { debitedBy: adminId }
       );
 
-      // Get updated user info
-      const updatedUser = await User.findById(userId).select(
-        "walletBalance fullName email"
-      );
-
-      // Send WebSocket notification to the user
-      try {
-        websocketService.sendToUser(userId, {
-          type: "wallet_update",
-          userId: userId,
-          balance: updatedUser.walletBalance,
-          message: `Your wallet has been debited by GH₵${amount}. New balance: GH₵${updatedUser.walletBalance}`,
-        });
-      } catch (wsError) {
-        logger.warn(
-          `[adminDebitWallet] Failed to send WebSocket notification: ${wsError.message}`
-        );
-      }
-
-      logger.info(
-        `[adminDebitWallet] Successfully debited ${amount} from user ${userId}. New balance: ${updatedUser.walletBalance}`
-      );
-
+      const updatedUser = await User.findById(userId).select('walletBalance fullName email');
       res.json({
         success: true,
         message: `Successfully debited GH₵${amount} from ${updatedUser.fullName}'s wallet`,
-        transaction: transaction,
+        transaction,
         user: updatedUser,
       });
-    } catch (error) {
-      logger.error(`[adminDebitWallet] Error: ${error.message}`);
-      res.status(500).json({
-        success: false,
-        message: error.message || "Failed to debit wallet",
-      });
+    } catch (err) {
+      logger.error(`[adminDebitWallet] ${err.message}`);
+      const status = err.message.includes('not found') ? 404 : err.message.includes('Insufficient') ? 400 : 500;
+      res.status(status).json({ success: false, message: err.message });
     }
   }
 
-  /**
-   * Get all wallet transactions performed by admin (super_admin only)
-   */
+  async getWalletAnalytics(req, res) {
+    try {
+      const { userType, userId } = req.user;
+      const tenantId = isBusinessUser(userType) ? userId : null;
+
+      const filter = {};
+      const { startDate, endDate } = req.query;
+      if (startDate) filter.createdAt = { ...filter.createdAt, $gte: new Date(startDate) };
+      if (endDate) filter.createdAt = { ...filter.createdAt, $lte: new Date(endDate) };
+
+      const analytics = await walletService.getWalletAnalytics(tenantId, filter);
+      res.json({ success: true, analytics });
+    } catch (err) {
+      logger.error(`[getWalletAnalytics] ${err.message}`);
+      res.status(500).json({ success: false, message: 'Failed to get wallet analytics' });
+    }
+  }
+
   async getAdminTransactions(req, res) {
     try {
       const adminId = req.user.userId;
-      const {
-        page = 1,
-        limit = 20,
-        type,
-        startDate,
-        endDate,
-        userId,
-      } = req.query;
+      const { page = 1, limit = 20, type, startDate, endDate, userId } = req.query;
 
-      logger.debug(
-        `[getAdminTransactions] Admin ${adminId} fetching transactions: page=${page}, limit=${limit}, type=${type}, startDate=${startDate}, endDate=${endDate}, userId=${userId}`
-      );
-
-      // Build filter - find transactions where admin was involved
       const filter = {
         $or: [
-          { approvedBy: adminId }, // Transactions approved by this admin (top-ups from requests)
-          { "metadata.debitedBy": adminId }, // Transactions debited by this admin
-          { "metadata.adminAction": true, approvedBy: adminId }, // Direct admin credits
+          { approvedBy: adminId },
+          { 'metadata.debitedBy': adminId },
+          { 'metadata.adminAction': true, approvedBy: adminId },
+          { 'metadata.paystack': { $exists: true } },
         ],
       };
 
-      // Add additional filters
-      if (type && ["credit", "debit"].includes(type)) {
-        filter.type = type;
-      }
-
-      if (userId) {
-        filter.user = userId;
-      }
-
+      if (type && ['credit', 'debit'].includes(type)) filter.type = type;
+      if (userId) filter.user = userId;
       if (startDate || endDate) {
         filter.createdAt = {};
-        if (startDate) {
-          filter.createdAt.$gte = new Date(startDate);
-        }
-        if (endDate) {
-          filter.createdAt.$lte = new Date(endDate);
-        }
+        if (startDate) filter.createdAt.$gte = new Date(startDate);
+        if (endDate) filter.createdAt.$lte = new Date(endDate);
       }
 
-      // Get transactions with pagination
       const skip = (parseInt(page) - 1) * parseInt(limit);
+      const rawTxns = await WalletTransaction.find(filter).sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit));
+      const transactions = await safePopulate(rawTxns, [
+        { path: 'user', select: 'fullName email phone userType agentCode' },
+        { path: 'approvedBy', select: 'fullName email' },
+        { path: 'relatedOrder', select: 'orderNumber' },
+      ]);
 
-      let transactions = [];
-      try {
-        // First try without population to see if the basic query works
-        let basicTransactions = await WalletTransaction.find(filter)
-          .sort({ createdAt: -1 })
-          .skip(skip)
-          .limit(parseInt(limit));
-
-        logger.debug(
-          `[getAdminTransactions] Basic transactions found: ${basicTransactions.length}`
-        );
-
-        // Now try to populate each transaction individually to handle any population errors
-        transactions = [];
-        for (const tx of basicTransactions) {
-          try {
-            const populatedTx = await tx.populate([
-              {
-                path: "user",
-                select: "fullName email phone userType agentCode",
-              },
-              { path: "approvedBy", select: "fullName email" },
-              { path: "relatedOrder", select: "orderNumber" },
-            ]);
-            transactions.push(populatedTx);
-          } catch (populateError) {
-            logger.warn(
-              `[getAdminTransactions] Failed to populate transaction ${tx._id}: ${populateError.message}`
-            );
-            // Add the transaction without population
-            transactions.push(tx);
-          }
-        }
-
-        logger.debug(
-          `[getAdminTransactions] Final transactions count: ${transactions.length}`
-        );
-        if (!Array.isArray(transactions)) {
-          logger.debug(
-            `[getAdminTransactions] transactions is not an array, setting to []`
-          );
-          transactions = [];
-        }
-      } catch (txError) {
-        logger.warn(
-          `[getAdminTransactions] Failed to get admin transactions: ${txError.message}`
-        );
-        logger.error(txError.stack);
-        transactions = [];
-      }
-
-      const totalCount = await WalletTransaction.countDocuments(filter).catch(
-        (err) => 0
-      );
-
-      logger.debug(
-        `[getAdminTransactions] Sending response: transactions.length=${transactions.length}, totalCount=${totalCount}`
-      );
+      const total = await WalletTransaction.countDocuments(filter).catch(() => 0);
 
       res.json({
         success: true,
-        transactions: transactions,
-        pagination: {
-          total: totalCount,
-          page: parseInt(page),
-          limit: parseInt(limit),
-          pages: Math.ceil(totalCount / parseInt(limit)),
-        },
+        transactions,
+        pagination: { total, page: parseInt(page), limit: parseInt(limit), pages: Math.ceil(total / parseInt(limit)) },
       });
-    } catch (error) {
-      logger.error(`Get admin transactions error: ${error.message}`);
-      logger.error(error.stack);
-      res.status(500).json({
-        success: false,
-        message: "Failed to get admin transactions",
-      });
+    } catch (err) {
+      logger.error(`[getAdminTransactions] ${err.message}`, { stack: err.stack });
+      res.status(500).json({ success: false, message: 'Failed to get admin transactions' });
     }
   }
 }

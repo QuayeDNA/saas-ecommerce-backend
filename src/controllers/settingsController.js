@@ -133,13 +133,30 @@ class SettingsController {
 
   async updateApiSettings(req, res) {
     try {
-      const { mtnApiKey, telecelApiKey, airtelTigoApiKey, apiEndpoint } =
-        req.body;
+      const {
+        mtnApiKey,
+        telecelApiKey,
+        airtelTigoApiKey,
+        apiEndpoint,
+        // Paystack
+        paystackEnabled,
+        paystackTestPublicKey,
+        paystackTestSecretKey,
+        paystackLivePublicKey,
+        paystackLiveSecretKey,
+      } = req.body;
+
       const settings = await settingsService.updateApiSettings({
         mtnApiKey,
         telecelApiKey,
         airtelTigoApiKey,
         apiEndpoint,
+        // Paystack
+        paystackEnabled,
+        paystackTestPublicKey,
+        paystackTestSecretKey,
+        paystackLivePublicKey,
+        paystackLiveSecretKey,
       });
       res.json(settings);
     } catch (error) {
@@ -237,6 +254,55 @@ class SettingsController {
     } catch (error) {
       logger.error("Error updating wallet settings:", error);
       res.status(500).json({ error: "Failed to update wallet settings" });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Payout Settings
+  // ---------------------------------------------------------------------------
+  async getPayoutSettings(req, res) {
+    try {
+      const settings = await settingsService.getPayoutSettings();
+      res.json(settings);
+    } catch (error) {
+      logger.error("Error getting payout settings:", error);
+      res.status(500).json({ error: "Failed to get payout settings" });
+    }
+  }
+
+  async updatePayoutSettings(req, res) {
+    try {
+      const { minimumPayoutAmounts } = req.body;
+      const settings = await settingsService.updatePayoutSettings({
+        minimumPayoutAmounts,
+      });
+      res.json(settings);
+    } catch (error) {
+      logger.error("Error updating payout settings:", error);
+      res.status(500).json({ error: "Failed to update payout settings" });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Transaction Fee Settings
+  // ---------------------------------------------------------------------------
+  async getFeeSettings(req, res) {
+    try {
+      const settings = await settingsService.getFeeSettings();
+      res.json({ success: true, data: settings });
+    } catch (error) {
+      logger.error("Error getting fee settings:", error);
+      res.status(500).json({ success: false, error: "Failed to get fee settings" });
+    }
+  }
+
+  async updateFeeSettings(req, res) {
+    try {
+      const settings = await settingsService.updateFeeSettings(req.body);
+      res.json({ success: true, data: settings });
+    } catch (error) {
+      logger.error("Error updating fee settings:", error);
+      res.status(500).json({ success: false, error: "Failed to update fee settings" });
     }
   }
 }

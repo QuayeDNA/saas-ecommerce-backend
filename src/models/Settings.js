@@ -73,6 +73,28 @@ const settingsSchema = new mongoose.Schema(
       default: "https://api.telecomsaas.com",
     },
 
+    // Paystack integration settings
+    paystackEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    paystackTestSecretKey: {
+      type: String,
+      default: "",
+    },
+    paystackTestPublicKey: {
+      type: String,
+      default: "",
+    },
+    paystackLiveSecretKey: {
+      type: String,
+      default: "",
+    },
+    paystackLivePublicKey: {
+      type: String,
+      default: "",
+    },
+
     // Wallet Settings - User type-based minimum top-up amounts
     minimumTopUpAmounts: {
       agent: {
@@ -100,6 +122,74 @@ const settingsSchema = new mongoose.Schema(
         default: 10.0,
         min: 0,
       },
+    },
+
+    // Payout Settings - minimum amounts per destination type
+    minimumPayoutAmounts: {
+      mobile_money: {
+        type: Number,
+        default: 1.0,
+        min: 0,
+      },
+      bank_account: {
+        type: Number,
+        default: 50.0,
+        min: 0,
+      },
+    },
+
+    // Transaction Fee Settings
+    // Paystack's actual collection fee (for display/calculation purposes)
+    paystackCollectionFeePercent: {
+      type: Number,
+      default: 1.95,
+      min: 0,
+      max: 100,
+    },
+    // Platform surcharge percentage added on top of Paystack fee
+    platformFeePercent: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
+    // Whether to delegate total fees (paystack + platform) to the customer
+    // When true, the displayed price is increased by the fee so the platform
+    // receives the full intended amount after Paystack deductions.
+    delegateFeesToCustomer: {
+      type: Boolean,
+      default: true,
+    },
+    // Paystack transfer fees (for payout cost tracking)
+    paystackTransferFees: {
+      mobile_money: {
+        type: Number,
+        default: 1.0, // GHS 1 flat
+        min: 0,
+      },
+      bank_account: {
+        type: Number,
+        default: 8.0, // GHS 8 flat
+        min: 0,
+      },
+    },
+    // Who pays the payout transfer fee: 'platform' or 'agent'
+    payoutFeeBearer: {
+      type: String,
+      enum: ['platform', 'agent'],
+      default: 'agent',
+    },
+    // Percentage the platform earns on every payout withdrawal (on top of Paystack's fixed fee)
+    platformPayoutFeePercent: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
+    // When true, agents can withdraw directly via Paystack without admin approval
+    autoPayoutEnabled: {
+      type: Boolean,
+      default: false,
     },
   },
   {

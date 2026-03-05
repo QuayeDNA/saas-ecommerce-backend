@@ -4,10 +4,12 @@ import { body, param, query } from 'express-validator';
 import storefrontController from '../controllers/storefrontController.js';
 import { authenticate, authorizeAdmin } from '../middlewares/auth.js';
 
-
 const router = express.Router();
 
-// Validation middleware
+// =============================================================================
+// Validation helpers
+// =============================================================================
+
 const validateBusinessName = param('businessName')
   .isLength({ min: 3, max: 50 })
   .matches(/^[a-zA-Z0-9_-]+$/)
@@ -17,15 +19,16 @@ const validateStorefrontData = [
   body('businessName')
     .isLength({ min: 3, max: 50 })
     .matches(/^[a-zA-Z0-9_-]+$/)
-    .withMessage('Business name must be 3-50 characters, alphanumeric with underscores/hyphens only'),
+    .withMessage('Business name must be 3-50 alphanumeric characters'),
   body('displayName')
     .isLength({ min: 3, max: 100 })
     .withMessage('Display name must be 3-100 characters'),
   body('description')
     .optional()
     .isLength({ max: 500 })
-    .withMessage('Description must be less than 500 characters'),
+    .withMessage('Description must be under 500 characters'),
   body('contactInfo.phone')
+    .optional()
     .matches(/^[0-9+\-\s()]+$/)
     .withMessage('Invalid phone number format'),
   body('contactInfo.email')
@@ -36,38 +39,34 @@ const validateStorefrontData = [
     .isArray({ min: 1 })
     .withMessage('At least one payment method is required'),
   body('paymentMethods.*.type')
-    .isIn(['mobile_money', 'bank_transfer'])
-    .withMessage('Payment method type must be mobile_money or bank_transfer'),
-  body('paymentMethods.*')
-    .custom((paymentMethod) => {
-      if (paymentMethod.type === 'mobile_money') {
-        if (!paymentMethod.details || !paymentMethod.details.accounts) {
-          throw new Error('Mobile money payment method must include accounts array');
-        }
-        if (!Array.isArray(paymentMethod.details.accounts)) {
-          throw new Error('Mobile money accounts must be an array');
-        }
-        if (paymentMethod.details.accounts.length === 0 || paymentMethod.details.accounts.length > 2) {
-          throw new Error('Mobile money must have 1-2 accounts');
-        }
-        paymentMethod.details.accounts.forEach((account, index) => {
-          if (!account.provider || !['MTN', 'Vodafone', 'AirtelTigo'].includes(account.provider)) {
-            throw new Error(`Account ${index + 1}: Invalid or missing provider (must be MTN, Vodafone, or AirtelTigo)`);
-          }
-          if (!account.number || !/^[0-9+\-\s()]+$/.test(account.number)) {
-            throw new Error(`Account ${index + 1}: Invalid or missing phone number`);
-          }
-          if (!account.accountName || account.accountName.trim().length < 2) {
-            throw new Error(`Account ${index + 1}: Account name must be at least 2 characters`);
-          }
-        });
-      } else if (paymentMethod.type === 'bank_transfer') {
-        if (!paymentMethod.details || !paymentMethod.details.bank || !paymentMethod.details.account || !paymentMethod.details.name) {
-          throw new Error('Bank transfer payment method must include bank, account, and name');
-        }
+    .isIn(['mobile_money', 'bank_transfer', 'paystack'])
+    .withMessage('Payment method type must be mobile_money, bank_transfer, or paystack'),
+  body('paymentMethods.*').custom((pm) => {
+    if (pm.type === 'mobile_money') {
+      if (!pm.details?.accounts || !Array.isArray(pm.details.accounts)) {
+        throw new Error('Mobile money payment method must include an accounts array');
       }
-      return true;
-    }),
+      if (pm.details.accounts.length < 1 || pm.details.accounts.length > 2) {
+        throw new Error('Mobile money must have 1-2 accounts');
+      }
+      pm.details.accounts.forEach((acc, i) => {
+        if (!acc.provider || !['MTN', 'Vodafone', 'AirtelTigo'].includes(acc.provider)) {
+          throw new Error(`Account ${i + 1}: provider must be MTN, Vodafone, or AirtelTigo`);
+        }
+        if (!acc.number || !/^[0-9+\-\s()]+$/.test(acc.number)) {
+          throw new Error(`Account ${i + 1}: invalid or missing phone number`);
+        }
+        if (!acc.accountName || acc.accountName.trim().length < 2) {
+          throw new Error(`Account ${i + 1}: account name must be at least 2 characters`);
+        }
+      });
+    } else if (pm.type === 'bank_transfer') {
+      if (!pm.details?.bank || !pm.details?.account || !pm.details?.name) {
+        throw new Error('Bank transfer must include bank, account, and name');
+      }
+    }
+    return true;
+  }),
 ];
 
 const validateOrderData = [
@@ -84,25 +83,24 @@ const validateOrderData = [
     .isLength({ min: 2, max: 100 })
     .withMessage('Customer name must be 2-100 characters'),
   body('customerInfo.phone')
+    .optional()
     .matches(/^[0-9+\-\s()]+$/)
     .withMessage('Invalid phone number format'),
-  // Email is optional (not required for storefront orders)
   body('customerInfo.email')
     .optional()
     .isEmail()
     .withMessage('Invalid email format'),
   body('paymentMethod.type')
-    .isIn(['mobile_money', 'bank_transfer'])
-    .withMessage('Payment method type must be mobile_money or bank_transfer'),
+    .isIn(['mobile_money', 'bank_transfer', 'paystack'])
+    .withMessage('Payment method type must be mobile_money, bank_transfer, or paystack'),
   body('paymentMethod.reference')
     .optional()
     .isLength({ min: 1, max: 100 })
     .withMessage('Payment reference must be 1-100 characters'),
-  // Future: payment proof screenshot URL
   body('paymentMethod.paymentProofUrl')
     .optional()
     .isURL()
-    .withMessage('Invalid payment proof URL')
+    .withMessage('Invalid payment proof URL'),
 ];
 
 const validatePricingData = [
@@ -115,7 +113,7 @@ const validatePricingData = [
   body('pricing.*.customPrice')
     .optional()
     .isFloat({ min: 0 })
-    .withMessage('Custom price must be a positive number')
+    .withMessage('Custom price must be a non-negative number'),
 ];
 
 const validateBundleToggle = [
@@ -127,356 +125,195 @@ const validateBundleToggle = [
     .withMessage('Invalid bundle ID'),
   body('bundles.*.isEnabled')
     .isBoolean()
-    .withMessage('isEnabled must be a boolean')
+    .withMessage('isEnabled must be a boolean'),
 ];
 
-// =========================================================================
-// Public Routes (No Authentication Required)
-// =========================================================================
+// =============================================================================
+// ⚠️  ROUTE ORDERING IS CRITICAL
+//
+// Express matches routes top-to-bottom. ALL static path prefixes (/paystack,
+// /agent, /admin) MUST be declared BEFORE the /:businessName wildcard.
+//
+// If /:businessName comes first, Express will match "paystack", "agent", and
+// "admin" as business names and call getPublicStorefront instead of the
+// intended handler — causing silent failures (like the verify bug where the
+// order stayed in pending_payment forever).
+// =============================================================================
 
-/**
- * @route GET /api/storefront/:businessName
- * @desc Get public storefront details with available bundles
- * @access Public
- */
-router.get(
-  '/:businessName',
-  validateBusinessName,
-  storefrontController.getPublicStorefront
-);
+// =============================================================================
+// 1. Paystack verify — PUBLIC, no auth, BEFORE /:businessName
+//
+// Called by the frontend immediately after the Paystack inline modal closes.
+// Reference format: storefront_<orderId>
+//
+// The frontend MUST call this endpoint:
+//   GET /api/storefront/paystack/verify?reference=storefront_<orderId>
+//
+// NOT /api/wallet/paystack/verify — that endpoint only handles wallet top-ups.
+// =============================================================================
+router.get('/paystack/verify', storefrontController.verifyPaystackTransaction);
 
-/**
- * @route POST /api/storefront/:businessName/order
- * @desc Create a new storefront order (email optional, payment proof future)
- * @access Public
- */
-router.post(
-  '/:businessName/order',
-  validateBusinessName,
-  validateOrderData,
-  storefrontController.createStorefrontOrder
-);
+// =============================================================================
+// 2. Agent routes — authenticated, BEFORE /:businessName
+// =============================================================================
 
-// =========================================================================
-// Agent Storefront Management (Authentication Required)
-// =========================================================================
-
-/**
- * @route POST /api/storefront/agent/storefront
- * @desc Create a new storefront (auto-approve checked)
- * @access Private (Authenticated Agent)
- */
-router.post(
-  '/agent/storefront',
-  authenticate,
-  validateStorefrontData,
-  storefrontController.createStorefront
-);
-
-/**
- * @route GET /api/storefront/agent/storefront
- * @desc Get user's storefront (shows suspension message if admin-suspended)
- * @access Private (Authenticated Agent)
- */
-router.get(
-  '/agent/storefront',
-  authenticate,
-  storefrontController.getAgentStorefront
-);
-
-/**
- * @route PUT /api/storefront/agent/storefront
- * @desc Update user's storefront
- * @access Private (Authenticated Agent)
- */
+// Storefront CRUD
+router.post('/agent/storefront', authenticate, validateStorefrontData, storefrontController.createStorefront);
+router.get('/agent/storefront',  authenticate, storefrontController.getAgentStorefront);
 router.put(
   '/agent/storefront',
   authenticate,
   [
-    body('displayName')
-      .optional()
-      .isLength({ min: 3, max: 100 })
-      .withMessage('Display name must be 3-100 characters'),
-    body('description')
-      .optional()
-      .isLength({ max: 500 })
-      .withMessage('Description must be less than 500 characters'),
-    body('contactInfo.phone')
-      .optional()
-      .matches(/^[0-9+\-\s()]+$/)
-      .withMessage('Invalid phone number format'),
-    body('contactInfo.email')
-      .optional()
-      .isEmail()
-      .withMessage('Invalid email format'),
+    body('displayName').optional().isLength({ min: 3, max: 100 }).withMessage('Display name must be 3-100 characters'),
+    body('description').optional().isLength({ max: 500 }).withMessage('Description under 500 characters'),
+    body('contactInfo.phone').optional().matches(/^[0-9+\-\s()]+$/).withMessage('Invalid phone'),
+    body('contactInfo.email').optional().isEmail().withMessage('Invalid email'),
   ],
   storefrontController.updateStorefront
 );
+router.delete('/agent/storefront',            authenticate, storefrontController.deleteStorefront);
+router.put('/agent/storefront/deactivate',    authenticate, storefrontController.deactivateStorefront);
+router.put('/agent/storefront/reactivate',    authenticate, storefrontController.reactivateStorefront);
 
-/**
- * @route PUT /api/storefront/agent/storefront/deactivate
- * @desc Deactivate storefront (agent can still see, public can't)
- * @access Private (Authenticated Agent)
- */
-router.put(
-  '/agent/storefront/deactivate',
-  authenticate,
-  storefrontController.deactivateStorefront
-);
+// Paystack subaccount
+router.post('/agent/storefront/paystack/subaccount', authenticate, storefrontController.createPaystackSubaccount);
 
-/**
- * @route PUT /api/storefront/agent/storefront/reactivate
- * @desc Reactivate agent's storefront
- * @access Private (Authenticated Agent)
- */
-router.put(
-  '/agent/storefront/reactivate',
-  authenticate,
-  storefrontController.reactivateStorefront
-);
+// Bundle & Pricing
+router.get('/agent/storefront/bundles',        authenticate, storefrontController.getAvailableBundles);
+router.put('/agent/storefront/bundles/toggle', authenticate, validateBundleToggle, storefrontController.toggleBundles);
+router.get('/agent/storefront/pricing',        authenticate, storefrontController.getCurrentPricing);
+router.post('/agent/storefront/pricing',       authenticate, validatePricingData, storefrontController.setPricing);
 
-/**
- * @route DELETE /api/storefront/agent/storefront
- * @desc Delete storefront (graceful - checks active orders)
- * @access Private (Authenticated Agent)
- */
-router.delete(
-  '/agent/storefront',
-  authenticate,
-  storefrontController.deleteStorefront
-);
-
-// =========================================================================
-// Bundle & Pricing Management
-// =========================================================================
-
-/**
- * @route GET /api/storefront/agent/storefront/bundles
- * @desc Get ALL active bundles with pricing status and enabled state
- * @access Private (Authenticated Agent)
- */
-router.get(
-  '/agent/storefront/bundles',
-  authenticate,
-  storefrontController.getAvailableBundles
-);
-
-/**
- * @route PUT /api/storefront/agent/storefront/bundles/toggle
- * @desc Enable/disable bundles in agent's store
- * @access Private (Authenticated Agent)
- */
-router.put(
-  '/agent/storefront/bundles/toggle',
-  authenticate,
-  validateBundleToggle,
-  storefrontController.toggleBundles
-);
-
-/**
- * @route GET /api/storefront/agent/storefront/pricing
- * @desc Get current storefront pricing
- * @access Private (Authenticated Agent)
- */
-router.get(
-  '/agent/storefront/pricing',
-  authenticate,
-  storefrontController.getCurrentPricing
-);
-
-/**
- * @route POST /api/storefront/agent/storefront/pricing
- * @desc Set custom pricing for bundles (customPrice optional - enables at tier price if omitted)
- * @access Private (Authenticated Agent)
- */
-router.post(
-  '/agent/storefront/pricing',
-  authenticate,
-  validatePricingData,
-  storefrontController.setPricing
-);
-
-// =========================================================================
-// Order Management
-// =========================================================================
-
-/**
- * @route GET /api/storefront/agent/storefront/orders
- * @desc Get storefront orders
- * @access Private (Authenticated Agent)
- */
+// Orders
 router.get(
   '/agent/storefront/orders',
   authenticate,
   [
-    query('status')
-      .optional()
+    query('status').optional()
       .isIn(['pending', 'pending_payment', 'confirmed', 'processing', 'completed', 'cancelled', 'failed'])
       .withMessage('Invalid status'),
-    query('limit')
-      .optional()
-      .isInt({ min: 1, max: 100 })
-      .withMessage('Limit must be between 1 and 100'),
-    query('offset')
-      .optional()
-      .isInt({ min: 0 })
-      .withMessage('Offset must be a non-negative integer')
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be 1-100'),
+    query('offset').optional().isInt({ min: 0 }).withMessage('Offset must be non-negative'),
   ],
   storefrontController.getStorefrontOrders
 );
 
-/**
- * @route PUT /api/storefront/agent/storefront/orders/:orderId/verify
- * @desc Verify payment - deducts wallet, queues for admin processing (existing order flow)
- * @access Private (Authenticated Agent)
- */
+// Manual payment verification — mobile_money / bank_transfer only.
+// Paystack orders are verified automatically via GET /paystack/verify above.
 router.put(
   '/agent/storefront/orders/:orderId/verify',
   authenticate,
   [
     param('orderId').isMongoId().withMessage('Invalid order ID'),
-    body('notes').optional().isLength({ max: 500 }).withMessage('Notes must be less than 500 characters')
+    body('notes').optional().isLength({ max: 500 }).withMessage('Notes under 500 characters'),
   ],
   storefrontController.verifyPayment
 );
 
-/**
- * @route PUT /api/storefront/agent/storefront/orders/:orderId/reject
- * @desc Reject order (refunds wallet if already verified)
- * @access Private (Authenticated Agent)
- */
 router.put(
   '/agent/storefront/orders/:orderId/reject',
   authenticate,
   [
     param('orderId').isMongoId().withMessage('Invalid order ID'),
-    body('reason').isLength({ min: 1, max: 500 }).withMessage('Rejection reason is required and must be less than 500 characters')
+    body('reason').isLength({ min: 1, max: 500 }).withMessage('Rejection reason required (max 500 characters)'),
   ],
   storefrontController.rejectOrder
 );
 
-// =========================================================================
 // Analytics
-// =========================================================================
-
-/**
- * @route GET /api/storefront/agent/storefront/analytics
- * @desc Get storefront analytics
- * @access Private (Authenticated Agent)
- */
 router.get(
   '/agent/storefront/analytics',
   authenticate,
   [
-    query('startDate').optional().isISO8601().withMessage('Invalid start date format'),
-    query('endDate').optional().isISO8601().withMessage('Invalid end date format')
+    query('startDate').optional().isISO8601().withMessage('Invalid start date'),
+    query('endDate').optional().isISO8601().withMessage('Invalid end date'),
   ],
   storefrontController.getAnalytics
 );
 
-// =========================================================================
-// Admin Routes (Super Admin Only)
-// =========================================================================
+// =============================================================================
+// 3. Admin routes — super_admin only, BEFORE /:businessName
+// =============================================================================
 
-/**
- * @route GET /api/storefront/admin/storefronts
- * @desc Get all storefronts (with suspended filter)
- * @access Private (Super Admin)
- */
 router.get(
   '/admin/storefronts',
-  authenticate,
-  authorizeAdmin,
+  authenticate, authorizeAdmin,
   [
-    query('status').optional().isIn(['active', 'inactive', 'pending', 'approved', 'suspended']).withMessage('Invalid status filter'),
-    query('search').optional().isLength({ max: 100 }).withMessage('Search query too long'),
+    query('status').optional()
+      .isIn(['active', 'inactive', 'pending', 'approved', 'suspended'])
+      .withMessage('Invalid status filter'),
+    query('search').optional().isLength({ max: 100 }).withMessage('Search too long'),
     query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be 1-100'),
-    query('offset').optional().isInt({ min: 0 }).withMessage('Offset must be non-negative')
+    query('offset').optional().isInt({ min: 0 }).withMessage('Offset must be non-negative'),
   ],
   storefrontController.getAllStorefronts
 );
 
-/**
- * @route GET /api/storefront/admin/stats
- * @desc Get storefront platform stats (includes suspendedStores, autoApprove setting)
- * @access Private (Super Admin)
- */
-router.get(
-  '/admin/stats',
-  authenticate,
-  authorizeAdmin,
-  storefrontController.getAdminStats
-);
+router.get('/admin/stats', authenticate, authorizeAdmin, storefrontController.getAdminStats);
 
-/**
- * @route PUT /api/storefront/admin/storefronts/:storefrontId/approve
- * @desc Approve a storefront
- * @access Private (Super Admin)
- */
 router.put(
   '/admin/storefronts/:storefrontId/approve',
-  authenticate,
-  authorizeAdmin,
+  authenticate, authorizeAdmin,
   [param('storefrontId').isMongoId().withMessage('Invalid storefront ID')],
   storefrontController.approveStorefront
 );
 
-/**
- * @route PUT /api/storefront/admin/storefronts/:storefrontId/suspend
- * @desc Suspend a storefront (blocks agent AND public access)
- * @access Private (Super Admin)
- */
 router.put(
   '/admin/storefronts/:storefrontId/suspend',
-  authenticate,
-  authorizeAdmin,
+  authenticate, authorizeAdmin,
   [
     param('storefrontId').isMongoId().withMessage('Invalid storefront ID'),
-    body('reason').optional().isLength({ max: 500 }).withMessage('Reason must be less than 500 characters')
+    body('reason').optional().isLength({ max: 500 }).withMessage('Reason under 500 characters'),
   ],
   storefrontController.adminSuspendStorefront
 );
 
-/**
- * @route PUT /api/storefront/admin/storefronts/:storefrontId/unsuspend
- * @desc Unsuspend a storefront (lifts admin ban)
- * @access Private (Super Admin)
- */
 router.put(
   '/admin/storefronts/:storefrontId/unsuspend',
-  authenticate,
-  authorizeAdmin,
+  authenticate, authorizeAdmin,
   [param('storefrontId').isMongoId().withMessage('Invalid storefront ID')],
   storefrontController.adminUnsuspendStorefront
 );
 
-/**
- * @route DELETE /api/storefront/admin/storefronts/:storefrontId
- * @desc Delete a storefront (graceful - checks orders, notifies agent)
- * @access Private (Super Admin)
- */
 router.delete(
   '/admin/storefronts/:storefrontId',
-  authenticate,
-  authorizeAdmin,
+  authenticate, authorizeAdmin,
   [
     param('storefrontId').isMongoId().withMessage('Invalid storefront ID'),
-    body('reason').optional().isLength({ max: 500 }).withMessage('Reason must be less than 500 characters')
+    body('reason').optional().isLength({ max: 500 }).withMessage('Reason under 500 characters'),
   ],
   storefrontController.adminDeleteStorefront
 );
 
-/**
- * @route PUT /api/storefront/admin/settings/auto-approve
- * @desc Toggle auto-approve for new storefronts
- * @access Private (Super Admin)
- */
 router.put(
   '/admin/settings/auto-approve',
-  authenticate,
-  authorizeAdmin,
+  authenticate, authorizeAdmin,
   [body('enabled').isBoolean().withMessage('enabled must be a boolean')],
   storefrontController.toggleAutoApprove
+);
+
+// =============================================================================
+// 4. Public wildcard routes — /:businessName LAST
+//
+// These must come after all static prefixes above or "paystack", "agent", and
+// "admin" will be incorrectly matched as business names.
+// =============================================================================
+
+// Public: Track an order by orderId or storefront_<orderId> reference
+router.get(
+  '/:businessName/orders/track',
+  validateBusinessName,
+  [query('ref').isLength({ min: 1, max: 120 }).withMessage('ref query parameter is required')],
+  storefrontController.trackPublicOrder
+);
+
+router.get('/:businessName', validateBusinessName, storefrontController.getPublicStorefront);
+
+router.post(
+  '/:businessName/order',
+  validateBusinessName,
+  validateOrderData,
+  storefrontController.createStorefrontOrder
 );
 
 export default router;

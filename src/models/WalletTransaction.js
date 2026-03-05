@@ -41,7 +41,7 @@ const walletTransactionSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'approved', 'rejected', 'completed'],
+    enum: ['pending', 'processing', 'approved', 'rejected', 'completed'],
     default: 'completed'
   },
   metadata: {

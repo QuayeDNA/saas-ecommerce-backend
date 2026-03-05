@@ -1,0 +1,51 @@
+{
+  "createdAt": "2026-02-19T05:06:54.401Z",
+  "total": 1,
+  "docs": [
+    {
+      "_id": "698a1beb42b83620cda632aa",
+      "agentId": "689bae9e81b90ad7c5ad66d4",
+      "businessName": "testingprod",
+      "displayName": "TestingProd",
+      "contactInfo": {
+        "phone": "0592078372",
+        "email": "beyaton603@dxirl.com"
+      },
+      "paymentMethods": [
+        {
+          "type": "mobile_money",
+          "details": {
+            "accounts": [
+              {
+                "provider": "MTN",
+                "number": "0592078372",
+                "accountName": "David Quaye"
+              }
+            ]
+          },
+          "isActive": true,
+          "_id": "698a1beb42b83620cda632ab"
+        }
+      ],
+      "isActive": true,
+      "isApproved": true,
+      "approvedAt": "2026-02-09T17:39:55.683Z",
+      "suspendedByAdmin": false,
+      "settings": {
+        "theme": "blue",
+        "showContact": true
+      },
+      "createdAt": "2026-02-09T17:39:55.693Z",
+      "updatedAt": "2026-02-14T02:50:30.252Z",
+      "__v": 0,
+      "branding": {
+        "logoUrl": "https://placehold.co/600x400",
+        "bannerUrl": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRTlbs_AUIMl1VzU-tFY8X0dKQ-AJoOEh-wEw&s",
+        "tagline": "Best data deals in town",
+        "layout": "modern",
+        "showBanner": true,
+        "footerText": "My Business 2021"
+      }
+    }
+  ]
+}

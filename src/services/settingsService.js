@@ -164,6 +164,14 @@ class SettingsService {
   async getApiSettings() {
     try {
       const settings = await Settings.getInstance();
+
+      // Detect whether secret keys exist on the server (useful for admin UI)
+      const paystackTestSecretExists = Boolean(settings.paystackTestSecretKey || process.env.PAYSTACK_TEST_SECRET_KEY);
+      const paystackLiveSecretExists = Boolean(settings.paystackLiveSecretKey || process.env.PAYSTACK_LIVE_SECRET_KEY);
+
+      // In production we must NOT return secret keys to the browser. Instead expose existence flags.
+      const isProd = process.env.NODE_ENV === 'production';
+
       const result = {
         mtnApiKey: settings.mtnApiKey || process.env.MTN_API_KEY || "",
         telecelApiKey:
@@ -174,6 +182,18 @@ class SettingsService {
           settings.apiEndpoint ||
           process.env.API_ENDPOINT ||
           "https://api.telecomsaas.com",
+        // Paystack
+        paystackEnabled: settings.paystackEnabled || (process.env.PAYSTACK_ENABLED === 'true') || false,
+        paystackTestPublicKey: settings.paystackTestPublicKey || process.env.PAYSTACK_TEST_PUBLIC_KEY || "",
+        paystackLivePublicKey: settings.paystackLivePublicKey || process.env.PAYSTACK_LIVE_PUBLIC_KEY || "",
+
+        // SECRET KEYS: only include actual secret values when NOT in production.
+        paystackTestSecretKey: isProd ? undefined : (settings.paystackTestSecretKey || process.env.PAYSTACK_TEST_SECRET_KEY || ""),
+        paystackLiveSecretKey: isProd ? undefined : (settings.paystackLiveSecretKey || process.env.PAYSTACK_LIVE_SECRET_KEY || ""),
+
+        // provide boolean flags so the UI can indicate whether a secret exists without exposing it
+        paystackTestSecretExists,
+        paystackLiveSecretExists,
       };
 
       return result;
@@ -189,6 +209,14 @@ class SettingsService {
     settingsDoc.telecelApiKey = settings.telecelApiKey;
     settingsDoc.airtelTigoApiKey = settings.airtelTigoApiKey;
     settingsDoc.apiEndpoint = settings.apiEndpoint;
+
+    // Paystack settings (optional)
+    if (settings.paystackEnabled !== undefined) settingsDoc.paystackEnabled = settings.paystackEnabled;
+    if (settings.paystackTestPublicKey !== undefined) settingsDoc.paystackTestPublicKey = settings.paystackTestPublicKey;
+    if (settings.paystackTestSecretKey !== undefined) settingsDoc.paystackTestSecretKey = settings.paystackTestSecretKey;
+    if (settings.paystackLivePublicKey !== undefined) settingsDoc.paystackLivePublicKey = settings.paystackLivePublicKey;
+    if (settings.paystackLiveSecretKey !== undefined) settingsDoc.paystackLiveSecretKey = settings.paystackLiveSecretKey;
+
     await settingsDoc.save();
 
     logger.info("API settings updated:", {
@@ -196,6 +224,8 @@ class SettingsService {
       mtnApiKey: settings.mtnApiKey ? "[HIDDEN]" : "",
       telecelApiKey: settings.telecelApiKey ? "[HIDDEN]" : "",
       airtelTigoApiKey: settings.airtelTigoApiKey ? "[HIDDEN]" : "",
+      paystackTestSecretKey: settings.paystackTestSecretKey ? "[HIDDEN]" : "",
+      paystackLiveSecretKey: settings.paystackLiveSecretKey ? "[HIDDEN]" : "",
     });
     return settings;
   }
@@ -363,6 +393,107 @@ class SettingsService {
 
     logger.info("Wallet settings updated:", walletSettings);
     return { minimumTopUpAmounts: settings.minimumTopUpAmounts };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Payout Settings
+  // ---------------------------------------------------------------------------
+
+  async getPayoutSettings() {
+    try {
+      const settings = await Settings.getInstance();
+      const result = {
+        minimumPayoutAmounts: settings.minimumPayoutAmounts || {
+          mobile_money: 1.0,
+          bank_account: 50.0,
+        },
+        autoPayoutEnabled: settings.autoPayoutEnabled ?? false,
+      };
+
+      return result;
+    } catch (error) {
+      logger.error(`Error getting payout settings: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async updatePayoutSettings(payoutSettings) {
+    const settings = await Settings.getInstance();
+    if (payoutSettings.minimumPayoutAmounts) {
+      settings.minimumPayoutAmounts = {
+        mobile_money:
+          payoutSettings.minimumPayoutAmounts.mobile_money ||
+          settings.minimumPayoutAmounts?.mobile_money ||
+          1.0,
+        bank_account:
+          payoutSettings.minimumPayoutAmounts.bank_account ||
+          settings.minimumPayoutAmounts?.bank_account ||
+          50.0,
+      };
+    }
+
+    await settings.save();
+
+    logger.info("Payout settings updated:", payoutSettings);
+    return { minimumPayoutAmounts: settings.minimumPayoutAmounts };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Transaction Fee Settings
+  // ---------------------------------------------------------------------------
+
+  async getFeeSettings() {
+    try {
+      const settings = await Settings.getInstance();
+      return {
+        paystackCollectionFeePercent: settings.paystackCollectionFeePercent ?? 1.95,
+        platformFeePercent: settings.platformFeePercent ?? 0,
+        delegateFeesToCustomer: settings.delegateFeesToCustomer ?? true,
+        paystackTransferFees: {
+          mobile_money: settings.paystackTransferFees?.mobile_money ?? 1.0,
+          bank_account: settings.paystackTransferFees?.bank_account ?? 8.0,
+        },
+        payoutFeeBearer: settings.payoutFeeBearer ?? 'agent',
+        platformPayoutFeePercent: settings.platformPayoutFeePercent ?? 0,
+        autoPayoutEnabled: settings.autoPayoutEnabled ?? false,
+      };
+    } catch (error) {
+      logger.error(`Error getting fee settings: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async updateFeeSettings(feeSettings) {
+    const settings = await Settings.getInstance();
+
+    if (feeSettings.paystackCollectionFeePercent !== undefined) {
+      settings.paystackCollectionFeePercent = Number(feeSettings.paystackCollectionFeePercent);
+    }
+    if (feeSettings.platformFeePercent !== undefined) {
+      settings.platformFeePercent = Number(feeSettings.platformFeePercent);
+    }
+    if (feeSettings.delegateFeesToCustomer !== undefined) {
+      settings.delegateFeesToCustomer = Boolean(feeSettings.delegateFeesToCustomer);
+    }
+    if (feeSettings.paystackTransferFees) {
+      settings.paystackTransferFees = {
+        mobile_money: feeSettings.paystackTransferFees.mobile_money ?? settings.paystackTransferFees?.mobile_money ?? 1.0,
+        bank_account: feeSettings.paystackTransferFees.bank_account ?? settings.paystackTransferFees?.bank_account ?? 8.0,
+      };
+    }
+    if (feeSettings.payoutFeeBearer !== undefined) {
+      settings.payoutFeeBearer = feeSettings.payoutFeeBearer;
+    }
+    if (feeSettings.platformPayoutFeePercent !== undefined) {
+      settings.platformPayoutFeePercent = Number(feeSettings.platformPayoutFeePercent);
+    }
+    if (feeSettings.autoPayoutEnabled !== undefined) {
+      settings.autoPayoutEnabled = Boolean(feeSettings.autoPayoutEnabled);
+    }
+
+    await settings.save();
+    logger.info('Fee settings updated:', feeSettings);
+    return this.getFeeSettings();
   }
 }
 

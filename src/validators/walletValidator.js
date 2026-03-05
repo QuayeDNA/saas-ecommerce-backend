@@ -13,6 +13,13 @@ export const walletValidation = {
       .trim()
       .isLength({ min: 5, max: 200 }).withMessage('Description must be between 5 and 200 characters')
   ],
+
+  // Validate Paystack initiate (frontend calls POST /wallet/paystack/initiate with only amount)
+  paystackInitiate: [
+    body('amount')
+      .notEmpty().withMessage('Amount is required')
+      .isFloat({ min: 0.01 }).withMessage('Amount must be a positive number')
+  ],
   
   // Validate admin top-up
   adminTopUp: [
@@ -55,5 +62,12 @@ export const walletValidation = {
     query('endDate')
       .optional()
       .isISO8601().withMessage('End date must be a valid date')
+  ],
+
+  // Validate cancelling a Paystack checkout
+  paystackCancel: [
+    query('reference')
+      .notEmpty().withMessage('Reference is required')
+      .isString().withMessage('Reference must be a string')
   ]
 };

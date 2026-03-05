@@ -18,8 +18,20 @@ router.get("/signup-approval", settingsController.getSignupApprovalSetting);
 router.use(authenticate);
 router.get("/wallet", settingsController.getWalletSettings);
 
+// Payout Settings - also visible to any authenticated user to know minimums
+router.get("/payout", settingsController.getPayoutSettings);
+
+// Fee Settings - visible to any authenticated user (agents need it for storefront pricing)
+router.get("/fees", settingsController.getFeeSettings);
+
 // All other routes require super admin authorization
 router.use(authorize("super_admin"));
+
+// Super‑admin may update wallet or payout settings
+router.put("/wallet", settingsController.updateWalletSettings);
+router.put("/payout", settingsController.updatePayoutSettings);
+router.put("/fees", settingsController.updateFeeSettings);
+
 
 // Site Management
 router.get("/site", settingsController.getSiteSettings);
@@ -50,8 +62,5 @@ router.get("/system", settingsController.getSystemInfo);
 
 // Admin Password Change
 router.post("/admin/change-password", settingsController.changeAdminPassword);
-
-// Wallet Settings - PUT requires super admin
-router.put("/wallet", settingsController.updateWalletSettings);
 
 export default router;

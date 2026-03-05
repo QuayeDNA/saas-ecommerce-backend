@@ -5,12 +5,16 @@
   "main": "app.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node app.js",
     "dev": "nodemon app.js",
+    "dev:with-ngrok": "node scripts/dev-with-ngrok.js",
+    "ngrok:configure": "node scripts/install-ngrok-token.js",
+    "ngrok:set-paystack-urls": "node scripts/update-paystack-urls-from-ngrok.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "build": "npm install && npm install --only=dev && npm install --only=production",
-    "create-order": "node src/scripts/createOrderDocument.js"
+    "create-order": "node src/scripts/createOrderDocument.js",
+    "clear-pending-topups": "node src/scripts/clearPendingTopups.js",
+    "migrate:storefront-payments": "node src/scripts/migrateStorefrontPaymentMethodsToPaystack.js"
   },
   "keywords": [],
   "author": "",
@@ -38,6 +42,7 @@
   },
   "devDependencies": {
     "eslint": "^9.39.2",
-    "nodemon": "^3.1.10"
+    "nodemon": "^3.1.10",
+    "selfsigned": "^1.10.11"
   }
 }
