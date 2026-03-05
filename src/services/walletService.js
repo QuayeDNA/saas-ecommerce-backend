@@ -5,7 +5,7 @@ import logger from '../utils/logger.js';
 import notificationService from './notificationService.js';
 import websocketService from './websocketService.js';
 import { canHaveWallet } from '../utils/userTypeHelpers.js';
-import { initializePaystackCheckout, getFeeConfig, calculateChargeWithFees } from '../utils/paystackHelpers.js';
+import { getFeeConfig, calculateChargeWithFees } from '../utils/paystackHelpers.js';
 import paystackService from './paystackService.js';
 
 class WalletService {
@@ -257,7 +257,7 @@ class WalletService {
    * stuck in the DB to block their next attempt. The transaction is only
    * recorded inside processPaystackWebhook once payment is confirmed.
    */
-  async initiatePaystackTopUp(userId, amount, returnUrl = null) {
+  async initiatePaystackTopUp(userId, amount) {
     const user = await User.findById(userId);
     if (!user) throw new Error('User not found');
     if (amount <= 0) throw new Error('Amount must be greater than zero');

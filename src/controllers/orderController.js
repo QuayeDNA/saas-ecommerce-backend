@@ -699,8 +699,6 @@ class OrderController {
 
       // Import required models
       const Order = (await import("../models/Order.js")).default;
-      const WalletTransaction = (await import("../models/WalletTransaction.js"))
-        .default;
 
       // Calculate date range
       const endDate = new Date();
