@@ -511,7 +511,7 @@ class OrderController {
         updateData,
         { new: true }
       );
-
+      
       // If storefront order moved to completed, credit profit via the service helper
       if (
         updatedOrder &&

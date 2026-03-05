@@ -264,7 +264,8 @@ class OrderService {
           orderTotal,
           `Payment for order (${customerPhone})`,
           null, // orderId will be added after order creation
-          { orderType: "single" }
+          { orderType: "single" },
+          session // participate in outer transaction
         );
 
         // Mark as paid immediately
@@ -582,7 +583,8 @@ class OrderService {
           totalOrderAmount,
           `Bulk order payment for ${orderItems.length} items`,
           null, // orderId will be added after orders are created
-          { orderType: "bulk", itemCount: orderItems.length }
+          { orderType: "bulk", itemCount: orderItems.length },
+          session
         );
 
         logger.info(
@@ -985,7 +987,8 @@ class OrderService {
             orderTotal,
             `Refund for failed order ${order.orderNumber}`,
             order._id,
-            { orderType: order.orderType, refundReason: "order_failed" }
+            { orderType: order.orderType, refundReason: "order_failed" },
+            session
           );
 
           // Mark payment as refunded
@@ -1478,7 +1481,8 @@ class OrderService {
           orderTotal,
           `Payment for order ${order.orderNumber}`,
           order._id,
-          { orderType: order.orderType }
+          { orderType: order.orderType },
+          session
         );
 
         // Update order status to pending (ready for processing)
@@ -1614,7 +1618,8 @@ class OrderService {
         orderTotal,
         `Payment for order ${order.orderNumber}`,
         order._id,
-        { orderType: order.orderType }
+        { orderType: order.orderType },
+        session
       );
 
       // Move order from draft to pending
@@ -1785,7 +1790,8 @@ class OrderService {
               orderNumber: order.orderNumber,
               refundReason: reason || "Order cancelled",
               cancelledBy: userId,
-            }
+            },
+            session
           );
           logger.info(`✅ Refunded GH₵${refundAmount.toFixed(2)} for cancelled order ${order.orderNumber} to user ${order.createdBy}`);
         } catch (refundError) {

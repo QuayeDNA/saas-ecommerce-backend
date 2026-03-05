@@ -41,8 +41,10 @@ class WalletService {
    * Persist a completed (credit or debit) transaction record.
    * Only called after the user's balance has already been updated successfully.
    */
-  async _recordTransaction({ userId, type, amount, balanceAfter, description, approvedBy = null, relatedOrder = null, reference = null, metadata = {} }) {
-    const transaction = new WalletTransaction({
+  async _recordTransaction({ userId, type, amount, balanceAfter, description, approvedBy = null, relatedOrder = null, reference, metadata = {}, session = null }) {
+    // Build document data without forcing a null reference – let schema default
+    // generate a unique ID when no explicit reference is provided.
+    const data = {
       user: userId,
       type,
       amount,
@@ -51,10 +53,19 @@ class WalletService {
       status: 'completed',
       approvedBy,
       relatedOrder,
-      reference,
       metadata,
-    });
-    await transaction.save();
+    };
+
+    if (reference != null) {
+      data.reference = reference;
+    }
+
+    const transaction = new WalletTransaction(data);
+    if (session) {
+      await transaction.save({ session });
+    } else {
+      await transaction.save();
+    }
     return transaction;
   }
 
@@ -64,13 +75,15 @@ class WalletService {
    * Credit a user's wallet and record the transaction.
    * Only call this once payment/approval is confirmed.
    */
-  async creditWallet(userId, amount, description, approvedBy = null, metadata = {}) {
-    const user = await User.findById(userId);
+  async creditWallet(userId, amount, description, approvedBy = null, metadata = {}, session = null) {
+    const query = User.findById(userId);
+    if (session) query.session(session);
+    const user = await query;
     if (!user) throw new Error('User not found');
     if (amount <= 0) throw new Error('Credit amount must be greater than zero');
 
     user.walletBalance += amount;
-    await user.save({ validateBeforeSave: false });
+    await user.save({ validateBeforeSave: false, session });
 
     const transaction = await this._recordTransaction({
       userId,
@@ -80,6 +93,7 @@ class WalletService {
       description,
       approvedBy,
       metadata,
+      session,
     });
 
     logger.info(`[WalletService] Credited GH₵${amount} to user ${userId}. Balance: GH₵${user.walletBalance}`);
@@ -92,8 +106,10 @@ class WalletService {
    * Debit a user's wallet and record the transaction.
    * Only call this after verifying sufficient balance.
    */
-  async debitWallet(userId, amount, description, relatedOrder = null, metadata = {}) {
-    const user = await User.findById(userId);
+  async debitWallet(userId, amount, description, relatedOrder = null, metadata = {}, session = null) {
+    const query = User.findById(userId);
+    if (session) query.session(session);
+    const user = await query;
     if (!user) throw new Error('User not found');
     if (amount <= 0) throw new Error('Debit amount must be greater than zero');
     if (user.walletBalance < amount) {
@@ -101,7 +117,7 @@ class WalletService {
     }
 
     user.walletBalance -= amount;
-    await user.save({ validateBeforeSave: false });
+    await user.save({ validateBeforeSave: false, session });
 
     const transaction = await this._recordTransaction({
       userId,
@@ -111,6 +127,7 @@ class WalletService {
       description,
       relatedOrder,
       metadata,
+      session,
     });
 
     logger.info(`[WalletService] Debited GH₵${amount} from user ${userId}. Balance: GH₵${user.walletBalance}`);
