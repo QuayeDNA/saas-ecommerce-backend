@@ -27,6 +27,10 @@ const walletTransactionSchema = new mongoose.Schema({
   },
   reference: {
     type: String,
+    required: true,
+    // default generator ensures every transaction gets a unique string when the
+    // field is omitted. We intentionally avoid setting this property when
+    // callers pass `null` so the default can apply (see walletService._recordTransaction).
     default: function() {
       return `TXN${Date.now()}${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
     }
