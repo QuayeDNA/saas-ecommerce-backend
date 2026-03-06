@@ -42,8 +42,14 @@ class WalletService {
    * Only called after the user's balance has already been updated successfully.
    */
   async _recordTransaction({ userId, type, amount, balanceAfter, description, approvedBy = null, relatedOrder = null, reference, metadata = {}, session = null }) {
-    // Build document data without forcing a null reference – let schema default
-    // generate a unique ID when no explicit reference is provided.
+    // Always ensure a non-null reference so the unique index is never violated
+    // with a null value.  Explicit references (e.g. Paystack refs) are kept;
+    // missing/null ones get a generated fallback.
+    const safeReference =
+      (reference != null && reference !== '')
+        ? reference
+        : `TXN${Date.now()}${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
     const data = {
       user: userId,
       type,
@@ -54,11 +60,8 @@ class WalletService {
       approvedBy,
       relatedOrder,
       metadata,
+      reference: safeReference,
     };
-
-    if (reference != null) {
-      data.reference = reference;
-    }
 
     const transaction = new WalletTransaction(data);
     if (session) {
@@ -114,6 +117,30 @@ class WalletService {
     if (amount <= 0) throw new Error('Debit amount must be greater than zero');
     if (user.walletBalance < amount) {
       throw new Error(`Insufficient wallet balance. Required: GH₵${amount}, Available: GH₵${user.walletBalance}`);
+    }
+
+    // ── Idempotency guard ────────────────────────────────────────────────────
+    // Prevent double-debit on retry or fallback execution.
+    // Two strategies:
+    //   1. relatedOrder: the most reliable key once an order ID is known.
+    //   2. metadata.idempotencyKey: a caller-generated key for cases where
+    //      the order has not been created yet (e.g. pre-order wallet debit).
+    const idempotencyKey = metadata?.idempotencyKey;
+    if (relatedOrder || idempotencyKey) {
+      const idempotencyQuery = {
+        user: userId,
+        type: 'debit',
+        status: 'completed',
+        ...(relatedOrder ? { relatedOrder } : { 'metadata.idempotencyKey': idempotencyKey }),
+      };
+      const existingTxn = session
+        ? await WalletTransaction.findOne(idempotencyQuery).session(session)
+        : await WalletTransaction.findOne(idempotencyQuery);
+
+      if (existingTxn) {
+        logger.warn(`[WalletService] debitWallet idempotency hit — debit already recorded (txn ${existingTxn._id}). Skipping double-debit.`);
+        return existingTxn;
+      }
     }
 
     user.walletBalance -= amount;

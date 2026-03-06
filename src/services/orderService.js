@@ -103,22 +103,51 @@ class OrderService {
       return await operation(null);
     }
 
+    /**
+     * Determine whether an error represents "transactions not supported" on
+     * this MongoDB topology.  Only these errors should trigger the no-session
+     * fallback — all other errors (e.g. duplicate-key E11000, validation errors)
+     * must propagate immediately so operations are NOT re-run, which would
+     * cause double wallet debits.
+     */
+    const isTransactionUnsupportedError = (err) => {
+      if (!err) return false;
+      const msg = (err.message || "").toLowerCase();
+      const code = err.code;
+      // MongoServerError codes for transaction/replica-set not available
+      const unsupportedCodes = [
+        20,   // Transaction numbers are only allowed on a replica set member
+        263,  // Transactions are not allowed
+        61,   // Operation cannot be run in a transaction
+      ];
+      if (unsupportedCodes.includes(code)) return true;
+      return (
+        msg.includes("transaction numbers are only allowed") ||
+        msg.includes("replica set") ||
+        msg.includes("transactions are not") ||
+        msg.includes("does not support transactions") ||
+        msg.includes("cannot use a session that is not in a transaction")
+      );
+    };
+
+    let sessionStarted = false;
+    let session = null;
+
     try {
-      // Try to use transactions first
-      const session = await mongoose.startSession();
+      session = await mongoose.startSession();
+      session.startTransaction();
+      sessionStarted = true;
+      logger.debug("Transaction started successfully");
 
-      try {
-        session.startTransaction();
-        logger.debug("Transaction started successfully");
+      const result = await operation(session);
+      await session.commitTransaction();
+      logger.debug("Transaction committed successfully");
+      return result;
+    } catch (error) {
+      logger.error("Error during transaction execution:", error.message);
 
-        const result = await operation(session);
-        await session.commitTransaction();
-        logger.debug("Transaction committed successfully");
-        return result;
-      } catch (error) {
-        logger.error("Error during transaction execution:", error.message);
-
-        // More robust transaction abort handling
+      // Abort the session if it was started
+      if (session) {
         try {
           if (
             session.transaction &&
@@ -131,34 +160,39 @@ class OrderService {
           }
         } catch (abortError) {
           logger.warn("Failed to abort transaction:", abortError.message);
-          // Don't throw abort errors, just log them
         }
+      }
 
-        throw error;
-      } finally {
+      // ── CRITICAL: only fall back to no-session if the error is a
+      // "transactions not supported" topology error.  Any other error
+      // (E11000, validation, business logic) must be re-thrown immediately
+      // to prevent re-running the operation and causing double wallet debits.
+      if (!sessionStarted || isTransactionUnsupportedError(error)) {
+        logger.warn(
+          "Transaction not supported by this MongoDB topology, falling back to non-transactional execution:",
+          error.message
+        );
+        logger.warn(
+          "This is normal for standalone MongoDB instances or when transactions are not supported"
+        );
+        try {
+          return await operation(null);
+        } catch (fallbackError) {
+          logger.error("Fallback operation also failed:", fallbackError.message);
+          throw fallbackError;
+        }
+      }
+
+      // For all other errors: just re-throw — do NOT run the operation again.
+      throw error;
+    } finally {
+      if (session) {
         try {
           session.endSession();
           logger.debug("Session ended successfully");
         } catch (endError) {
           logger.warn("Failed to end session:", endError.message);
-          // Don't throw session end errors, just log them
         }
-      }
-    } catch (transactionError) {
-      // If transaction fails, fall back to non-transactional execution
-      logger.warn(
-        "Transaction failed, falling back to non-transactional execution:",
-        transactionError.message
-      );
-      logger.warn(
-        "This is normal for standalone MongoDB instances or when transactions are not supported"
-      );
-
-      try {
-        return await operation(null);
-      } catch (fallbackError) {
-        logger.error("Fallback operation also failed:", fallbackError.message);
-        throw fallbackError;
       }
     }
   }
@@ -259,12 +293,15 @@ class OrderService {
 
       if (user.walletBalance >= orderTotal) {
         // Sufficient balance - DEDUCT WALLET IMMEDIATELY
+        // idempotencyKey ties this debit to the specific order attempt so that
+        // a retry or session-fallback execution cannot debit the wallet twice.
+        const debitIdempotencyKey = `single_order_${userId}_${customerPhone}_${Date.now()}`;
         await walletService.debitWallet(
           userId.toString(),
           orderTotal,
           `Payment for order (${customerPhone})`,
           null, // orderId will be added after order creation
-          { orderType: "single" },
+          { orderType: "single", idempotencyKey: debitIdempotencyKey },
           session // participate in outer transaction
         );
 
@@ -578,12 +615,15 @@ class OrderService {
 
       // DEDUCT WALLET IMMEDIATELY for bulk orders with sufficient balance
       if (canProcessAll) {
+        // idempotencyKey ties this debit to the specific bulk attempt so that
+        // a retry or session-fallback execution cannot debit the wallet twice.
+        const bulkDebitIdempotencyKey = `bulk_order_${userId}_${orderItems.length}_${Date.now()}`;
         await walletService.debitWallet(
           userId.toString(),
           totalOrderAmount,
           `Bulk order payment for ${orderItems.length} items`,
           null, // orderId will be added after orders are created
-          { orderType: "bulk", itemCount: orderItems.length },
+          { orderType: "bulk", itemCount: orderItems.length, idempotencyKey: bulkDebitIdempotencyKey },
           session
         );
 
