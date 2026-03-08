@@ -53,8 +53,10 @@ const agentStorefrontSchema = new mongoose.Schema({
     details: {
       // Mobile Money: { accounts: [{ provider: 'MTN', number: '0241234567', accountName: 'John Doe' }, ...] } (max 2 accounts)
       // Bank Transfer: { bank: 'GCB', account: '1234567890', name: 'John Doe' } (single account for now, can be extended later if needed)
+      // Paystack: {} or { subaccountId: '...' } — details not required for platform-managed Paystack
       type: mongoose.Schema.Types.Mixed,
-      required: true
+      required: false,
+      default: {}
     },
     isActive: { 
       type: Boolean, 
