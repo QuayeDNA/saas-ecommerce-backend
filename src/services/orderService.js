@@ -1731,39 +1731,73 @@ class OrderService {
     if (!order || order.orderType !== 'storefront') return;
     if (order.status !== 'completed') return;
 
-    // avoid double-crediting
-    if (order.metadata && order.metadata.profitCredited) return;
+    // ── Primary idempotency: check EarningsTransaction record (survives even if
+    //    order.metadata.profitCredited save fails silently).
+    const existingTxn = await EarningsTransaction.findOne({
+      relatedOrder: order._id,
+      type: 'credit',
+    });
+    if (existingTxn) {
+      // Already credited — ensure the flag is set to prevent repeated checks
+      await Order.findByIdAndUpdate(order._id, { 'metadata.profitCredited': true }).catch(() => {});
+      return;
+    }
 
-    const totalMarkup =
-      (order.storefrontData && order.storefrontData.totalMarkup) || 0;
+    // ── Secondary idempotency: fast-path flag on the order document itself
+    if (order.metadata?.profitCredited) return;
+
+    const totalMarkup = Number(order.storefrontData?.totalMarkup) || 0;
     if (totalMarkup <= 0) return;
 
-    const storefront = await AgentStorefront.findById(
-      order.storefrontData.storefrontId
-    );
-    if (!storefront) return;
+    const storefront = await AgentStorefront.findById(order.storefrontData.storefrontId);
+    if (!storefront) {
+      logger.error(`[OrderService] _creditStorefrontProfit: storefront not found for order ${order._id}`);
+      return;
+    }
 
     const agentId = storefront.agentId;
+    const tierCost    = Number(order.storefrontData?.totalTierCost) || 0;
+    const customerTotal = Number(order.total) || 0;
+    const earningsRef = `SFTPROF-${order._id}`;
+
+    // ── Atomic balance increment ──────────────────────────────────────────────
     const updatedAgent = await User.findByIdAndUpdate(
       agentId,
       { $inc: { earningsBalance: totalMarkup } },
       { new: true, runValidators: false }
     );
 
-    if (updatedAgent) {
-      await EarningsTransaction.create({
-        user: agentId,
-        type: 'credit',
-        amount: totalMarkup,
-        balanceAfter: updatedAgent.earningsBalance,
-        description: `Storefront profit — Order ${order.orderNumber}`,
-        relatedOrder: order._id,
-      });
+    if (!updatedAgent) {
+      logger.error(`[OrderService] _creditStorefrontProfit: agent ${agentId} not found for order ${order._id}`);
+      return;
     }
 
-    order.metadata = order.metadata || {};
-    order.metadata.profitCredited = true;
-    await order.save().catch(() => {}); // best-effort update
+    // ── Write immutable earnings transaction ──────────────────────────────────
+    await EarningsTransaction.create({
+      user: agentId,
+      type: 'credit',
+      amount: totalMarkup,
+      balanceAfter: updatedAgent.earningsBalance,
+      description: `Storefront profit — Order ${order.orderNumber}`,
+      reference: earningsRef,
+      relatedOrder: order._id,
+      metadata: {
+        orderNumber:  order.orderNumber,
+        storefrontId: order.storefrontData.storefrontId.toString(),
+        customerTotal,
+        tierCost,
+        markup:       totalMarkup,
+        itemCount:    (order.storefrontData.items || []).length,
+        source:       'storefront_order_completed',
+      },
+    });
+
+    // ── Mark order so concurrent/retry calls skip without doubly querying ETX ─
+    await Order.findByIdAndUpdate(order._id, { 'metadata.profitCredited': true }).catch(() => {});
+
+    logger.info(
+      `[OrderService] Credited GH₵${totalMarkup.toFixed(2)} earnings to agent ${agentId} for storefront order ${order.orderNumber}. New balance: GH₵${updatedAgent.earningsBalance.toFixed(2)}`
+    );
   }
 
   // Cancel order

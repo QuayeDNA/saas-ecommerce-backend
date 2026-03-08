@@ -449,6 +449,9 @@ class SettingsService {
         paystackCollectionFeePercent: settings.paystackCollectionFeePercent ?? 1.95,
         platformFeePercent: settings.platformFeePercent ?? 0,
         delegateFeesToCustomer: settings.delegateFeesToCustomer ?? true,
+        walletTopUpCollectionFeePercent: settings.walletTopUpCollectionFeePercent ?? 1.95,
+        walletTopUpPlatformFeePercent: settings.walletTopUpPlatformFeePercent ?? 0,
+        walletTopUpDelegateFeesToCustomer: settings.walletTopUpDelegateFeesToCustomer ?? true,
         paystackTransferFees: {
           mobile_money: settings.paystackTransferFees?.mobile_money ?? 1.0,
           bank_account: settings.paystackTransferFees?.bank_account ?? 8.0,
@@ -474,6 +477,15 @@ class SettingsService {
     }
     if (feeSettings.delegateFeesToCustomer !== undefined) {
       settings.delegateFeesToCustomer = Boolean(feeSettings.delegateFeesToCustomer);
+    }
+    if (feeSettings.walletTopUpCollectionFeePercent !== undefined) {
+      settings.walletTopUpCollectionFeePercent = Number(feeSettings.walletTopUpCollectionFeePercent);
+    }
+    if (feeSettings.walletTopUpPlatformFeePercent !== undefined) {
+      settings.walletTopUpPlatformFeePercent = Number(feeSettings.walletTopUpPlatformFeePercent);
+    }
+    if (feeSettings.walletTopUpDelegateFeesToCustomer !== undefined) {
+      settings.walletTopUpDelegateFeesToCustomer = Boolean(feeSettings.walletTopUpDelegateFeesToCustomer);
     }
     if (feeSettings.paystackTransferFees) {
       settings.paystackTransferFees = {

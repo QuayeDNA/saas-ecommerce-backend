@@ -1,6 +1,6 @@
 // src/models/Order.js
 import mongoose from "mongoose";
-import { generateUniqueOrderNumber } from "../utils/orderNumberGenerator.js";
+import { generateUniqueOrderNumber, generateUniqueStorefrontOrderNumber } from "../utils/orderNumberGenerator.js";
 
 const orderItemSchema = new mongoose.Schema(
   {
@@ -296,7 +296,12 @@ orderSchema.pre("save", async function (next) {
   // Generate order number if not provided
   if (!this.orderNumber) {
     try {
-      this.orderNumber = await generateUniqueOrderNumber();
+      // Storefront orders get BAGS-XXXX prefix; all others get ORD-XXXX
+      if (this.orderType === 'storefront') {
+        this.orderNumber = await generateUniqueStorefrontOrderNumber();
+      } else {
+        this.orderNumber = await generateUniqueOrderNumber();
+      }
     } catch (error) {
       console.error("Failed to generate order number:", error);
       return next(error);

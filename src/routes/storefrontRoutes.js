@@ -231,6 +231,13 @@ router.get(
   storefrontController.getAnalytics
 );
 
+// Earnings — authoritative ledger (EarningsTransaction records)
+router.get(
+  '/agent/storefront/earnings',
+  authenticate,
+  storefrontController.getEarnings
+);
+
 // =============================================================================
 // 3. Admin routes — super_admin only, BEFORE /:businessName
 // =============================================================================
@@ -250,6 +257,13 @@ router.get(
 );
 
 router.get('/admin/stats', authenticate, authorizeAdmin, storefrontController.getAdminStats);
+
+router.get(
+  '/admin/storefronts/:storefrontId',
+  authenticate, authorizeAdmin,
+  [param('storefrontId').isMongoId().withMessage('Invalid storefront ID')],
+  storefrontController.getAdminStorefrontById
+);
 
 router.put(
   '/admin/storefronts/:storefrontId/approve',

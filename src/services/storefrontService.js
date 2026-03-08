@@ -4,6 +4,7 @@ import StorefrontPricing from '../models/StorefrontPricing.js';
 import Bundle from '../models/Bundle.js';
 import User from '../models/User.js';
 import Order from '../models/Order.js';
+import EarningsTransaction from '../models/EarningsTransaction.js';
 import Settings from '../models/Settings.js';
 import walletService from './walletService.js';
 import notificationService from './notificationService.js';
@@ -933,45 +934,95 @@ class StorefrontService {
   // =========================================================================
 
   async getStorefrontAnalytics(storefrontId, dateRange = {}) {
-    const matchQuery = { orderType: 'storefront', 'storefrontData.storefrontId': storefrontId };
-
+    // Base: only count orders where money actually changed hands
+    const paidMatch = {
+      orderType: 'storefront',
+      'storefrontData.storefrontId': storefrontId,
+      paymentStatus: 'paid',
+    };
+    // For "all time" totals we include a date filter only when provided
     if (dateRange.startDate || dateRange.endDate) {
-      matchQuery.createdAt = {};
-      if (dateRange.startDate) matchQuery.createdAt.$gte = new Date(dateRange.startDate);
-      if (dateRange.endDate)   matchQuery.createdAt.$lte = new Date(dateRange.endDate);
+      paidMatch.createdAt = {};
+      if (dateRange.startDate) paidMatch.createdAt.$gte = new Date(dateRange.startDate);
+      if (dateRange.endDate)   paidMatch.createdAt.$lte = new Date(dateRange.endDate);
     }
 
     const [result] = await Order.aggregate([
-      { $match: matchQuery },
+      { $match: paidMatch },
       {
         $group: {
           _id: null,
-          totalOrders:        { $sum: 1 },
-          totalRevenue:       { $sum: '$total' },
-          // profit from completed orders only (matches earnings behaviour)
-          totalProfit:        {
+          totalOrders:       { $sum: 1 },
+          // Gross revenue = what customers paid (paid orders only)
+          totalRevenue:      { $sum: '$total' },
+          // Cost to fulfil = tier cost of completed orders (already paid from wallet)
+          totalCost: {
+            $sum: { $cond: [{ $eq: ['$status', 'completed'] }, '$storefrontData.totalTierCost', 0] }
+          },
+          // Net profit = markup of completed orders only (the earned amount)
+          totalProfit: {
             $sum: { $cond: [{ $eq: ['$status', 'completed'] }, '$storefrontData.totalMarkup', 0] }
           },
-          // extra fields for reporting/pagination
-          pendingProfit:      {
+          // Potential markup locked in in-flight orders  
+          pendingProfit: {
             $sum: { $cond: [{ $eq: ['$status', 'pending'] }, '$storefrontData.totalMarkup', 0] }
           },
-          confirmedProfit:    {
+          confirmedProfit: {
             $sum: { $cond: [{ $eq: ['$status', 'confirmed'] }, '$storefrontData.totalMarkup', 0] }
           },
+          processingProfit: {
+            $sum: { $cond: [{ $eq: ['$status', 'processing'] }, '$storefrontData.totalMarkup', 0] }
+          },
           averageOrderValue:  { $avg: '$total' },
-          completedOrders:    { $sum: { $cond: [{ $eq: ['$status', 'completed']  }, 1, 0] } },
-          confirmedOrders:    { $sum: { $cond: [{ $eq: ['$status', 'confirmed']  }, 1, 0] } },
-          pendingOrders:      { $sum: { $cond: [{ $eq: ['$status', 'pending']    }, 1, 0] } },
-          cancelledOrders:    { $sum: { $cond: [{ $eq: ['$status', 'cancelled']  }, 1, 0] } },
+          completedOrders:    { $sum: { $cond: [{ $eq: ['$status', 'completed'] },  1, 0] } },
+          confirmedOrders:    { $sum: { $cond: [{ $eq: ['$status', 'confirmed'] },  1, 0] } },
+          pendingOrders:      { $sum: { $cond: [{ $eq: ['$status', 'pending'] },    1, 0] } },
+          processingOrders:   { $sum: { $cond: [{ $eq: ['$status', 'processing'] }, 1, 0] } },
+          cancelledOrders:    { $sum: { $cond: [{ $eq: ['$status', 'cancelled'] },  1, 0] } },
+          failedOrders:       { $sum: { $cond: [{ $eq: ['$status', 'failed'] },     1, 0] } },
         },
       },
     ]);
 
     return result || {
-      totalOrders: 0, totalRevenue: 0, totalProfit: 0, averageOrderValue: 0,
-      completedOrders: 0, confirmedOrders: 0, pendingOrders: 0, cancelledOrders: 0,
-      pendingProfit: 0, confirmedProfit: 0,
+      totalOrders: 0, totalRevenue: 0, totalCost: 0, totalProfit: 0,
+      averageOrderValue: 0,
+      completedOrders: 0, confirmedOrders: 0, pendingOrders: 0,
+      processingOrders: 0, cancelledOrders: 0, failedOrders: 0,
+      pendingProfit: 0, confirmedProfit: 0, processingProfit: 0,
+    };
+  }
+
+  /**
+   * Returns the agent's actual earned + withdrawn earnings (from the
+   * authoritative EarningsTransaction ledger) alongside recent transaction history.
+   * Source of truth for "how much have I made from my store?"
+   */
+  async getStorefrontEarnings(userId) {
+    const user = await User.findById(userId).select('earningsBalance');
+    if (!user) throw new Error('User not found');
+
+    const [agg] = await EarningsTransaction.aggregate([
+      { $match: { user: user._id } },
+      {
+        $group: {
+          _id: null,
+          totalEarned:    { $sum: { $cond: [{ $eq: ['$type', 'credit'] }, '$amount', 0] } },
+          totalWithdrawn: { $sum: { $cond: [{ $eq: ['$type', 'payout'] }, { $abs: '$amount' }, 0] } },
+        },
+      },
+    ]);
+
+    const recent = await EarningsTransaction.find({ user: userId })
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .lean();
+
+    return {
+      availableBalance: Number(user.earningsBalance) || 0,
+      totalEarned:     agg?.totalEarned    || 0,
+      totalWithdrawn:  agg?.totalWithdrawn || 0,
+      recentTransactions: recent,
     };
   }
 
@@ -997,16 +1048,75 @@ class StorefrontService {
       ];
     }
 
+    // Minimal projection — only what the list table needs
+    const listProjection = {
+      businessName: 1, displayName: 1,
+      isActive: 1, isApproved: 1, approvedAt: 1,
+      suspendedByAdmin: 1, suspensionReason: 1, suspendedAt: 1,
+      createdAt: 1,
+      'paymentMethods.type': 1, 'paymentMethods.isActive': 1,
+      'contactInfo.phone': 1, 'contactInfo.email': 1,
+      paystackSubaccountId: 1,
+    };
+
     const [storefronts, total] = await Promise.all([
-      AgentStorefront.find(query)
-        .populate('agentId', 'fullName email phone userType walletBalance')
+      AgentStorefront.find(query, listProjection)
+        .populate('agentId', 'fullName email phone userType')
         .sort({ createdAt: -1 })
         .skip(offset)
-        .limit(limit),
+        .limit(limit)
+        .lean(),
       AgentStorefront.countDocuments(query),
     ]);
 
     return { storefronts, total };
+  }
+
+  /**
+   * Full store detail for admin — includes branding, settings, recent orders, and order stats.
+   * Called on demand when admin opens a store detail view.
+   */
+  async getAdminStorefrontById(storefrontId) {
+    const storefront = await AgentStorefront.findById(storefrontId)
+      .populate('agentId', 'fullName email phone userType walletBalance earningsBalance createdAt')
+      .lean();
+    if (!storefront) throw new Error('Storefront not found');
+
+    // Recent orders (last 10)
+    const recentOrders = await Order.find(
+      { orderType: 'storefront', 'storefrontData.storefrontId': storefrontId },
+      {
+        orderNumber: 1, status: 1, total: 1, createdAt: 1, paymentStatus: 1,
+        'storefrontData.customerInfo.name': 1,
+        'storefrontData.customerInfo.phone': 1,
+        'storefrontData.totalMarkup': 1,
+        'storefrontData.totalTierCost': 1,
+        'storefrontData.items': 1,
+      }
+    )
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .lean();
+
+    // Order stats for this storefront
+    const [orderStats] = await Order.aggregate([
+      { $match: { orderType: 'storefront', 'storefrontData.storefrontId': storefront._id } },
+      {
+        $group: {
+          _id: null,
+          totalOrders:     { $sum: 1 },
+          completedOrders: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
+          totalRevenue:    { $sum: { $cond: [{ $eq: ['$paymentStatus', 'paid'] }, '$total', 0] } },
+          totalProfit:     { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, '$storefrontData.totalMarkup', 0] } },
+        },
+      },
+    ]);
+
+    return {
+      ...storefront,
+      recentOrders,
+      orderStats: orderStats || { totalOrders: 0, completedOrders: 0, totalRevenue: 0, totalProfit: 0 },
+    };
   }
 
   async approveStorefront(storefrontId, adminId) {

@@ -5,7 +5,7 @@ import logger from '../utils/logger.js';
 import notificationService from './notificationService.js';
 import websocketService from './websocketService.js';
 import { canHaveWallet } from '../utils/userTypeHelpers.js';
-import { getFeeConfig, calculateChargeWithFees } from '../utils/paystackHelpers.js';
+import { getFeeConfig, getWalletTopUpFeeConfig, calculateChargeWithFees } from '../utils/paystackHelpers.js';
 import paystackService from './paystackService.js';
 
 class WalletService {
@@ -293,11 +293,8 @@ class WalletService {
     const publicKey = paystackService.getPublicKey();
 
     // ── Fee gross-up ────────────────────────────────────────────────────────
-    // When delegateFeesToCustomer=true the agent pays the Paystack/platform fee
-    // on top of the amount they requested. The webhook uses targetCreditAmount
-    // (the original requested amount) to credit the wallet — not data.amount
-    // (the gross charge), so the platform never absorbs the fee.
-    const feeConfig = await getFeeConfig();
+    // Use wallet-specific fee config (independent from storefront collection fees)
+    const feeConfig = await getWalletTopUpFeeConfig();
     const { chargeAmount, paystackFee, platformFee, totalFee } = calculateChargeWithFees(amount, feeConfig);
     const targetCreditAmount = amount; // what gets credited to wallet
     const amountPesewas = paystackService.convertToPesewas(chargeAmount);

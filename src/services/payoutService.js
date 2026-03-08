@@ -369,8 +369,24 @@ class PayoutService {
       try {
         await this.refundFailedPayout(payout);
       } catch (refundErr) {
-        // Log but don't mask the original Paystack error
-        logger.error('[Payout] Refund failed after transfer failure', { payoutId, message: refundErr.message });
+        // CRITICAL: balance was deducted but refund also failed — agent's funds are at risk.
+        // Update the payout record so admin knows manual intervention is required.
+        logger.error('[Payout] CRITICAL: Refund failed after transfer failure — MANUAL REFUND REQUIRED', {
+          payoutId,
+          transferError: err.message,
+          refundError: refundErr.message,
+        });
+        try {
+          payout.paystackTransfer = payout.paystackTransfer || {};
+          payout.paystackTransfer.failureReason =
+            `Transfer failed: ${err.message} | REFUND FAILED: ${refundErr.message} — Manual refund required`;
+          await payout.save();
+        } catch (saveErr2) {
+          logger.error('[Payout] Failed to persist refund-failure notice on payout', {
+            payoutId,
+            message: saveErr2.message,
+          });
+        }
       }
       throw originalError;
     }

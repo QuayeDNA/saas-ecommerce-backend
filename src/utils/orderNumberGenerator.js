@@ -100,5 +100,44 @@ export const generateSpecialOrderNumber = async (prefix = 'AFA') => {
 
 export default {
   generateUniqueOrderNumber,
-  generateSpecialOrderNumber
+  generateSpecialOrderNumber,
+  generateUniqueStorefrontOrderNumber,
 };
+
+/**
+ * Generate a unique order number for storefront (agent-store) orders.
+ * Format: BAGS-XXXX  (Brytelink Agents' Store)
+ * @returns {Promise<string>}
+ */
+export async function generateUniqueStorefrontOrderNumber() {
+  const maxAttempts = 5;
+  const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      let suffix = '';
+      for (let i = 0; i < 4; i++) {
+        suffix += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      const orderNumber = `BAGS-${suffix}`;
+
+      const Order = mongoose.model('Order');
+      const existing = await Order.findOne({ orderNumber });
+      if (!existing) return orderNumber;
+
+      await new Promise(resolve =>
+        setTimeout(resolve, Math.pow(2, attempt) * 10)
+      );
+    } catch (error) {
+      console.error(
+        `Attempt ${attempt + 1} failed to generate BAGS order number:`,
+        error.message
+      );
+      if (attempt === maxAttempts - 1) {
+        return `BAGS-${Date.now().toString().slice(-4)}`;
+      }
+    }
+  }
+
+  throw new Error('Failed to generate unique BAGS order number after maximum attempts');
+}

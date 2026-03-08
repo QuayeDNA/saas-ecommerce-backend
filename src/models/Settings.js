@@ -138,7 +138,7 @@ const settingsSchema = new mongoose.Schema(
       },
     },
 
-    // Transaction Fee Settings
+    // Transaction Fee Settings — Storefront payments
     // Paystack's actual collection fee (for display/calculation purposes)
     paystackCollectionFeePercent: {
       type: Number,
@@ -154,9 +154,24 @@ const settingsSchema = new mongoose.Schema(
       max: 100,
     },
     // Whether to delegate total fees (paystack + platform) to the customer
-    // When true, the displayed price is increased by the fee so the platform
-    // receives the full intended amount after Paystack deductions.
     delegateFeesToCustomer: {
+      type: Boolean,
+      default: true,
+    },
+    // Transaction Fee Settings — Wallet top-up (independent from storefront)
+    walletTopUpCollectionFeePercent: {
+      type: Number,
+      default: 1.95,
+      min: 0,
+      max: 100,
+    },
+    walletTopUpPlatformFeePercent: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
+    walletTopUpDelegateFeesToCustomer: {
       type: Boolean,
       default: true,
     },

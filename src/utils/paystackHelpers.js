@@ -90,6 +90,26 @@ export async function getFeeConfig() {
 }
 
 /**
+ * Get wallet top-up fee configuration (separate from storefront collection fees).
+ */
+export async function getWalletTopUpFeeConfig() {
+  try {
+    const settings = await Settings.getInstance();
+    return {
+      paystackCollectionFeePercent: settings.walletTopUpCollectionFeePercent ?? 1.95,
+      platformFeePercent: settings.walletTopUpPlatformFeePercent ?? 0,
+      delegateFeesToCustomer: settings.walletTopUpDelegateFeesToCustomer ?? true,
+    };
+  } catch {
+    return {
+      paystackCollectionFeePercent: 1.95,
+      platformFeePercent: 0,
+      delegateFeesToCustomer: true,
+    };
+  }
+}
+
+/**
  * Calculate the total amount to charge the customer so that after Paystack
  * takes its 1.95% (or configured %) the platform receives the full base
  * amount.  Optionally adds a platform surcharge.

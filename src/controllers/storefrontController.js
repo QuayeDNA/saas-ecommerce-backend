@@ -451,6 +451,16 @@ class StorefrontController {
     }
   }
 
+  async getEarnings(req, res) {
+    try {
+      const earnings = await storefrontService.getStorefrontEarnings(req.user.userId);
+      res.json({ success: true, data: earnings });
+    } catch (err) {
+      logger.error(`[getEarnings] ${err.message}`);
+      serverError(res, 'Internal server error');
+    }
+  }
+
   // =========================================================================
   // Admin Endpoints (Super Admin)
   // =========================================================================
@@ -474,6 +484,19 @@ class StorefrontController {
       res.json({ success: true, data: stats });
     } catch (err) {
       logger.error(`[getAdminStats] ${err.message}`);
+      serverError(res, 'Internal server error');
+    }
+  }
+
+  async getAdminStorefrontById(req, res) {
+    try {
+      const detail = await storefrontService.getAdminStorefrontById(req.params.storefrontId);
+      res.json({ success: true, data: detail });
+    } catch (err) {
+      logger.error(`[getAdminStorefrontById] ${err.message}`);
+      if (err.message === 'Storefront not found') {
+        return res.status(404).json({ success: false, message: err.message });
+      }
       serverError(res, 'Internal server error');
     }
   }
