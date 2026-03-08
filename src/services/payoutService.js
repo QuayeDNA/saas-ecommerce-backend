@@ -301,6 +301,43 @@ class PayoutService {
     return payout;
   }
 
+  /**
+   * Admin manually marks an approved (or failed) payout as completed.
+   * Used when Paystack Transfers are unavailable (Starter tier) and admin
+   * sends the money outside the platform (e.g. direct MoMo/bank transfer).
+   */
+  async markManuallyCompleted(payoutId, adminId, transferReference) {
+    const payout = await PayoutRequest.findById(payoutId).populate('user');
+    if (!payout) throw new Error('Payout not found');
+    if (!['approved', 'failed'].includes(payout.status)) {
+      throw new Error(`Payout cannot be manually completed from status: ${payout.status}`);
+    }
+
+    payout.status = 'completed';
+    payout.reviewedBy = payout.reviewedBy || adminId;
+    payout.completedAt = new Date();
+    payout.paystackTransfer = payout.paystackTransfer || {};
+    payout.paystackTransfer.transferReference = transferReference || `manual_${payout._id}_${Date.now()}`;
+    payout.metadata = { ...(payout.metadata || {}), manuallyCompleted: true, completedBy: adminId };
+    await payout.save();
+
+    logger.info('[Payout] Manually completed', { payoutId, adminId, transferReference });
+
+    try {
+      await notificationService.createInAppNotification(
+        payout.user._id.toString(),
+        'Payout Completed',
+        `Your payout of GHS ${payout.amount.toFixed(2)} has been sent.${transferReference ? ' Reference: ' + transferReference : ''}`,
+        'success',
+        { type: 'payout_completed', payoutId: payout._id }
+      );
+    } catch (notifErr) {
+      logger.warn('[Payout] Failed to notify agent of manual completion', { message: notifErr.message });
+    }
+
+    return payout;
+  }
+
   async processPayoutAuto(payoutId) {
     const payout = await PayoutRequest.findById(payoutId).populate('user');
     if (!payout) throw new Error('Payout not found');

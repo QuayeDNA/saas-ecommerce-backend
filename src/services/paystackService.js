@@ -206,7 +206,7 @@ class PaystackService {
       if (!resp?.data?.status) throw new Error(resp?.data?.message || 'Failed to create transfer recipient');
       return resp.data.data;
     } catch (err) {
-      logger.error('[Paystack] createTransferRecipient error', { message: err.message, data: err.response?.data });
+      logger.error(`[Paystack] createTransferRecipient error: ${err.message} | Paystack: ${JSON.stringify(err.response?.data) ?? 'n/a'}`);
       throw err;
     }
   }
@@ -234,7 +234,7 @@ class PaystackService {
       if (!resp?.data?.status) throw new Error(resp?.data?.message || 'Failed to initiate transfer');
       return resp.data.data;
     } catch (err) {
-      logger.error('[Paystack] initiateTransfer error', { message: err.message, data: err.response?.data });
+      logger.error(`[Paystack] initiateTransfer error: ${err.message} | Paystack: ${JSON.stringify(err.response?.data) ?? 'n/a'}`);
       throw err;
     }
   }

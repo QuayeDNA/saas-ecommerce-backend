@@ -119,7 +119,28 @@ class PayoutController {
         data: payout,
       });
     } catch (err) {
-      logger.error('[Payout] processPayout error', { message: err.message });
+      logger.error(`[Payout] processPayout error: ${err.message} | Paystack: ${JSON.stringify(err.response?.data) ?? 'n/a'}`);
+      const detail = err.response?.data?.message;
+      return res.status(400).json({
+        success: false,
+        message: detail ? `${err.message}: ${detail}` : err.message,
+      });
+    }
+  }
+
+  async markManuallyCompleted(req, res) {
+    try {
+      const adminId = req.user.userId;
+      const { id } = req.params;
+      const { transferReference } = req.body || {};
+      const payout = await payoutService.markManuallyCompleted(id, adminId, transferReference);
+      return res.json({
+        success: true,
+        message: 'Payout marked as manually completed.',
+        data: payout,
+      });
+    } catch (err) {
+      logger.error(`[Payout] markManuallyCompleted error: ${err.message}`);
       return res.status(400).json({ success: false, message: err.message });
     }
   }
