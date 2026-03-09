@@ -7,7 +7,11 @@ const orderValidation = {
     packageItemId: Joi.string().required().hex().length(24),
     customerPhone: Joi.string()
       .required()
-      .pattern(/^\+?[\d\s-()]{10,}$/),
+      .pattern(/^0\d{9}$/)
+      .messages({
+        "string.pattern.base":
+          "Phone number must be a 10-digit Ghanaian mobile number starting with 0",
+      }),
     bundleSize: Joi.object({
       value: Joi.number().min(0.1),
       unit: Joi.string().valid("MB", "GB"),
