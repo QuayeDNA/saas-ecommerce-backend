@@ -129,15 +129,24 @@ class WalletController {
         return res.status(400).json({ success: false, message: 'A valid amount is required' });
       }
 
-      // Guard: check admin toggle for wallet top-up via Paystack
+      // Guard: check admin toggles and wallet settings for Paystack
       try {
         const settingsSvc = (await import('../services/settingsService.js')).default;
         const apiSettings = await settingsSvc.getApiSettings();
         if (!apiSettings.paystackWalletTopUpEnabled) {
           return res.status(403).json({ success: false, message: 'Paystack wallet top-up is currently disabled by the administrator.' });
         }
+
+        const walletSettings = await settingsSvc.getWalletSettings();
+        const min = walletSettings.paystackMinimumTopUpAmount || 0;
+        if (min > 0 && parseFloat(amount) < min) {
+          return res.status(400).json({
+            success: false,
+            message: `Minimum amount for Paystack top-ups is GH₵${min}`,
+          });
+        }
       } catch (settingsErr) {
-        logger.warn(`[initiatePaystackTopUp] Could not verify paystackWalletTopUpEnabled: ${settingsErr.message}`);
+        logger.warn(`[initiatePaystackTopUp] Could not verify Paystack settings: ${settingsErr.message}`);
       }
 
       const result = await walletService.initiatePaystackTopUp(userId, parseFloat(amount), returnUrl || null);

@@ -131,6 +131,13 @@ const settingsSchema = new mongoose.Schema(
         min: 0,
       },
     },
+    // Global paystack minimum for wallet top-ups. Applies to all user types and is enforced
+    // during instant (Paystack) top-ups in addition to the user-specific minimum.
+    paystackMinimumTopUpAmount: {
+      type: Number,
+      default: 0.0,
+      min: 0,
+    },
 
     // Payout Settings - minimum amounts per destination type
     minimumPayoutAmounts: {

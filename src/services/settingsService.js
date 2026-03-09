@@ -355,6 +355,7 @@ class SettingsService {
           super_dealer: 200.0,
           default: 10.0,
         },
+        paystackMinimumTopUpAmount: settings.paystackMinimumTopUpAmount || 0.0,
       };
 
       return result;
@@ -393,10 +394,19 @@ class SettingsService {
       };
     }
 
+    // Update the global paystack top-up minimum if provided
+    if (walletSettings.paystackMinimumTopUpAmount !== undefined) {
+      settings.paystackMinimumTopUpAmount =
+        walletSettings.paystackMinimumTopUpAmount || 0.0;
+    }
+
     await settings.save();
 
     logger.info("Wallet settings updated:", walletSettings);
-    return { minimumTopUpAmounts: settings.minimumTopUpAmounts };
+    return {
+      minimumTopUpAmounts: settings.minimumTopUpAmounts,
+      paystackMinimumTopUpAmount: settings.paystackMinimumTopUpAmount,
+    };
   }
 
   // ---------------------------------------------------------------------------

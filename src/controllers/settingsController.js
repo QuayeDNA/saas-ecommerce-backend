@@ -250,9 +250,10 @@ class SettingsController {
 
   async updateWalletSettings(req, res) {
     try {
-      const { minimumTopUpAmounts } = req.body;
+      const { minimumTopUpAmounts, paystackMinimumTopUpAmount } = req.body;
       const settings = await settingsService.updateWalletSettings({
         minimumTopUpAmounts,
+        paystackMinimumTopUpAmount,
       });
       res.json(settings);
     } catch (error) {

@@ -24,6 +24,11 @@ router.get("/payout", settingsController.getPayoutSettings);
 // Fee Settings - visible to any authenticated user (agents need it for storefront pricing)
 router.get("/fees", settingsController.getFeeSettings);
 
+// Allow authenticated users to read API settings (paystack toggles etc)
+// This is useful for frontend components like TopUpRequestModal which need to
+// know whether paystack is enabled without requiring super_admin role.
+router.get("/api", settingsController.getApiSettings);
+
 // All other routes require super admin authorization
 router.use(authorize("super_admin"));
 
@@ -49,8 +54,7 @@ router.put("/storefront-auto-approve", settingsController.updateAutoApproveStore
 router.get("/commission", settingsController.getCommissionRates);
 router.put("/commission", settingsController.updateCommissionRates);
 
-// API Settings
-router.get("/api", settingsController.getApiSettings);
+// API Settings (PUT remains protected)
 router.put("/api", settingsController.updateApiSettings);
 
 // User Management
