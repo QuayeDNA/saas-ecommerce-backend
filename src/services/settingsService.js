@@ -184,6 +184,8 @@ class SettingsService {
           "https://api.telecomsaas.com",
         // Paystack
         paystackEnabled: settings.paystackEnabled || (process.env.PAYSTACK_ENABLED === 'true') || false,
+        paystackWalletTopUpEnabled: settings.paystackWalletTopUpEnabled ?? false,
+        paystackStorefrontEnabled: settings.paystackStorefrontEnabled ?? false,
         paystackTestPublicKey: settings.paystackTestPublicKey || process.env.PAYSTACK_TEST_PUBLIC_KEY || "",
         paystackLivePublicKey: settings.paystackLivePublicKey || process.env.PAYSTACK_LIVE_PUBLIC_KEY || "",
 
@@ -212,6 +214,8 @@ class SettingsService {
 
     // Paystack settings (optional)
     if (settings.paystackEnabled !== undefined) settingsDoc.paystackEnabled = settings.paystackEnabled;
+    if (settings.paystackWalletTopUpEnabled !== undefined) settingsDoc.paystackWalletTopUpEnabled = settings.paystackWalletTopUpEnabled;
+    if (settings.paystackStorefrontEnabled !== undefined) settingsDoc.paystackStorefrontEnabled = settings.paystackStorefrontEnabled;
     if (settings.paystackTestPublicKey !== undefined) settingsDoc.paystackTestPublicKey = settings.paystackTestPublicKey;
     if (settings.paystackTestSecretKey !== undefined) settingsDoc.paystackTestSecretKey = settings.paystackTestSecretKey;
     if (settings.paystackLivePublicKey !== undefined) settingsDoc.paystackLivePublicKey = settings.paystackLivePublicKey;
@@ -459,6 +463,10 @@ class SettingsService {
         payoutFeeBearer: settings.payoutFeeBearer ?? 'agent',
         platformPayoutFeePercent: settings.platformPayoutFeePercent ?? 0,
         autoPayoutEnabled: settings.autoPayoutEnabled ?? false,
+        minimumPayoutAmounts: {
+          mobile_money: settings.minimumPayoutAmounts?.mobile_money ?? 1.0,
+          bank_account: settings.minimumPayoutAmounts?.bank_account ?? 50.0,
+        },
       };
     } catch (error) {
       logger.error(`Error getting fee settings: ${error.message}`);
@@ -501,6 +509,16 @@ class SettingsService {
     }
     if (feeSettings.autoPayoutEnabled !== undefined) {
       settings.autoPayoutEnabled = Boolean(feeSettings.autoPayoutEnabled);
+    }
+    if (feeSettings.minimumPayoutAmounts) {
+      settings.minimumPayoutAmounts = {
+        mobile_money: feeSettings.minimumPayoutAmounts.mobile_money != null
+          ? Number(feeSettings.minimumPayoutAmounts.mobile_money)
+          : (settings.minimumPayoutAmounts?.mobile_money ?? 1.0),
+        bank_account: feeSettings.minimumPayoutAmounts.bank_account != null
+          ? Number(feeSettings.minimumPayoutAmounts.bank_account)
+          : (settings.minimumPayoutAmounts?.bank_account ?? 50.0),
+      };
     }
 
     await settings.save();

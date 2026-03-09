@@ -78,6 +78,14 @@ const settingsSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    paystackWalletTopUpEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    paystackStorefrontEnabled: {
+      type: Boolean,
+      default: false,
+    },
     paystackTestSecretKey: {
       type: String,
       default: "",

@@ -408,6 +408,15 @@ class StorefrontService {
       packages: Array.from(p.packages.values()),
     }));
 
+    let paystackStorefrontEnabled = false;
+    try {
+      const settingsSvc = (await import('./settingsService.js')).default;
+      const apiSettings = await settingsSvc.getApiSettings();
+      paystackStorefrontEnabled = apiSettings.paystackStorefrontEnabled ?? false;
+    } catch (e) {
+      logger.warn('[StorefrontService] Could not read paystackStorefrontEnabled', { message: e.message });
+    }
+
     return {
       storefront: {
         businessName: storefront.businessName,
@@ -417,6 +426,7 @@ class StorefrontService {
         settings: storefront.settings,
         branding: storefront.branding || {},
         paymentMethods: storefront.paymentMethods.filter(pm => pm.isActive),
+        paystackStorefrontEnabled,
       },
       bundles,
       providers,

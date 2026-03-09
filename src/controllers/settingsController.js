@@ -140,6 +140,8 @@ class SettingsController {
         apiEndpoint,
         // Paystack
         paystackEnabled,
+        paystackWalletTopUpEnabled,
+        paystackStorefrontEnabled,
         paystackTestPublicKey,
         paystackTestSecretKey,
         paystackLivePublicKey,
@@ -153,6 +155,8 @@ class SettingsController {
         apiEndpoint,
         // Paystack
         paystackEnabled,
+        paystackWalletTopUpEnabled,
+        paystackStorefrontEnabled,
         paystackTestPublicKey,
         paystackTestSecretKey,
         paystackLivePublicKey,

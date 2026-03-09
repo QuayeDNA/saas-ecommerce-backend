@@ -129,6 +129,17 @@ class WalletController {
         return res.status(400).json({ success: false, message: 'A valid amount is required' });
       }
 
+      // Guard: check admin toggle for wallet top-up via Paystack
+      try {
+        const settingsSvc = (await import('../services/settingsService.js')).default;
+        const apiSettings = await settingsSvc.getApiSettings();
+        if (!apiSettings.paystackWalletTopUpEnabled) {
+          return res.status(403).json({ success: false, message: 'Paystack wallet top-up is currently disabled by the administrator.' });
+        }
+      } catch (settingsErr) {
+        logger.warn(`[initiatePaystackTopUp] Could not verify paystackWalletTopUpEnabled: ${settingsErr.message}`);
+      }
+
       const result = await walletService.initiatePaystackTopUp(userId, parseFloat(amount), returnUrl || null);
 
       res.json({

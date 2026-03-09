@@ -72,6 +72,17 @@ class StorefrontController {
 
       // ── Paystack inline checkout ─────────────────────────────────────────────
       if (orderData.paymentMethod?.type === 'paystack') {
+        // Guard: check admin toggle for storefront Paystack payments
+        try {
+          const settingsSvc = (await import('../services/settingsService.js')).default;
+          const apiSettings = await settingsSvc.getApiSettings();
+          if (!apiSettings.paystackStorefrontEnabled) {
+            return badRequest(res, 'Paystack payments are currently disabled for storefronts.');
+          }
+        } catch (settingsErr) {
+          logger.warn(`[createStorefrontOrder] Could not verify paystackStorefrontEnabled: ${settingsErr.message}`);
+        }
+
         const customerEmail = order.storefrontData.customerInfo?.email;
         if (!customerEmail) {
           return badRequest(res, 'Customer email is required for Paystack payments');
