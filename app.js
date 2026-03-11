@@ -58,6 +58,7 @@ app.use(
     origin(origin, callback) {
       const allowed = [
         process.env.FRONTEND_URL,
+        process.env.STOREFRONT_URL,  // dedicated public-store domain
         'https://brytelink-chi.vercel.app',
         'https://saas-ecommerce.vercel.app',
         'http://localhost:5173',
