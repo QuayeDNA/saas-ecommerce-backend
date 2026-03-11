@@ -132,13 +132,20 @@ const validateBundleToggle = [
 // ⚠️  ROUTE ORDERING IS CRITICAL
 //
 // Express matches routes top-to-bottom. ALL static path prefixes (/paystack,
-// /agent, /admin) MUST be declared BEFORE the /:businessName wildcard.
+// /agent, /admin, /discover) MUST be declared BEFORE the /:businessName wildcard.
 //
 // If /:businessName comes first, Express will match "paystack", "agent", and
 // "admin" as business names and call getPublicStorefront instead of the
 // intended handler — causing silent failures (like the verify bug where the
 // order stayed in pending_payment forever).
 // =============================================================================
+
+// =============================================================================
+// 0. Discovery — PUBLIC, no auth, BEFORE /:businessName
+// =============================================================================
+
+// GET /api/storefront/discover/random — returns random active storefronts for landing page
+router.get('/discover/random', [query('limit').optional().isInt({ min: 1, max: 12 })], storefrontController.getRandomStorefronts);
 
 // =============================================================================
 // 1. Paystack verify — PUBLIC, no auth, BEFORE /:businessName

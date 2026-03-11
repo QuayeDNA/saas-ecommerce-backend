@@ -310,6 +310,27 @@ class StorefrontService {
   // Public Storefront
   // =========================================================================
 
+  /**
+   * Returns up to `limit` random active/approved storefronts for the landing page.
+   * Only safe, public-facing fields are returned.
+   */
+  async getRandomStorefronts(limit = 6) {
+    return AgentStorefront.aggregate([
+      { $match: { isActive: true, isApproved: true, suspendedByAdmin: { $ne: true } } },
+      { $sample: { size: limit } },
+      {
+        $project: {
+          businessName: 1,
+          displayName: 1,
+          description: 1,
+          'branding.logoUrl': 1,
+          'branding.tagline': 1,
+          'settings.theme': 1,
+        },
+      },
+    ]);
+  }
+
   async getPublicStorefront(businessName) {
     const storefront = await AgentStorefront.findPublicStore(businessName);
     if (!storefront) throw new Error('Storefront not found or not available');

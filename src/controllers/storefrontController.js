@@ -590,6 +590,22 @@ class StorefrontController {
       res.status(status).json({ success: false, message: err.message });
     }
   }
+
+  /**
+   * GET /api/storefront/discover/random
+   * Returns a handful of random active storefronts for the public landing page.
+   * No authentication required.
+   */
+  async getRandomStorefronts(req, res) {
+    try {
+      const limit = Math.min(parseInt(req.query.limit) || 6, 12);
+      const data = await storefrontService.getRandomStorefronts(limit);
+      res.json({ success: true, data });
+    } catch (err) {
+      logger.error(`[getRandomStorefronts] ${err.message}`);
+      res.status(500).json({ success: false, message: 'Failed to load storefronts' });
+    }
+  }
 }
 
 export default new StorefrontController();
