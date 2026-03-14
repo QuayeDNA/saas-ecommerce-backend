@@ -102,11 +102,28 @@ app.use((req, _res, next) => {
 
 app.get('/manifest', (req, res) => {
   const { theme = '#142850' } = req.query;
+
+  // Determine branding based on request origin/referer
+  const origin = req.get('origin') || req.get('referer') || '';
+  const isStorefrontDomain = origin.includes('directdata.shop') ||
+                            origin.includes('storefront') ||
+                            req.query.context === 'storefront';
+
+  const branding = isStorefrontDomain ? {
+    name: 'DirectData — Instant Data Bundles',
+    short_name: 'DirectData',
+    description: 'A modern storefront for buying data bundles from trusted agents across Ghana.',
+    start_url: '/',
+  } : {
+    name: 'BryteLinks — Telecom Solutions Platform',
+    short_name: 'BryteLinks',
+    description: 'Modern telecom solutions platform for agents and dealers in Ghana.',
+    start_url: '/',
+  };
+
   res.setHeader('Content-Type', 'application/manifest+json');
   res.json({
-    name: 'BryteLinks - Telecom Solutions',
-    short_name: 'BryteLinks',
-    description: 'A modern SaaS platform for telecommunication services.',
+    ...branding,
     icons: [
       { src: '/favicon.svg',               sizes: 'any',     type: 'image/svg+xml', purpose: 'any maskable' },
       { src: '/favicon-16x16.png',          sizes: '16x16',   type: 'image/png' },
@@ -117,9 +134,8 @@ app.get('/manifest', (req, res) => {
     theme_color: theme,
     background_color: theme,
     display: 'standalone',
-    start_url: '/',
     orientation: 'portrait-primary',
-    categories: ['business', 'finance', 'utilities'],
+    categories: isStorefrontDomain ? ['business', 'finance', 'utilities'] : ['business', 'productivity'],
   });
 });
 
