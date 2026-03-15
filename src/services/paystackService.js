@@ -9,13 +9,15 @@ class PaystackService {
     this.baseUrl = 'https://api.paystack.co';
 
     // Prefer env vars but allow runtime override from Settings (DB).
-    this.secretKey = process.env.NODE_ENV === 'production'
+    // In production we should only use live keys. In development, prefer live if set, else fall back to test.
+    const isProd = process.env.NODE_ENV === 'production';
+    this.secretKey = isProd
       ? process.env.PAYSTACK_LIVE_SECRET_KEY
-      : process.env.PAYSTACK_TEST_SECRET_KEY;
+      : (process.env.PAYSTACK_LIVE_SECRET_KEY || process.env.PAYSTACK_TEST_SECRET_KEY);
 
-    this.publicKey = process.env.NODE_ENV === 'production'
+    this.publicKey = isProd
       ? process.env.PAYSTACK_LIVE_PUBLIC_KEY
-      : process.env.PAYSTACK_TEST_PUBLIC_KEY;
+      : (process.env.PAYSTACK_LIVE_PUBLIC_KEY || process.env.PAYSTACK_TEST_PUBLIC_KEY);
 
     // lastLoaded indicates whether we've attempted to read Settings
     this._lastLoaded = null;
@@ -23,8 +25,10 @@ class PaystackService {
 
   // Ensure keys are available — check env first, then Settings (DB)
   async ensureKeys() {
-    // If env vars are present, keep them (highest priority)
-    if (this.secretKey && this.publicKey) return;
+    // In production we treat env vars as authoritative and avoid extra DB reads.
+    // In development we still attempt to load settings so live keys can override test env keys.
+    const isProd = process.env.NODE_ENV === 'production';
+    if (isProd && this.secretKey && this.publicKey) return;
 
     // Avoid repeated DB reads within short time
     const now = Date.now();
@@ -33,15 +37,21 @@ class PaystackService {
     try {
       const settings = await Settings.getInstance();
       if (!this.publicKey) {
-        this.publicKey = process.env.NODE_ENV === 'production'
-          ? settings.paystackLivePublicKey || process.env.PAYSTACK_LIVE_PUBLIC_KEY
-          : settings.paystackTestPublicKey || process.env.PAYSTACK_TEST_PUBLIC_KEY;
+        if (process.env.NODE_ENV === 'production') {
+          this.publicKey = settings.paystackLivePublicKey || process.env.PAYSTACK_LIVE_PUBLIC_KEY;
+        } else {
+          // Dev: prefer live keys if configured, otherwise fall back to test keys
+          this.publicKey = settings.paystackLivePublicKey || settings.paystackTestPublicKey || process.env.PAYSTACK_LIVE_PUBLIC_KEY || process.env.PAYSTACK_TEST_PUBLIC_KEY;
+        }
       }
 
       if (!this.secretKey) {
-        this.secretKey = process.env.NODE_ENV === 'production'
-          ? settings.paystackLiveSecretKey || process.env.PAYSTACK_LIVE_SECRET_KEY
-          : settings.paystackTestSecretKey || process.env.PAYSTACK_TEST_SECRET_KEY;
+        if (process.env.NODE_ENV === 'production') {
+          this.secretKey = settings.paystackLiveSecretKey || process.env.PAYSTACK_LIVE_SECRET_KEY;
+        } else {
+          // Dev: prefer live keys if configured, otherwise fall back to test keys
+          this.secretKey = settings.paystackLiveSecretKey || settings.paystackTestSecretKey || process.env.PAYSTACK_LIVE_SECRET_KEY || process.env.PAYSTACK_TEST_SECRET_KEY;
+        }
       }
 
       this._lastLoaded = Date.now();

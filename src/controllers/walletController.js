@@ -221,9 +221,12 @@ class WalletController {
         try {
           const settingsService = (await import('../services/settingsService.js')).default;
           const apiSettings = await settingsService.getApiSettings();
-          key = process.env.NODE_ENV === 'production'
-            ? apiSettings.paystackLivePublicKey || process.env.PAYSTACK_LIVE_PUBLIC_KEY
-            : apiSettings.paystackTestPublicKey || process.env.PAYSTACK_TEST_PUBLIC_KEY;
+          if (process.env.NODE_ENV === 'production') {
+          key = apiSettings.paystackLivePublicKey || process.env.PAYSTACK_LIVE_PUBLIC_KEY;
+        } else {
+          // Dev: prefer live keys if configured, otherwise fall back to test keys
+          key = apiSettings.paystackLivePublicKey || apiSettings.paystackTestPublicKey || process.env.PAYSTACK_LIVE_PUBLIC_KEY || process.env.PAYSTACK_TEST_PUBLIC_KEY;
+        }
         } catch (fallbackErr) {
           logger.warn(`[getPaystackPublicKey] Settings fallback failed: ${fallbackErr.message}`);
         }
