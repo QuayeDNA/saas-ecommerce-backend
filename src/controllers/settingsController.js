@@ -142,10 +142,6 @@ class SettingsController {
         paystackEnabled,
         paystackWalletTopUpEnabled,
         paystackStorefrontEnabled,
-        paystackTestPublicKey,
-        paystackTestSecretKey,
-        paystackLivePublicKey,
-        paystackLiveSecretKey,
       } = req.body;
 
       const settings = await settingsService.updateApiSettings({
@@ -157,10 +153,6 @@ class SettingsController {
         paystackEnabled,
         paystackWalletTopUpEnabled,
         paystackStorefrontEnabled,
-        paystackTestPublicKey,
-        paystackTestSecretKey,
-        paystackLivePublicKey,
-        paystackLiveSecretKey,
       });
       res.json(settings);
     } catch (error) {

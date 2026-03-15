@@ -216,20 +216,11 @@ class WalletController {
 
       let key = paystackService.getPublicKey();
 
-      // Fallback: read from DB settings if key not found via service
+      // Fallback: use env vars only (no DB storage for Paystack keys)
       if (!key) {
-        try {
-          const settingsService = (await import('../services/settingsService.js')).default;
-          const apiSettings = await settingsService.getApiSettings();
-          if (process.env.NODE_ENV === 'production') {
-          key = apiSettings.paystackLivePublicKey || process.env.PAYSTACK_LIVE_PUBLIC_KEY;
-        } else {
-          // Dev: prefer live keys if configured, otherwise fall back to test keys
-          key = apiSettings.paystackLivePublicKey || apiSettings.paystackTestPublicKey || process.env.PAYSTACK_LIVE_PUBLIC_KEY || process.env.PAYSTACK_TEST_PUBLIC_KEY;
-        }
-        } catch (fallbackErr) {
-          logger.warn(`[getPaystackPublicKey] Settings fallback failed: ${fallbackErr.message}`);
-        }
+        key = process.env.NODE_ENV === 'production'
+          ? process.env.PAYSTACK_LIVE_PUBLIC_KEY
+          : (process.env.PAYSTACK_LIVE_PUBLIC_KEY || process.env.PAYSTACK_TEST_PUBLIC_KEY);
       }
 
       res.set('Cache-Control', 'no-store');

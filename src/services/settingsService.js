@@ -166,8 +166,9 @@ class SettingsService {
       const settings = await Settings.getInstance();
 
       // Detect whether secret keys exist on the server (useful for admin UI)
-      const paystackTestSecretExists = Boolean(settings.paystackTestSecretKey || process.env.PAYSTACK_TEST_SECRET_KEY);
-      const paystackLiveSecretExists = Boolean(settings.paystackLiveSecretKey || process.env.PAYSTACK_LIVE_SECRET_KEY);
+      // We no longer store Paystack keys in the database; keys must be provided via env vars.
+      const paystackTestSecretExists = Boolean(process.env.PAYSTACK_TEST_SECRET_KEY);
+      const paystackLiveSecretExists = Boolean(process.env.PAYSTACK_LIVE_SECRET_KEY);
 
       // In production we must NOT return secret keys to the browser. Instead expose existence flags.
       const isProd = process.env.NODE_ENV === 'production';
@@ -186,12 +187,12 @@ class SettingsService {
         paystackEnabled: settings.paystackEnabled || (process.env.PAYSTACK_ENABLED === 'true') || false,
         paystackWalletTopUpEnabled: settings.paystackWalletTopUpEnabled ?? false,
         paystackStorefrontEnabled: settings.paystackStorefrontEnabled ?? false,
-        paystackTestPublicKey: settings.paystackTestPublicKey || process.env.PAYSTACK_TEST_PUBLIC_KEY || "",
-        paystackLivePublicKey: settings.paystackLivePublicKey || process.env.PAYSTACK_LIVE_PUBLIC_KEY || "",
+        paystackTestPublicKey: process.env.PAYSTACK_TEST_PUBLIC_KEY || "",
+        paystackLivePublicKey: process.env.PAYSTACK_LIVE_PUBLIC_KEY || "",
 
         // SECRET KEYS: only include actual secret values when NOT in production.
-        paystackTestSecretKey: isProd ? undefined : (settings.paystackTestSecretKey || process.env.PAYSTACK_TEST_SECRET_KEY || ""),
-        paystackLiveSecretKey: isProd ? undefined : (settings.paystackLiveSecretKey || process.env.PAYSTACK_LIVE_SECRET_KEY || ""),
+        paystackTestSecretKey: isProd ? undefined : (process.env.PAYSTACK_TEST_SECRET_KEY || ""),
+        paystackLiveSecretKey: isProd ? undefined : (process.env.PAYSTACK_LIVE_SECRET_KEY || ""),
 
         // provide boolean flags so the UI can indicate whether a secret exists without exposing it
         paystackTestSecretExists,
@@ -216,10 +217,8 @@ class SettingsService {
     if (settings.paystackEnabled !== undefined) settingsDoc.paystackEnabled = settings.paystackEnabled;
     if (settings.paystackWalletTopUpEnabled !== undefined) settingsDoc.paystackWalletTopUpEnabled = settings.paystackWalletTopUpEnabled;
     if (settings.paystackStorefrontEnabled !== undefined) settingsDoc.paystackStorefrontEnabled = settings.paystackStorefrontEnabled;
-    if (settings.paystackTestPublicKey !== undefined) settingsDoc.paystackTestPublicKey = settings.paystackTestPublicKey;
-    if (settings.paystackTestSecretKey !== undefined) settingsDoc.paystackTestSecretKey = settings.paystackTestSecretKey;
-    if (settings.paystackLivePublicKey !== undefined) settingsDoc.paystackLivePublicKey = settings.paystackLivePublicKey;
-    if (settings.paystackLiveSecretKey !== undefined) settingsDoc.paystackLiveSecretKey = settings.paystackLiveSecretKey;
+    // Paystack key configuration is managed via environment variables for security.
+    // We no longer persist Paystack keys in the database.
 
     await settingsDoc.save();
 

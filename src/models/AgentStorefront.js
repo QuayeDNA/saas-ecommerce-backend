@@ -1,6 +1,18 @@
 // src/models/AgentStorefront.js
 import mongoose from 'mongoose';
 
+function slugifyBusinessName(value) {
+  if (!value) return value;
+  return value
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9_-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 const agentStorefrontSchema = new mongoose.Schema({
   // Basic Store Info
   agentId: { 
@@ -17,7 +29,8 @@ const agentStorefrontSchema = new mongoose.Schema({
     maxLength: 50,
     match: /^[a-zA-Z0-9_-]+$/, // Alphanumeric, underscores, hyphens only
     lowercase: true,
-    trim: true
+    trim: true,
+    set: slugifyBusinessName,
   },
   displayName: { 
     type: String, 
@@ -161,6 +174,14 @@ agentStorefrontSchema.virtual('storeUrl').get(function() {
 agentStorefrontSchema.methods.isPubliclyAccessible = function() {
   return this.isActive && this.isApproved && !this.suspendedByAdmin;
 };
+
+// Ensure businessName is always slugified (helps with existing invalid values)
+agentStorefrontSchema.pre('validate', function(next) {
+  if (this.businessName) {
+    this.businessName = slugifyBusinessName(this.businessName);
+  }
+  next();
+});
 
 // Pre-save validation
 agentStorefrontSchema.pre('save', function(next) {
