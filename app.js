@@ -12,7 +12,9 @@ import { scheduleNotificationCleanup } from './src/jobs/clearOldNotifications.js
 import commissionFinalizationJob from './src/jobs/commissionFinalization.js';
 import { scheduleDailyCommissionGeneration } from './src/jobs/dailyCommissionGeneration.js';
 import { initializeReportedOrdersCleanupJob } from './src/jobs/reportedOrdersCleanup.js';
+import { initializeCancelledStorefrontOrdersCleanupJob } from './src/jobs/cancelledStorefrontOrdersCleanup.js';
 import announcementExpirationJob from './src/jobs/announcementExpiration.js';
+import { initializePendingPaymentExpiryJob } from './src/jobs/pendingPaymentExpiry.js';
 import { schedulePaystackVerificationRetryJob } from './src/jobs/paystackVerificationRetry.js';
 import authRoutes from './src/routes/authRoutes.js';
 import orderRouter from './src/routes/orderRoutes.js';
@@ -49,6 +51,8 @@ scheduleNotificationCleanup();
 commissionFinalizationJob.start();
 scheduleDailyCommissionGeneration();
 initializeReportedOrdersCleanupJob();
+initializePendingPaymentExpiryJob();
+initializeCancelledStorefrontOrdersCleanupJob();
 announcementExpirationJob();
 // Retry background Paystack verification for storefront orders and wallet top-ups
 schedulePaystackVerificationRetryJob();

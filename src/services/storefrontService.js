@@ -1335,17 +1335,33 @@ class StorefrontService {
    * Public — returns sanitised order status only (no pricing or agent data).
    */
   async trackPublicOrder(businessName, rawRef) {
-    const orderId = rawRef.startsWith('storefront_') ? rawRef.slice('storefront_'.length) : rawRef;
-    if (!/^[a-f\d]{24}$/i.test(orderId)) throw new Error('Invalid order reference format');
+    const ref = (rawRef || '').trim();
+    if (!ref) throw new Error('Order reference is required');
 
     const storefront = await AgentStorefront.findOne({ businessName }).lean();
     if (!storefront) throw new Error('Store not found');
 
-    const order = await Order.findOne({
-      _id: orderId,
-      orderType: 'storefront',
-      'storefrontData.storefrontId': storefront._id,
-    }).lean();
+    // Accept either the Mongo order _id (24 hex), or the public orderNumber (e.g. BAGS-XXXX).
+    // Also support the legacy "storefront_<id>" prefix.
+    const cleanRef = ref.startsWith('storefront_') ? ref.slice('storefront_'.length) : ref;
+
+    let order = null;
+    if (/^[a-f\d]{24}$/i.test(cleanRef)) {
+      order = await Order.findOne({
+        _id: cleanRef,
+        orderType: 'storefront',
+        'storefrontData.storefrontId': storefront._id,
+      }).lean();
+    }
+
+    if (!order) {
+      order = await Order.findOne({
+        orderNumber: cleanRef.toUpperCase(),
+        orderType: 'storefront',
+        'storefrontData.storefrontId': storefront._id,
+      }).lean();
+    }
+
     if (!order) throw new Error('Order not found');
 
     const sf  = order.storefrontData || {};

@@ -13,7 +13,15 @@ import PaystackVerificationTask from '../models/PaystackVerificationTask.js';
 function validationGuard(req, res) {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    res.status(400).json({ success: false, message: 'Validation failed', errors: errors.array() });
+    const errorsArray = errors.array().map(error => ({
+      type: 'field',
+      value: error.value,
+      msg: error.msg,
+      path: error.param || error.path,
+      location: error.location,
+    }));
+    const firstErrorMsg = errorsArray[0]?.msg || 'Validation failed';
+    res.status(400).json({ success: false, message: firstErrorMsg, errors: errorsArray });
     return false;
   }
   return true;

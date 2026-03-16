@@ -80,8 +80,8 @@ const validateOrderData = [
     .isInt({ min: 1 })
     .withMessage('Quantity must be a positive integer'),
   body('customerInfo.name')
-    .isLength({ min: 2, max: 100 })
-    .withMessage('Customer name must be 2-100 characters'),
+    .isLength({ min: 1, max: 100 })
+    .withMessage('Customer name must be 1-100 characters'),
   body('customerInfo.phone')
     .optional()
     .matches(/^[0-9+\-\s()]+$/)

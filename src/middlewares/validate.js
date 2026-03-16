@@ -7,15 +7,19 @@ const validate = (validationRules) => {
     const errors = validationResult(req);
   
     if (!errors.isEmpty()) {
-      const errorMessages = errors.array().map(error => ({
-        field: error.path,
-        message: error.msg
+      const errorsArray = errors.array().map(error => ({
+        type: 'field',
+        value: error.value,
+        msg: error.msg,
+        path: error.param || error.path,
+        location: error.location,
       }));
-      logger.warn(`Validation failed: ${JSON.stringify(errorMessages)}`);
+      const firstErrorMsg = errorsArray[0]?.msg || 'Validation failed';
+      logger.warn(`Validation failed: ${JSON.stringify(errorsArray)}`);
       return res.status(400).json({
         success: false,
-        message: 'Validation failed',
-        errors: errorMessages
+        message: firstErrorMsg,
+        errors: errorsArray,
       });
     }
     next();
