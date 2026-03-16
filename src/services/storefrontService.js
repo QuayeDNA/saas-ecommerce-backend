@@ -1368,10 +1368,9 @@ class StorefrontService {
     const pm  = sf.paymentMethod   || {};
 
     const maskPhone = (p) => {
-      if (!p) return '';
-      const d = p.replace(/\D/g, '');
-      if (d.length < 7) return p;
-      return d.slice(0, 3) + '***' + d.slice(-3);
+      // Return full customer phone number for storefront order tracking.
+      // This is intentionally not masked so customers can easily verify the number.
+      return p || '';
     };
 
     // normalize item processing status in case the order jumped directly to a final state
