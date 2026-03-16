@@ -12,6 +12,7 @@ import paystackService from './paystackService.js';
 import { calculateStorefrontSplit, getFeeConfig, calculateChargeWithFees } from '../utils/paystackHelpers.js';
 import logger from '../utils/logger.js';
 import websocketService from './websocketService.js';
+import PaystackVerificationTask from '../models/PaystackVerificationTask.js';
 
 class StorefrontService {
 
@@ -617,6 +618,22 @@ class StorefrontService {
 
     await order.save();
 
+    // If this is a Paystack order, create a background retry task so that
+    // intermittent verification failures (network issues, webhook delays, etc.)
+    // don't leave orders stuck in pending_payment forever.
+    if (paymentMethod.type === 'paystack') {
+      try {
+        await PaystackVerificationTask.create({
+          reference: `storefront_${order._id}`,
+          kind: 'storefront',
+          orderId: order._id,
+        });
+      } catch (err) {
+        // ignore duplicate key errors or any task creation failures
+        logger.warn('[StorefrontService] Could not create Paystack verification task', { error: err.message });
+      }
+    }
+
     try {
       const agentId = (storefront.agentId._id || storefront.agentId).toString();
       await notificationService.createInAppNotification(
@@ -745,6 +762,17 @@ class StorefrontService {
     };
 
     await order.save();
+
+    // Mark any existing background retry task as completed.
+    try {
+      await PaystackVerificationTask.findOneAndUpdate(
+        { reference },
+        { status: 'done', lastError: null },
+        { new: true }
+      );
+    } catch {
+      // ignore
+    }
 
     logger.info(`[StorefrontService] Paystack payment confirmed — Order ${order.orderNumber}, GH₵${customerTotal}, ref: ${reference}`);
 

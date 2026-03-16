@@ -4,8 +4,9 @@ import WalletTransaction from '../models/WalletTransaction.js';
 import logger from '../utils/logger.js';
 import notificationService from './notificationService.js';
 import websocketService from './websocketService.js';
+import PaystackVerificationTask from '../models/PaystackVerificationTask.js';
 import { canHaveWallet } from '../utils/userTypeHelpers.js';
-import { getFeeConfig, getWalletTopUpFeeConfig, calculateChargeWithFees } from '../utils/paystackHelpers.js';
+import { getWalletTopUpFeeConfig, calculateChargeWithFees } from '../utils/paystackHelpers.js';
 import paystackService from './paystackService.js';
 
 class WalletService {
@@ -301,6 +302,18 @@ class WalletService {
 
     const reference = `wallet_${userId}_${Date.now()}`;
 
+    // Create a background retry task in case verification fails (network issues, Paystack hiccups)
+    // so that the wallet top-up can be recovered automatically.
+    try {
+      await PaystackVerificationTask.create({
+        reference,
+        kind: 'wallet',
+        userId,
+      });
+    } catch (err) {
+      logger.warn('[WalletService] Could not create Paystack verification task', { error: err.message });
+    }
+
     // Ensure a Paystack customer record exists (best-effort)
     if (user.email && user.fullName) {
       const [first_name, ...rest] = user.fullName.trim().split(/\s+/);
@@ -430,6 +443,17 @@ class WalletService {
         updatedUser.walletBalance,
         `Your wallet has been credited with GH₵${amountGhs}. New balance: GH₵${updatedUser.walletBalance}`
       );
+
+      // Mark background retry task as completed (if one exists)
+      try {
+        await PaystackVerificationTask.findOneAndUpdate(
+          { reference },
+          { status: 'done', lastError: null },
+          { new: true }
+        );
+      } catch {
+        // ignore
+      }
 
       return { processed: true, transaction, user: updatedUser };
     } catch (err) {

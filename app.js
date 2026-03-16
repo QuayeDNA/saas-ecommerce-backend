@@ -13,6 +13,7 @@ import commissionFinalizationJob from './src/jobs/commissionFinalization.js';
 import { scheduleDailyCommissionGeneration } from './src/jobs/dailyCommissionGeneration.js';
 import { initializeReportedOrdersCleanupJob } from './src/jobs/reportedOrdersCleanup.js';
 import announcementExpirationJob from './src/jobs/announcementExpiration.js';
+import { schedulePaystackVerificationRetryJob } from './src/jobs/paystackVerificationRetry.js';
 import authRoutes from './src/routes/authRoutes.js';
 import orderRouter from './src/routes/orderRoutes.js';
 import packageRoutes from './src/routes/packageRoutes.js';
@@ -49,6 +50,8 @@ commissionFinalizationJob.start();
 scheduleDailyCommissionGeneration();
 initializeReportedOrdersCleanupJob();
 announcementExpirationJob();
+// Retry background Paystack verification for storefront orders and wallet top-ups
+schedulePaystackVerificationRetryJob();
 
 // ─── Security Middleware ──────────────────────────────────────────────────────
 

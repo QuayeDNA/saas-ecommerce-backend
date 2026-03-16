@@ -6,6 +6,7 @@ import { getPaystackCallbackUrl as getPublicCallbackUrl } from '../utils/network
 import { validationResult } from 'express-validator';
 import logger from '../utils/logger.js';
 import Order from '../models/Order.js';
+import PaystackVerificationTask from '../models/PaystackVerificationTask.js';
 
 // ─── Small helpers ────────────────────────────────────────────────────────────
 
@@ -210,6 +211,17 @@ class StorefrontController {
       const result = await storefrontService.processPaystackPayment(paystackData);
 
       if (result.duplicate) {
+        // Mark any background retry task done so the job doesn't keep re-processing.
+        try {
+          await PaystackVerificationTask.findOneAndUpdate(
+            { reference },
+            { status: 'done', lastError: null },
+            { new: true }
+          );
+        } catch {
+          // ignore
+        }
+
         // Idempotency: already processed — fetch the order and return success
         const orderId = reference.replace('storefront_', '');
         const order   = await Order.findById(orderId).lean();
@@ -231,6 +243,17 @@ class StorefrontController {
           success: false,
           message: `Payment could not be processed: ${result.reason || 'unknown error'}`,
         });
+      }
+
+      // Ensure any background task is marked done so it doesn't retry unnecessarily.
+      try {
+        await PaystackVerificationTask.findOneAndUpdate(
+          { reference },
+          { status: 'done', lastError: null },
+          { new: true }
+        );
+      } catch {
+        // ignore
       }
 
       // ── Step 3: Return confirmed order to frontend ────────────────────────────

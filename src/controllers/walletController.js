@@ -4,6 +4,7 @@ import WalletTransaction from '../models/WalletTransaction.js';
 import walletService from '../services/walletService.js';
 import paystackService from '../services/paystackService.js';
 import logger from '../utils/logger.js';
+import PaystackVerificationTask from '../models/PaystackVerificationTask.js';
 import { isBusinessUser } from '../utils/userTypeHelpers.js';
 
 // ─── Shared Helpers ───────────────────────────────────────────────────────────
@@ -202,6 +203,17 @@ class WalletController {
 
       // Process via webhook logic (credits wallet + records transaction)
       await walletService.processPaystackWebhook({ event: 'charge.success', data: paystackData });
+
+      // Mark any background retry task as completed
+      try {
+        await PaystackVerificationTask.findOneAndUpdate(
+          { reference },
+          { status: 'done', lastError: null },
+          { new: true }
+        );
+      } catch {
+        // ignore
+      }
 
       res.json({ success: true, message: 'Payment verified and wallet credited' });
     } catch (err) {
