@@ -36,10 +36,9 @@ router.post(
   walletController.requestWalletTopUp
 );
 
-// Paystack: get public key for inline checkout
+// Paystack: get public key for inline checkout (publicly accessible)
 router.get(
   "/paystack/public-key",
-  authenticate,
   walletController.getPaystackPublicKey
 );
 
