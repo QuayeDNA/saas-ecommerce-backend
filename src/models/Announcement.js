@@ -26,9 +26,22 @@ const announcementSchema = new mongoose.Schema(
     targetAudience: [
       {
         type: String,
-        enum: ["agent", "super_agent", "dealer", "super_dealer", "admin"],
+        enum: [
+          "agent",
+          "super_agent",
+          "dealer",
+          "super_dealer",
+          "admin",
+          "public",
+        ],
       },
     ],
+    // Optional storefront scoping for public announcements
+    targetStorefront: {
+      type: String,
+      default: null,
+      trim: true,
+    },
     status: {
       type: String,
       enum: ["draft", "active", "expired", "archived"],
@@ -104,6 +117,7 @@ const announcementSchema = new mongoose.Schema(
 // Index for efficient querying
 announcementSchema.index({ status: 1, createdAt: -1 });
 announcementSchema.index({ targetAudience: 1, status: 1 });
+announcementSchema.index({ targetStorefront: 1, status: 1 });
 announcementSchema.index({ expiresAt: 1 });
 announcementSchema.index({ broadcastedAt: 1 });
 

@@ -125,6 +125,54 @@ class AnnouncementService {
   }
 
   /**
+   * Get active announcements for public customers (no auth required)
+   */
+  async getActiveAnnouncementsForPublic(storefront = null) {
+    try {
+      const now = new Date();
+      const query = {
+        status: "active",
+        targetAudience: "public",
+        $and: [
+          // Expiration filter
+          { $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }] },
+          // Broadcast timing filter: only show announcements broadcasted after broadcast
+          // OR announcements that haven't been broadcasted yet
+          { $or: [{ broadcastedAt: null }, { broadcastedAt: { $lte: now } }] },
+        ],
+      };
+
+      if (typeof storefront === "string") {
+        const normalized = storefront.trim();
+        query.$and.push({
+          $or: [
+            { targetStorefront: null },
+            { targetStorefront: "" },
+            { targetStorefront: normalized },
+          ],
+        });
+      }
+
+      const announcements = await Announcement.find(query)
+        .populate("createdBy", "username email")
+        .sort({ priority: -1, createdAt: -1 })
+        .lean();
+
+      return announcements;
+    } catch (error) {
+      console.error("Error fetching active public announcements:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get unread announcements for public customers (same as active)
+   */
+  async getUnreadAnnouncementsForPublic(storefront = null) {
+    return this.getActiveAnnouncementsForPublic(storefront);
+  }
+
+  /**
    * Get a single announcement by ID
    */
   async getAnnouncementById(announcementId) {
@@ -307,13 +355,26 @@ class AnnouncementService {
 
       // Broadcast to eligible users
       const userIds = eligibleUsers.map((user) => user._id.toString());
-      console.log(`Broadcasting to ${userIds.length} user(s)`);
+
+      // Include public storefront recipients (anonymous customers)
+      const extraUserIds = [];
+      if (Array.isArray(announcement.targetAudience) && announcement.targetAudience.includes("public")) {
+        // Scoped storefront (if set) receives announcements for that storefront and global public
+        if (announcement.targetStorefront) {
+          extraUserIds.push(`public:${announcement.targetStorefront}`);
+        }
+        extraUserIds.push("public");
+      }
+
+      const allUserIds = Array.from(new Set([...userIds, ...extraUserIds]));
+
+      console.log(`Broadcasting to ${allUserIds.length} user(s)`);
 
       // Actually broadcast via WebSocket
-      await websocketService.broadcastAnnouncementToAll(announcement, userIds);
+      await websocketService.broadcastAnnouncementToAll(announcement, allUserIds);
 
       console.log(
-        `Announcement ${announcementId} broadcast to ${userIds.length} users`
+        `Announcement ${announcementId} broadcast to ${allUserIds.length} users`
       );
     } catch (error) {
       console.error("Error broadcasting announcement:", error);

@@ -74,6 +74,17 @@ router.get(
   announcementController.getMyUnreadAnnouncements
 );
 
+// Public announcements (no authentication required)
+router.get(
+  "/active/public",
+  announcementController.getPublicActiveAnnouncements
+);
+
+router.get(
+  "/unread/public",
+  announcementController.getPublicUnreadAnnouncements
+);
+
 router.post("/:id/view", authenticate, announcementController.markAsViewed);
 
 router.post(

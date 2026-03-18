@@ -109,6 +109,52 @@ export const getMyUnreadAnnouncements = async (req, res) => {
 };
 
 /**
+ * Get active announcements for public storefront users (no auth required)
+ */
+export const getPublicActiveAnnouncements = async (req, res) => {
+  try {
+    const storefront = req.query.storefront?.toString() || null;
+    const announcements =
+      await announcementService.getActiveAnnouncementsForPublic(storefront);
+
+    res.status(200).json({
+      success: true,
+      data: announcements,
+    });
+  } catch (error) {
+    console.error("Error in getPublicActiveAnnouncements controller:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch public announcements",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Get unread announcements for public storefront users (same as active)
+ */
+export const getPublicUnreadAnnouncements = async (req, res) => {
+  try {
+    const storefront = req.query.storefront?.toString() || null;
+    const announcements =
+      await announcementService.getUnreadAnnouncementsForPublic(storefront);
+
+    res.status(200).json({
+      success: true,
+      data: announcements,
+    });
+  } catch (error) {
+    console.error("Error in getPublicUnreadAnnouncements controller:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch public unread announcements",
+      error: error.message,
+    });
+  }
+};
+
+/**
  * Get a single announcement by ID
  */
 export const getAnnouncementById = async (req, res) => {
@@ -353,4 +399,6 @@ export default {
   broadcastAnnouncement,
   getAnnouncementStats,
   getTemplates,
+  getPublicActiveAnnouncements,
+  getPublicUnreadAnnouncements
 };
