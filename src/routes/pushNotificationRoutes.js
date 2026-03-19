@@ -11,7 +11,7 @@ const router = express.Router();
 router.post("/subscribe", authenticate, async (req, res) => {
   try {
     const { subscription } = req.body;
-    const userId = req.user.id;
+    const userId = req.user?.userId || req.user?.id;
 
     if (!subscription || !subscription.endpoint) {
       return res.status(400).json({
@@ -48,7 +48,7 @@ router.post("/subscribe", authenticate, async (req, res) => {
 // Unregister push subscription
 router.post("/unsubscribe", authenticate, async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user?.userId || req.user?.id;
 
     const success = await pushNotificationService.unregisterSubscription(
       userId
@@ -100,7 +100,7 @@ router.get("/vapid-public-key", (req, res) => {
 // Get push notification preferences
 router.get("/preferences", authenticate, async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user?.userId || req.user?.id;
     const user = await User.findById(userId).select(
       "pushNotificationPreferences"
     );
@@ -134,7 +134,7 @@ router.get("/preferences", authenticate, async (req, res) => {
 // Update push notification preferences
 router.put("/preferences", authenticate, async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user?.userId || req.user?.id;
     const { preferences } = req.body;
 
     if (!preferences || typeof preferences !== "object") {
@@ -187,7 +187,7 @@ router.put("/preferences", authenticate, async (req, res) => {
 // Test push notification (for development)
 router.post("/test", authenticate, async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user?.userId || req.user?.id;
     const {
       title = "Test Notification",
       body = "This is a test push notification",

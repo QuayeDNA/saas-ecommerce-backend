@@ -216,7 +216,7 @@ class SettingsController {
   async changeAdminPassword(req, res) {
     try {
       const { currentPassword, newPassword } = req.body;
-      const userId = req.user.id; // Get current admin's ID
+      const userId = req.user?.userId || req.user?.id; // Get current admin's ID
       const result = await settingsService.changeAdminPassword(
         userId,
         currentPassword,
