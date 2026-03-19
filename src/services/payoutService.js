@@ -100,7 +100,7 @@ class PayoutService {
         throw new Error('You have a pending payout request. Please wait for it to be processed.');
       }
 
-      await this.validateDestination(destination, user);
+      await this.validateDestination(destination);
 
       // Calculate transfer fee and net amount
       const { transferFee, paystackFee, platformFee, netAmount, feeBearer } = await this.calculateTransferFee(amount, destination.type);
@@ -195,7 +195,6 @@ class PayoutService {
 
   async approvePayout(payoutId, adminId, transferReference = null) {
     return await this.withTransaction(async (session) => {
-      const queryOpts = session ? { session } : undefined;
       let payout;
       if (session) {
         payout = await PayoutRequest.findById(payoutId).populate('user').session(session);
@@ -205,6 +204,16 @@ class PayoutService {
       if (!payout) throw new Error('Payout not found');
       if (payout.status !== 'pending') {
         throw new Error(`Payout is already ${payout.status}`);
+      }
+
+      // Prevent approving payouts that result in no net payment to the agent
+      let netAmount = payout.netAmount;
+      if (netAmount == null) {
+        const feeInfo = await this.calculateTransferFee(payout.amount, payout.destination?.type || 'mobile_money');
+        netAmount = feeInfo.netAmount;
+      }
+      if (typeof netAmount === 'number' && netAmount <= 0) {
+        throw new Error('Payout net amount is zero or negative after fees; adjust amount or fees before approving.');
       }
 
       const user = payout.user;
@@ -274,14 +283,30 @@ class PayoutService {
   async rejectPayout(payoutId, adminId, rejectionReason) {
     const payout = await PayoutRequest.findById(payoutId).populate('user');
     if (!payout) throw new Error('Payout not found');
-    if (payout.status !== 'pending') {
-      throw new Error(`Payout is already ${payout.status}`);
+
+    const isPending = payout.status === 'pending';
+    const isApprovedOrProcessing = ['approved', 'processing'].includes(payout.status);
+    const isFailed = payout.status === 'failed';
+
+    if (!isPending && !isApprovedOrProcessing && !isFailed) {
+      throw new Error(`Payout cannot be declined in its current status (${payout.status})`);
+    }
+
+    // Refund agent if it was already approved/processing (earnings already deducted)
+    if (isApprovedOrProcessing) {
+      try {
+        await this.refundFailedPayout(payout);
+        logger.info('[Payout] Refunded earnings for declined payout', { payoutId, userId: payout.user._id });
+      } catch (refundErr) {
+        logger.error('[Payout] Failed to refund earnings for declined payout', { payoutId, message: refundErr.message });
+        // Proceed with rejection anyway, but log that manual reconciliation is needed.
+      }
     }
 
     payout.status = 'rejected';
     payout.reviewedBy = adminId;
     payout.reviewedAt = new Date();
-    payout.rejectionReason = rejectionReason || 'Rejected by administrator';
+    payout.rejectionReason = rejectionReason || 'Declined by administrator';
     await payout.save();
 
     logger.info('[Payout] Rejected', { payoutId, userId: payout.user._id });
@@ -289,8 +314,8 @@ class PayoutService {
     try {
       await notificationService.createInAppNotification(
         payout.user._id.toString(),
-        'Payout Rejected',
-        `Your payout request of GHS ${payout.amount.toFixed(2)} was rejected. ${payout.rejectionReason}`,
+        'Payout Declined',
+        `Your payout request of GHS ${payout.amount.toFixed(2)} was declined. ${payout.rejectionReason}`,
         'error',
         { type: 'payout_rejected', payoutId: payout._id }
       );
@@ -340,9 +365,31 @@ class PayoutService {
 
   async processPayoutAuto(payoutId) {
     const payout = await PayoutRequest.findById(payoutId).populate('user');
-    if (!payout) throw new Error('Payout not found');
+    if (!payout) {
+      const err = new Error('Payout not found');
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
+
+    if (payout.status === 'completed') {
+      const err = new Error('Payout is already completed');
+      err.code = 'ALREADY_COMPLETED';
+      err.status = payout.status;
+      throw err;
+    }
+
+    if (payout.status === 'processing') {
+      const err = new Error('Payout is already being processed');
+      err.code = 'ALREADY_PROCESSING';
+      err.status = payout.status;
+      throw err;
+    }
+
     if (payout.status !== 'approved') {
-      throw new Error('Payout must be approved first');
+      const err = new Error('Payout must be approved first');
+      err.code = 'NOT_APPROVED';
+      err.status = payout.status;
+      throw err;
     }
 
     // Recalculate fees if not already set or if transferFee is 0 (legacy/unconfigured payouts)
@@ -373,6 +420,12 @@ class PayoutService {
 
     try {
       await paystackService.ensureKeys();
+      if (!paystackService.isConfigured()) {
+        const err = new Error('Paystack is not configured for transfers');
+        err.code = 'PAYSTACK_NOT_CONFIGURED';
+        throw err;
+      }
+
       const transfer = await paystackService.initiateTransfer({
         source: 'balance',
         amount: paystackService.convertToPesewas(transferAmountGHS),
@@ -395,14 +448,26 @@ class PayoutService {
       return payout;
     } catch (err) {
       // Save the failure reason before refunding so the original Paystack error is preserved
+      const paystackData = err?.response?.data;
+      const failureReason =
+        paystackData?.message ||
+        paystackData?.data?.message ||
+        paystackData?.error ||
+        err.message ||
+        'Transfer failed';
+
       const originalError = err;
+      if (!err.code) {
+        err.code = 'TRANSFER_FAILED';
+      }
+
       payout.status = 'failed';
       payout.paystackTransfer = payout.paystackTransfer || {};
-      payout.paystackTransfer.failureReason = err.message;
+      payout.paystackTransfer.failureReason = failureReason;
       try { await payout.save(); } catch (saveErr) {
         logger.warn('[Payout] Failed to save failure status', { payoutId, message: saveErr.message });
       }
-      logger.error('[Payout] Transfer failed', { payoutId, error: err.message });
+      logger.error('[Payout] Transfer failed', { payoutId, error: failureReason });
       try {
         await this.refundFailedPayout(payout);
       } catch (refundErr) {
@@ -410,13 +475,13 @@ class PayoutService {
         // Update the payout record so admin knows manual intervention is required.
         logger.error('[Payout] CRITICAL: Refund failed after transfer failure — MANUAL REFUND REQUIRED', {
           payoutId,
-          transferError: err.message,
+          transferError: failureReason,
           refundError: refundErr.message,
         });
         try {
           payout.paystackTransfer = payout.paystackTransfer || {};
           payout.paystackTransfer.failureReason =
-            `Transfer failed: ${err.message} | REFUND FAILED: ${refundErr.message} — Manual refund required`;
+            `Transfer failed: ${failureReason} | REFUND FAILED: ${refundErr.message} — Manual refund required`;
           await payout.save();
         } catch (saveErr2) {
           logger.error('[Payout] Failed to persist refund-failure notice on payout', {
@@ -452,7 +517,7 @@ class PayoutService {
     return recipient.recipient_code;
   }
 
-  async validateDestination(destination, user) {
+  async validateDestination(destination) {
     if (destination.type === 'mobile_money') {
       if (!this.isValidGhanaPhone(destination.phoneNumber)) {
         throw new Error('Invalid Ghana phone number format');
@@ -468,7 +533,7 @@ class PayoutService {
           destination.bankCode
         );
         destination.recipientName = resolved.account_name;
-      } catch (err) {
+      } catch {
         throw new Error('Could not verify bank account details. Please check account number and bank.');
       }
     }
@@ -637,6 +702,55 @@ class PayoutService {
       .sort({ requestedAt: 1 })
       .lean();
     return payouts;
+  }
+
+  async getPayoutHistoryForAdmin({ page = 1, limit = 25, status, userId, search, startDate, endDate } = {}) {
+    const query = {};
+
+    if (status && status !== 'all') {
+      query.status = status;
+    }
+
+    if (userId) {
+      query.user = userId;
+    }
+
+    if (startDate || endDate) {
+      query.requestedAt = {};
+      if (startDate) query.requestedAt.$gte = new Date(startDate);
+      if (endDate) query.requestedAt.$lte = new Date(endDate);
+    }
+
+    if (search && typeof search === 'string' && search.trim()) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(escaped, 'i');
+      query.$or = [
+        { 'paystackTransfer.transferReference': regex },
+        { 'destination.phoneNumber': regex },
+        { 'destination.accountNumber': regex },
+      ];
+    }
+
+    const total = await PayoutRequest.countDocuments(query);
+    const pages = Math.max(1, Math.ceil(total / limit));
+    const pageNum = Math.min(Math.max(1, Number(page) || 1), pages);
+
+    const payouts = await PayoutRequest.find(query)
+      .populate('user', 'fullName email phone earningsBalance userType')
+      .sort({ requestedAt: -1 })
+      .skip((pageNum - 1) * limit)
+      .limit(limit)
+      .lean();
+
+    return {
+      payouts,
+      pagination: {
+        total,
+        page: pageNum,
+        limit,
+        pages,
+      },
+    };
   }
 }
 

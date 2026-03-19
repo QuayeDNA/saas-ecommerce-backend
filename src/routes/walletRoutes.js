@@ -106,9 +106,11 @@ router.get(
 
 // Admin payout queue
 router.get("/admin/payouts", authenticate, authorize("super_admin"), payoutController.getPendingPayouts);
+router.get("/admin/payouts/history", authenticate, authorize("super_admin"), payoutController.getPayoutHistory);
 router.put("/admin/payouts/:id/approve", authenticate, authorize("super_admin"), payoutController.approvePayout);
 router.put("/admin/payouts/:id/reject", authenticate, authorize("super_admin"), payoutController.rejectPayout);
 router.post("/admin/payouts/:id/process", authenticate, authorize("super_admin"), payoutController.processPayout);
 router.put("/admin/payouts/:id/complete", authenticate, authorize("super_admin"), payoutController.markManuallyCompleted);
+router.get("/admin/payouts/availability", authenticate, authorize("super_admin"), payoutController.getAutoPayoutAvailability);
 
 export default router;

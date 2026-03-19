@@ -1,5 +1,7 @@
 // src/controllers/payoutController.js
 import payoutService from '../services/payoutService.js';
+import settingsService from '../services/settingsService.js';
+import paystackService from '../services/paystackService.js';
 import logger from '../utils/logger.js';
 
 class PayoutController {
@@ -75,6 +77,25 @@ class PayoutController {
     }
   }
 
+  async getPayoutHistory(req, res) {
+    try {
+      const { page, limit, status, userId, search, startDate, endDate } = req.query;
+      const result = await payoutService.getPayoutHistoryForAdmin({
+        page: Number(page) || 1,
+        limit: Number(limit) || 25,
+        status: status || undefined,
+        userId: userId || undefined,
+        search: search || undefined,
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
+      });
+      return res.json({ success: true, data: result });
+    } catch (err) {
+      logger.error('[Payout] getPayoutHistory error', { message: err.message });
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  }
+
   async approvePayout(req, res) {
     try {
       const adminId = req.user.userId;
@@ -119,11 +140,21 @@ class PayoutController {
         data: payout,
       });
     } catch (err) {
-      logger.error(`[Payout] processPayout error: ${err.message} | Paystack: ${JSON.stringify(err.response?.data) ?? 'n/a'}`);
-      const detail = err.response?.data?.message;
+      const errObj = err && typeof err === 'object' ? err : {};
+      const apiData = errObj?.response?.data;
+      const code = (apiData && apiData.code) || errObj.code || 'UNKNOWN_ERROR';
+      const status = (apiData && apiData.status) || errObj.status;
+      const errMessage = (errObj && errObj.message) || String(err);
+      const detailMessage = apiData?.message;
+      const message = detailMessage ? `${errMessage}: ${detailMessage}` : errMessage;
+
+      logger.error(`[Payout] processPayout error: ${message} | code: ${code} | Paystack: ${JSON.stringify(apiData) ?? 'n/a'}`);
+
       return res.status(400).json({
         success: false,
-        message: detail ? `${err.message}: ${detail}` : err.message,
+        code,
+        status,
+        message,
       });
     }
   }
@@ -142,6 +173,27 @@ class PayoutController {
     } catch (err) {
       logger.error(`[Payout] markManuallyCompleted error: ${err.message}`);
       return res.status(400).json({ success: false, message: err.message });
+    }
+  }
+
+  async getAutoPayoutAvailability(req, res) {
+    try {
+      const payoutSettings = await settingsService.getPayoutSettings();
+      const paystackConfigured = paystackService.isConfigured();
+      const canAutoPayout = paystackConfigured && payoutSettings.autoPayoutEnabled;
+
+      return res.json({
+        success: true,
+        data: {
+          autoPayoutEnabled: payoutSettings.autoPayoutEnabled,
+          canAutoPayout,
+          paystackConfigured,
+          message: paystackConfigured ? 'Auto payout is available' : 'Paystack is not configured for transfers',
+        },
+      });
+    } catch (err) {
+      logger.error(`[Payout] getAutoPayoutAvailability error: ${err.message}`);
+      return res.status(500).json({ success: false, message: err.message });
     }
   }
 }
