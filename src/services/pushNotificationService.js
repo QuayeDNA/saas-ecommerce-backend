@@ -10,12 +10,12 @@ class PushNotificationService {
       webpush.setVapidDetails(
         "mailto:" + (process.env.VAPID_EMAIL || "admin@brytelinks.com"),
         process.env.VAPID_PUBLIC_KEY,
-        process.env.VAPID_PRIVATE_KEY
+        process.env.VAPID_PRIVATE_KEY,
       );
       logger.info("Push notification service initialized with VAPID keys");
     } else {
       logger.warn(
-        "VAPID keys not configured. Push notifications will not work."
+        "VAPID keys not configured. Push notifications will not work.",
       );
     }
   }
@@ -49,6 +49,16 @@ class PushNotificationService {
       }
 
       if (!user.pushSubscription) {
+        logger.info(`No push subscription for user ${userId}`);
+        return false;
+      }
+
+      const sub = user.pushSubscription;
+      if (!sub.endpoint || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) {
+        logger.warn(`Invalid push subscription for user ${userId}, removing`);
+        await User.findByIdAndUpdate(userId, {
+          $unset: { pushSubscription: 1 },
+        });
         return false;
       }
 
@@ -68,7 +78,7 @@ class PushNotificationService {
     } catch (error) {
       logger.error(
         `Failed to send push notification to user ${userId}:`,
-        error
+        error,
       );
 
       // If subscription is invalid, remove it
@@ -81,7 +91,7 @@ class PushNotificationService {
         } catch (updateError) {
           logger.error(
             `Failed to remove invalid push subscription for user ${userId}:`,
-            updateError
+            updateError,
           );
         }
       }
@@ -106,7 +116,7 @@ class PushNotificationService {
       } catch (error) {
         logger.error(
           `Error sending push notification to user ${userId}:`,
-          error
+          error,
         );
         results.push({ userId, success: false, error: error.message });
       }
@@ -147,7 +157,7 @@ class PushNotificationService {
     } catch (error) {
       logger.error(
         `Failed to register push subscription for user ${userId}:`,
-        error
+        error,
       );
       return false;
     }
@@ -166,7 +176,7 @@ class PushNotificationService {
     } catch (error) {
       logger.error(
         `Failed to unregister push subscription for user ${userId}:`,
-        error
+        error,
       );
       return false;
     }
@@ -215,7 +225,7 @@ class PushNotificationService {
     const notification = {
       title: "Wallet Update",
       body: `${type === "credit" ? "+" : "-"}${Math.abs(
-        amount
+        amount,
       )} GHS: ${description}`,
       url: "/wallet",
       data: {

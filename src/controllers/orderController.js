@@ -42,7 +42,7 @@ class OrderController {
       // Validate tenantId exists and is valid
       if (!tenantId) {
         logger.error(
-          `Order creation failed: tenantId missing for user ${userId}`
+          `Order creation failed: tenantId missing for user ${userId}`,
         );
         return res.status(400).json({
           success: false,
@@ -53,7 +53,7 @@ class OrderController {
       const order = await orderService.createSingleOrder(
         req.body,
         tenantId,
-        userId
+        userId,
       );
 
       res.status(201).json({
@@ -88,7 +88,7 @@ class OrderController {
       // Validate tenantId exists and is valid
       if (!tenantId) {
         logger.error(
-          `Bulk order creation failed: tenantId missing for user ${userId}`
+          `Bulk order creation failed: tenantId missing for user ${userId}`,
         );
         return res.status(400).json({
           success: false,
@@ -99,7 +99,7 @@ class OrderController {
       // Ensure tenantId is a string for validation
       const tenantIdString = tenantId.toString();
       logger.debug(
-        `Bulk order tenantId: ${tenantIdString} (type: ${typeof tenantIdString})`
+        `Bulk order tenantId: ${tenantIdString} (type: ${typeof tenantIdString})`,
       );
 
       const validationData = {
@@ -112,7 +112,7 @@ class OrderController {
         orderValidation.createBulk.validate(validationData);
       if (error) {
         logger.error(
-          `Bulk order validation error: ${error.details[0].message}`
+          `Bulk order validation error: ${error.details[0].message}`,
         );
         logger.error(`Validation error details:`, error.details);
         return res
@@ -121,7 +121,7 @@ class OrderController {
       }
 
       logger.info(
-        "Bulk order validation passed, calling orderService.createBulkOrders"
+        "Bulk order validation passed, calling orderService.createBulkOrders",
       );
       const result = await orderService.createBulkOrders(value);
       return res.status(201).json({ success: true, ...result });
@@ -175,7 +175,7 @@ class OrderController {
         effectiveTenantId,
         filters,
         pagination,
-        userId
+        userId,
       );
 
       res.json({
@@ -231,7 +231,7 @@ class OrderController {
         effectiveTenantId,
         filters,
         pagination,
-        userId
+        userId,
       );
 
       res.json({
@@ -297,7 +297,7 @@ class OrderController {
         orderId,
         itemId,
         effectiveTenantId,
-        userId
+        userId,
       );
 
       res.json({
@@ -353,7 +353,7 @@ class OrderController {
         id,
         effectiveTenantId,
         userId,
-        reason
+        reason,
       );
 
       // Prepare response message based on whether refund was processed
@@ -394,7 +394,7 @@ class OrderController {
         id,
         tenantId,
         userId,
-        reportDescription
+        reportDescription,
       );
 
       res.json({
@@ -442,7 +442,7 @@ class OrderController {
       const result = await orderService.processSingleDraftOrder(
         orderId,
         userId,
-        tenantId
+        tenantId,
       );
 
       res.json({
@@ -509,20 +509,20 @@ class OrderController {
       const updatedOrder = await Order.findByIdAndUpdate(
         order._id,
         updateData,
-        { new: true }
+        { new: true },
       );
-      
+
       // If storefront order moved to completed, credit profit via the service helper
       if (
         updatedOrder &&
-        updatedOrder.orderType === 'storefront' &&
-        status === 'completed'
+        updatedOrder.orderType === "storefront" &&
+        status === "completed"
       ) {
         try {
           await orderService._creditStorefrontProfit(updatedOrder);
         } catch (err) {
           logger.error(
-            `[OrderController] failed to credit storefront profit after manual status update for order ${updatedOrder._id}: ${err.message}`
+            `[OrderController] failed to credit storefront profit after manual status update for order ${updatedOrder._id}: ${err.message}`,
           );
         }
       }
@@ -531,13 +531,13 @@ class OrderController {
       if (status === "failed" && updatedOrder.paymentStatus === "paid") {
         try {
           logger.info(
-            `Order ${updatedOrder.orderNumber} marked as failed, initiating refund`
+            `Order ${updatedOrder.orderNumber} marked as failed, initiating refund`,
           );
 
           // Calculate total for refund
           const orderTotal = updatedOrder.items.reduce(
             (sum, item) => sum + item.totalPrice,
-            0
+            0,
           );
 
           // Refund wallet
@@ -546,7 +546,7 @@ class OrderController {
             orderTotal,
             `Refund for failed order ${updatedOrder.orderNumber}`,
             updatedOrder._id,
-            { orderType: updatedOrder.orderType, reason: "order_failed" }
+            { orderType: updatedOrder.orderType, reason: "order_failed" },
           );
 
           // Update payment status
@@ -557,7 +557,7 @@ class OrderController {
           logger.info(
             `✅ Refunded GH₵${orderTotal.toFixed(2)} for failed order ${
               updatedOrder.orderNumber
-            }`
+            }`,
           );
 
           // Notify user about refund
@@ -565,7 +565,7 @@ class OrderController {
             updatedOrder.createdBy.toString(),
             "Order Failed - Wallet Refunded",
             `Order ${updatedOrder.orderNumber} failed. GH₵${orderTotal.toFixed(
-              2
+              2,
             )} has been refunded to your wallet.`,
             "info",
             {
@@ -573,39 +573,67 @@ class OrderController {
               orderNumber: updatedOrder.orderNumber,
               refundAmount: orderTotal,
               type: "order_refunded",
-            }
+            },
           );
         } catch (refundError) {
           logger.error(
-            `❌ Refund error for order ${updatedOrder.orderNumber}: ${refundError.message}`
+            `❌ Refund error for order ${updatedOrder.orderNumber}: ${refundError.message}`,
           );
           // Don't fail the status update if refund fails
         }
       }
 
-      // Broadcast order status update via WebSocket
+      // Broadcast order status update via WebSocket + create in-app + push notification for order creator
       try {
         const superAdmins = await User.find({ userType: "super_admin" });
         const superAdminIds = superAdmins.map((admin) => admin._id.toString());
 
+        const orderUpdatePayload = {
+          orderId: updatedOrder._id.toString(),
+          orderNumber: updatedOrder.orderNumber,
+          status: updatedOrder.status,
+          paymentStatus: updatedOrder.paymentStatus,
+          processingNotes: updatedOrder.processingNotes,
+          processedBy: updatedOrder.processedBy,
+          items: updatedOrder.items,
+        };
+
         websocketService.broadcastOrderStatusUpdate(
+          orderUpdatePayload,
+          updatedOrder.createdBy.toString(),
+          superAdminIds,
+        );
+
+        // In-app notification (also triggers push + websocket-type 'new_notification')
+        const orderCreator = await User.findById(
+          updatedOrder.createdBy.toString(),
+        );
+        const creatorType = orderCreator?.userType || "agent";
+        const creatorLink =
+          creatorType === "super_admin"
+            ? "/superadmin/orders"
+            : creatorType === "admin"
+              ? "/admin/orders"
+              : "/agent/dashboard/orders";
+
+        await notificationService.createInAppNotification(
+          updatedOrder.createdBy.toString(),
+          `Order ${updatedOrder.orderNumber} status updated`,
+          `Your order ${updatedOrder.orderNumber} status is now ${updatedOrder.status}.`,
+          "info",
           {
             orderId: updatedOrder._id.toString(),
             orderNumber: updatedOrder.orderNumber,
             status: updatedOrder.status,
-            paymentStatus: updatedOrder.paymentStatus,
-            processingNotes: updatedOrder.processingNotes,
-            processedBy: updatedOrder.processedBy,
-            items: updatedOrder.items,
+            type: "order_status_updated",
+            navigationLink: creatorLink,
           },
-          updatedOrder.createdBy.toString(),
-          superAdminIds
         );
       } catch (wsError) {
         logger.error(
-          `Failed to broadcast order status via WebSocket: ${wsError.message}`
+          `Failed to broadcast order status via WebSocket and/or create notification: ${wsError.message}`,
         );
-        // Don't fail the request if WebSocket fails
+        // Don't fail the request if this fails
       }
 
       res.json({
@@ -630,7 +658,7 @@ class OrderController {
 
       const analytics = await orderService.getOrderAnalytics(
         tenantId,
-        timeframe
+        timeframe,
       );
 
       res.json({
@@ -654,7 +682,7 @@ class OrderController {
 
       const monthlyData = await orderService.getMonthlyRevenue(
         userId,
-        userType
+        userType,
       );
 
       res.json({
@@ -792,7 +820,7 @@ class OrderController {
         analytics.overallTotalSales = overallAgg[0]?.overallTotalSales || 0;
       } catch (err) {
         logger.error(
-          `Failed to compute overall total sales for agent: ${err.message}`
+          `Failed to compute overall total sales for agent: ${err.message}`,
         );
         analytics.overallTotalSales = 0;
       }
@@ -808,7 +836,7 @@ class OrderController {
           23,
           59,
           59,
-          999
+          999,
         );
 
         const monthlyMatch = {
@@ -843,13 +871,13 @@ class OrderController {
             Math.round((commission + Number.EPSILON) * 100) / 100;
         } catch (err) {
           logger.error(
-            `Failed to compute monthly commission for agent: ${err.message}`
+            `Failed to compute monthly commission for agent: ${err.message}`,
           );
           analytics.monthlyCommission = 0;
         }
       } catch (err) {
         logger.error(
-          `Failed to compute monthly revenue for agent: ${err.message}`
+          `Failed to compute monthly revenue for agent: ${err.message}`,
         );
         analytics.monthlyRevenue = 0;
         analytics.monthlyOrderCount = 0;
@@ -879,7 +907,7 @@ class OrderController {
         analytics.statusCounts = counts;
       } catch (err) {
         logger.error(
-          `Failed to compute status counts for agent: ${err.message}`
+          `Failed to compute status counts for agent: ${err.message}`,
         );
         analytics.statusCounts = {
           completed: 0,
@@ -895,7 +923,7 @@ class OrderController {
         const startOfDay = new Date(
           today.getFullYear(),
           today.getMonth(),
-          today.getDate()
+          today.getDate(),
         );
         const endOfDay = new Date(
           today.getFullYear(),
@@ -904,7 +932,7 @@ class OrderController {
           23,
           59,
           59,
-          999
+          999,
         );
 
         const todayStatusAgg = await Order.aggregate([
@@ -934,7 +962,7 @@ class OrderController {
         analytics.todayCounts = todayCounts;
       } catch (err) {
         logger.error(
-          `Failed to compute today's status counts for agent: ${err.message}`
+          `Failed to compute today's status counts for agent: ${err.message}`,
         );
         analytics.todayCounts = {
           completed: 0,
@@ -982,6 +1010,8 @@ class OrderController {
         failed: [],
         total: orderIds.length,
       };
+
+      const statusUpdatesByCreator = new Map();
 
       for (const orderId of orderIds) {
         try {
@@ -1034,67 +1064,19 @@ class OrderController {
 
           await order.save();
 
-          // Send notification for bulk processing
-          try {
-            const orderCreator = await User.findById(order.createdBy);
-            const processor = await User.findById(userId);
-
-            if (orderCreator) {
-              await notificationService.createInAppNotification(
-                orderCreator._id.toString(),
-                `Order ${
-                  action === "completed" ? "Completed" : "Processing Started"
-                }`,
-                `Your order ${order.orderNumber} has been ${
-                  action === "completed" ? "completed" : "started processing"
-                } by ${processor?.fullName || processor?.email || "Admin"}.`,
-                action === "completed" ? "success" : "info",
-                {
-                  orderId: order._id.toString(),
-                  orderNumber: order.orderNumber,
-                  status: action,
-                  processedBy: processor?.fullName || processor?.email,
-                  type: `order_${action}`,
-                  navigationLink: this.getNavigationLink(
-                    orderCreator.userType,
-                    "orders"
-                  ),
-                }
-              );
-            }
-
-            // Notify super admins about bulk processing
-            const superAdmins = await User.find(
-              { userType: "super_admin" },
-              "userType"
-            );
-            for (const admin of superAdmins) {
-              await notificationService.createInAppNotification(
-                admin._id.toString(),
-                `Order ${
-                  action === "completed" ? "Completed" : "Processing Started"
-                }`,
-                `Order ${order.orderNumber} has been ${
-                  action === "completed" ? "completed" : "started processing"
-                } by ${processor?.fullName || processor?.email || "Admin"}.`,
-                action === "completed" ? "success" : "info",
-                {
-                  orderId: order._id.toString(),
-                  orderNumber: order.orderNumber,
-                  status: action,
-                  processedBy: processor?.fullName || processor?.email,
-                  type: `order_${action}`,
-                  navigationLink: this.getNavigationLink(
-                    admin.userType,
-                    "orders"
-                  ),
-                }
-              );
-            }
-          } catch (error) {
-            logger.error(
-              `Failed to send bulk processing notification: ${error.message}`
-            );
+          // Accumulate creator updates for batching
+          const creatorId = order.createdBy.toString();
+          if (!statusUpdatesByCreator.has(creatorId)) {
+            statusUpdatesByCreator.set(creatorId, {
+              count: 0,
+              orderNumbers: [],
+              status: action,
+            });
+          }
+          const entry = statusUpdatesByCreator.get(creatorId);
+          if (entry) {
+            entry.count += 1;
+            entry.orderNumbers.push(order.orderNumber);
           }
 
           results.successful.push({
@@ -1108,6 +1090,88 @@ class OrderController {
             reason: error.message,
           });
         }
+      }
+
+      // Notify creators once per batch (bulk update per agent)
+      for (const [creatorId, summary] of statusUpdatesByCreator.entries()) {
+        try {
+          const creator = await User.findById(creatorId);
+          if (!creator) continue;
+
+          const orderWord = summary.count > 1 ? "orders" : "order";
+          const body =
+            summary.count > 1
+              ? `${summary.count} ${orderWord} updated to ${summary.status}: ${summary.orderNumbers.join(", ")}`
+              : `Order ${summary.orderNumbers[0]} updated to ${summary.status}`;
+
+          const creatorNavigationLink =
+            creator.userType === "super_admin"
+              ? "/superadmin/orders"
+              : creator.userType === "admin"
+                ? "/admin/orders"
+                : "/agent/dashboard/orders";
+
+          await notificationService.createInAppNotification(
+            creatorId,
+            "Order Status Update",
+            body,
+            "info",
+            {
+              type: "order_status_bulk_update",
+              orderIds: summary.orderNumbers,
+              status: summary.status,
+              navigationLink: creatorNavigationLink,
+            },
+          );
+
+          // Also send a one-off WebSocket update to this agent
+          websocketService.sendOrderUpdateToUser(creatorId, {
+            orderIds: summary.orderNumbers,
+            status: summary.status,
+            count: summary.count,
+            type: "bulk",
+          });
+        } catch (notifyError) {
+          logger.error(
+            `Failed to notify creator ${creatorId} for bulk order update: ${notifyError.message}`,
+          );
+        }
+      }
+
+      // Notify super admins once about bulk changes
+      try {
+        const superAdmins = await User.find({ userType: "super_admin" });
+        const adminIds = superAdmins.map((a) => a._id.toString());
+
+        if (adminIds.length > 0 && results.successful.length > 0) {
+          const summaryText = `${results.successful.length} order(s) updated to ${action}`;
+          for (const adminId of adminIds) {
+            await notificationService.createInAppNotification(
+              adminId,
+              "Bulk Order Status Update",
+              summaryText,
+              "info",
+              {
+                type: "order_status_bulk_update",
+                count: results.successful.length,
+                status: action,
+                navigationLink: this.getNavigationLink("super_admin", "orders"),
+              },
+            );
+            websocketService.sendNotificationToUser(adminId, {
+              type: "order_status_updated",
+              data: {
+                count: results.successful.length,
+                status: action,
+                bulk: true,
+              },
+            });
+          }
+        }
+      } catch (adminNotifyError) {
+        logger.error(
+          `Failed to notify super admins for bulk order update: ${adminNotifyError.message}`,
+        );
       }
 
       res.json({
@@ -1147,7 +1211,7 @@ class OrderController {
         return res.status(400).json({
           success: false,
           message: `Invalid reception status. Must be one of: ${validStatuses.join(
-            ", "
+            ", ",
           )}`,
         });
       }
@@ -1168,7 +1232,7 @@ class OrderController {
             orderId,
             receptionStatus,
             userId,
-            effectiveTenantId
+            effectiveTenantId,
           );
 
           results.successful.push({
@@ -1216,7 +1280,7 @@ class OrderController {
         return res.status(400).json({
           success: false,
           message: `Invalid reception status. Must be one of: ${validStatuses.join(
-            ", "
+            ", ",
           )}`,
         });
       }
@@ -1232,7 +1296,7 @@ class OrderController {
       const updatedOrder = await orderService.updateReceptionStatus(
         id,
         receptionStatus,
-        userId
+        userId,
       );
 
       res.json({

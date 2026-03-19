@@ -52,7 +52,7 @@ class NotificationService {
         !this.whatsappPhoneNumberId
       ) {
         logger.warn(
-          "WhatsApp configuration missing. Skipping WhatsApp notification."
+          "WhatsApp configuration missing. Skipping WhatsApp notification.",
         );
         return false;
       }
@@ -77,7 +77,7 @@ class NotificationService {
             Authorization: `Bearer ${this.whatsappToken}`,
             "Content-Type": "application/json",
           },
-        }
+        },
       );
 
       logger.info(`WhatsApp message sent successfully to ${phoneNumber}`);
@@ -102,7 +102,7 @@ class NotificationService {
     title,
     message,
     type = "info",
-    metadata = {}
+    metadata = {},
   ) {
     try {
       const notification = new Notification({
@@ -133,9 +133,37 @@ class NotificationService {
         });
 
         if (user && user.pushSubscription) {
-          const prefsEnabled =
+          const globalEnabled =
             user.pushNotificationPreferences?.enabled !== false;
-          logger.info(`Push notification enabled: ${prefsEnabled}`);
+          let typeSpecificEnabled = true;
+
+          const notificationType = metadata?.type || "";
+          if (
+            notificationType === "order_status_updated" ||
+            notificationType === "order_status_bulk_update"
+          ) {
+            typeSpecificEnabled =
+              user.pushNotificationPreferences?.orderUpdates !== false;
+          } else if (notificationType === "wallet_update") {
+            typeSpecificEnabled =
+              user.pushNotificationPreferences?.walletUpdates !== false;
+          } else if (
+            notificationType === "commission_update" ||
+            notificationType === "commission_created" ||
+            notificationType === "commission_paid" ||
+            notificationType === "commission_finalized"
+          ) {
+            typeSpecificEnabled =
+              user.pushNotificationPreferences?.commissionUpdates !== false;
+          } else if (notificationType === "announcement") {
+            typeSpecificEnabled =
+              user.pushNotificationPreferences?.announcements !== false;
+          }
+
+          const prefsEnabled = globalEnabled && typeSpecificEnabled;
+          logger.info(
+            `Push notification enabled (global=${globalEnabled}, type=${notificationType}, typeSpecific=${typeSpecificEnabled}): ${prefsEnabled}`,
+          );
 
           if (prefsEnabled) {
             const result = await pushNotificationService.sendToUser(userId, {
@@ -145,10 +173,12 @@ class NotificationService {
               data: metadata,
             });
             logger.info(
-              `Push notification result for user ${userId}: ${result}`
+              `Push notification result for user ${userId}: ${result}`,
             );
           } else {
-            logger.info(`Push notifications disabled for user ${userId}`);
+            logger.info(
+              `Push notifications disabled for user ${userId} (type: ${notificationType})`,
+            );
           }
         } else {
           logger.info(`No push subscription for user ${userId}`);
@@ -201,7 +231,7 @@ class NotificationService {
       logger.info(`Wallet top-up approval notification sent to user ${userId}`);
     } catch (error) {
       logger.error(
-        `Failed to send wallet top-up approval notification: ${error.message}`
+        `Failed to send wallet top-up approval notification: ${error.message}`,
       );
     }
   }
@@ -218,13 +248,13 @@ class NotificationService {
     userId,
     amount,
     reason,
-    rejectedBy
+    rejectedBy,
   ) {
     try {
       const user = await User.findById(userId);
       if (!user) {
         logger.error(
-          `User not found for wallet rejection notification: ${userId}`
+          `User not found for wallet rejection notification: ${userId}`,
         );
         return;
       }
@@ -248,11 +278,11 @@ class NotificationService {
       }
 
       logger.info(
-        `Wallet top-up rejection notification sent to user ${userId}`
+        `Wallet top-up rejection notification sent to user ${userId}`,
       );
     } catch (error) {
       logger.error(
-        `Failed to send wallet top-up rejection notification: ${error.message}`
+        `Failed to send wallet top-up rejection notification: ${error.message}`,
       );
     }
   }
@@ -273,7 +303,7 @@ class NotificationService {
     orderNumber,
     oldStatus,
     newStatus,
-    orderDetails = {}
+    orderDetails = {},
   ) {
     try {
       const user = await User.findById(userId);
@@ -305,8 +335,8 @@ class NotificationService {
         newStatus === "completed"
           ? "success"
           : newStatus === "failed"
-          ? "error"
-          : "info",
+            ? "error"
+            : "info",
         {
           orderId,
           orderNumber,
@@ -314,7 +344,7 @@ class NotificationService {
           newStatus,
           type: "order_status_update",
           navigationLink: this.getNavigationLink(user.userType, "orders"),
-        }
+        },
       );
 
       // Send WhatsApp notification if phone number exists
@@ -337,11 +367,11 @@ class NotificationService {
       }
 
       logger.info(
-        `Order status notification sent to user ${userId} for order ${orderNumber}`
+        `Order status notification sent to user ${userId} for order ${orderNumber}`,
       );
     } catch (error) {
       logger.error(
-        `Failed to send order status notification: ${error.message}`
+        `Failed to send order status notification: ${error.message}`,
       );
     }
   }
@@ -360,7 +390,7 @@ class NotificationService {
     orderId,
     orderNumber,
     processed,
-    total
+    total,
   ) {
     try {
       const user = await User.findById(userId);
@@ -396,11 +426,11 @@ class NotificationService {
       }
 
       logger.info(
-        `Bulk order progress notification sent to user ${userId} for order ${orderNumber}`
+        `Bulk order progress notification sent to user ${userId} for order ${orderNumber}`,
       );
     } catch (error) {
       logger.error(
-        `Failed to send bulk order progress notification: ${error.message}`
+        `Failed to send bulk order progress notification: ${error.message}`,
       );
     }
   }
@@ -441,7 +471,7 @@ class NotificationService {
       const notification = await Notification.findOneAndUpdate(
         { _id: notificationId, user: userId },
         { read: true },
-        { new: true }
+        { new: true },
       );
 
       return notification;
@@ -460,13 +490,13 @@ class NotificationService {
     try {
       const result = await Notification.updateMany(
         { user: userId, read: false },
-        { read: true }
+        { read: true },
       );
 
       return result;
     } catch (error) {
       logger.error(
-        `Failed to mark all notifications as read: ${error.message}`
+        `Failed to mark all notifications as read: ${error.message}`,
       );
       throw error;
     }
@@ -524,7 +554,7 @@ class NotificationService {
       const notification = await Notification.findOneAndUpdate(
         { _id: notificationId, user: userId },
         { read: false },
-        { new: true }
+        { new: true },
       );
 
       return notification;
