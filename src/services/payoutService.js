@@ -41,16 +41,33 @@ class PayoutService {
 
   // helper that attempts a mongodb transaction and gracefully falls back to
   // non-transactional execution if the server isn't a replica set (e.g. local
-  // development).  Mirrors orderService.executeWithTransaction.
+  // development). Mirrors orderService.executeWithTransaction.
   async withTransaction(operation) {
+    let session;
+
+    // Some local setups (standalone mongod) do not support transactions. In such
+    // cases, we fall back to running without sessions.
     try {
-      const session = await mongoose.startSession();
+      session = await mongoose.startSession();
+    } catch (startErr) {
+      logger.warn('[Payout] transactions unavailable, running without session', { message: startErr.message });
+      return await operation(null);
+    }
+
+    try {
       try {
         session.startTransaction();
-        const result = await operation(session);
-        await session.commitTransaction();
+      } catch (startTxErr) {
+        logger.warn('[Payout] transactions not supported on this Mongo deployment, running without session', {
+          message: startTxErr.message,
+        });
         session.endSession();
-        return result;
+        return await operation(null);
+      }
+
+      let result;
+      try {
+        result = await operation(session);
       } catch (opErr) {
         // abort if possible then rethrow
         try {
@@ -58,15 +75,34 @@ class PayoutService {
             await session.abortTransaction();
           }
         } catch (abortErr) {
-          logger.warn('[Payout] failed to abort transaction', { message: abortErr.message });
+          // Ignore abort failures on standalone mongod (no transactions)
+          if (!abortErr.message?.includes('Transaction numbers are only allowed')) {
+            logger.warn('[Payout] failed to abort transaction', { message: abortErr.message });
+          }
         }
         session.endSession();
         throw opErr;
       }
-    } catch (startErr) {
-      // transactions not supported (standalone) - warn and run without session
-      logger.warn('[Payout] transactions unavailable, running without session', { message: startErr.message });
-      return await operation(null);
+
+      try {
+        await session.commitTransaction();
+      } catch (commitErr) {
+        // Some Mongo deployments (standalone) will reject commitTransaction with this error.
+        // In that case, the writes have already been applied and we can safely proceed.
+        if (!commitErr.message?.includes('Transaction numbers are only allowed')) {
+          throw commitErr;
+        }
+        logger.warn('[Payout] commitTransaction not supported, continuing without transaction', {
+          message: commitErr.message,
+        });
+      }
+
+      session.endSession();
+      return result;
+    } catch (opErr) {
+      // Any other errors should bubble up
+      session.endSession();
+      throw opErr;
     }
   }
 
@@ -331,37 +367,81 @@ class PayoutService {
    * Used when Paystack Transfers are unavailable (Starter tier) and admin
    * sends the money outside the platform (e.g. direct MoMo/bank transfer).
    */
-  async markManuallyCompleted(payoutId, adminId, transferReference) {
-    const payout = await PayoutRequest.findById(payoutId).populate('user');
-    if (!payout) throw new Error('Payout not found');
-    if (!['approved', 'failed'].includes(payout.status)) {
-      throw new Error(`Payout cannot be manually completed from status: ${payout.status}`);
+async markManuallyCompleted(payoutId, adminId, transferReference) {
+  const payout = await PayoutRequest.findById(payoutId).populate('user');
+  if (!payout) throw new Error('Payout not found');
+  if (!['approved', 'failed'].includes(payout.status)) {
+    throw new Error(`Payout cannot be manually completed from status: ${payout.status}`);
+  }
+
+  await this.withTransaction(async (session) => {
+    if (payout.status === 'failed') {
+      const user = payout.user;
+      const balance = Number(user.earningsBalance) || 0;
+
+      if (balance < payout.amount) {
+        throw new Error(
+          'Agent has insufficient earnings balance to finalize this previously-failed payout. Ensure they have enough balance or reject this request.'
+        );
+      }
+
+      // Use findByIdAndUpdate — works reliably on standalone MongoDB without sessions
+      const updatedUser = await User.findByIdAndUpdate(
+        user._id,
+        { $inc: { earningsBalance: -payout.amount } },
+        session ? { session, new: true } : { new: true }
+      );
+
+      const txData = [{
+        user: user._id,
+        type: 'payout',
+        amount: -payout.amount,
+        balanceAfter: updatedUser.earningsBalance,
+        description: `Manual completion deduction for previously failed payout #${payout._id}`,
+        relatedPayout: payout._id,
+        metadata: { destination: payout.destination, manualRecovery: true },
+      }];
+
+      if (session) {
+        await EarningsTransaction.create(txData, { session });
+      } else {
+        await EarningsTransaction.create(txData);
+      }
     }
 
     payout.status = 'completed';
     payout.reviewedBy = payout.reviewedBy || adminId;
     payout.completedAt = new Date();
     payout.paystackTransfer = payout.paystackTransfer || {};
-    payout.paystackTransfer.transferReference = transferReference || `manual_${payout._id}_${Date.now()}`;
-    payout.metadata = { ...(payout.metadata || {}), manuallyCompleted: true, completedBy: adminId };
+    payout.paystackTransfer.transferReference =
+      transferReference || `manual_${payout._id}_${Date.now()}`;
+    payout.metadata = {
+      ...(payout.metadata || {}),
+      manuallyCompleted: true,
+      completedBy: adminId,
+    };
+
+    // Save payout without session — it was fetched outside the transaction
+    // and passing a session here is what triggers the replica-set error
     await payout.save();
+  });
 
-    logger.info('[Payout] Manually completed', { payoutId, adminId, transferReference });
+  logger.info('[Payout] Manually completed', { payoutId, adminId, transferReference });
 
-    try {
-      await notificationService.createInAppNotification(
-        payout.user._id.toString(),
-        'Payout Completed',
-        `Your payout of GHS ${payout.amount.toFixed(2)} has been sent.${transferReference ? ' Reference: ' + transferReference : ''}`,
-        'success',
-        { type: 'payout_completed', payoutId: payout._id }
-      );
-    } catch (notifErr) {
-      logger.warn('[Payout] Failed to notify agent of manual completion', { message: notifErr.message });
-    }
-
-    return payout;
+  try {
+    await notificationService.createInAppNotification(
+      payout.user._id.toString(),
+      'Payout Completed',
+      `Your payout of GHS ${payout.amount.toFixed(2)} has been sent.${transferReference ? ' Reference: ' + transferReference : ''}`,
+      'success',
+      { type: 'payout_completed', payoutId: payout._id }
+    );
+  } catch (notifErr) {
+    logger.warn('[Payout] Failed to notify agent of manual completion', { message: notifErr.message });
   }
+
+  return payout;
+}
 
   async processPayoutAuto(payoutId) {
     const payout = await PayoutRequest.findById(payoutId).populate('user');
@@ -461,35 +541,17 @@ class PayoutService {
         err.code = 'TRANSFER_FAILED';
       }
 
-      payout.status = 'failed';
+      // DO NOT SET TO FAILED OR REFUND IMMEDIATELY for synchronous API errors.
+      // Leave the status as 'approved' to keep the funds deducted, and allow admin to fallback
+      // to manual payment ("Mark as paid") or reject the payout to trigger a refund.
       payout.paystackTransfer = payout.paystackTransfer || {};
       payout.paystackTransfer.failureReason = failureReason;
+      
       try { await payout.save(); } catch (saveErr) {
-        logger.warn('[Payout] Failed to save failure status', { payoutId, message: saveErr.message });
+        logger.warn('[Payout] Failed to save failure reason', { payoutId, message: saveErr.message });
       }
-      logger.error('[Payout] Transfer failed', { payoutId, error: failureReason });
-      try {
-        await this.refundFailedPayout(payout);
-      } catch (refundErr) {
-        // CRITICAL: balance was deducted but refund also failed — agent's funds are at risk.
-        // Update the payout record so admin knows manual intervention is required.
-        logger.error('[Payout] CRITICAL: Refund failed after transfer failure — MANUAL REFUND REQUIRED', {
-          payoutId,
-          transferError: failureReason,
-          refundError: refundErr.message,
-        });
-        try {
-          payout.paystackTransfer = payout.paystackTransfer || {};
-          payout.paystackTransfer.failureReason =
-            `Transfer failed: ${failureReason} | REFUND FAILED: ${refundErr.message} — Manual refund required`;
-          await payout.save();
-        } catch (saveErr2) {
-          logger.error('[Payout] Failed to persist refund-failure notice on payout', {
-            payoutId,
-            message: saveErr2.message,
-          });
-        }
-      }
+      
+      logger.error('[Payout] Transfer initiation rejected by Paystack', { payoutId, error: failureReason });
       throw originalError;
     }
   }

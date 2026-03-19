@@ -1,4 +1,5 @@
 // src/controllers/payoutController.js
+import mongoose from 'mongoose';
 import payoutService from '../services/payoutService.js';
 import settingsService from '../services/settingsService.js';
 import paystackService from '../services/paystackService.js';
@@ -101,6 +102,14 @@ class PayoutController {
       const adminId = req.user.userId;
       const { id } = req.params;
       const { transferReference } = req.body || {};
+
+      if (!id) {
+        return res.status(400).json({ success: false, message: 'Payout ID is required.' });
+      }
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({ success: false, message: 'Invalid payout ID.' });
+      }
+
       const payout = await payoutService.approvePayout(id, adminId, transferReference);
       return res.json({
         success: true,
@@ -118,6 +127,14 @@ class PayoutController {
       const adminId = req.user.userId;
       const { id } = req.params;
       const { reason } = req.body || {};
+
+      if (!id) {
+        return res.status(400).json({ success: false, message: 'Payout ID is required.' });
+      }
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({ success: false, message: 'Invalid payout ID.' });
+      }
+
       const payout = await payoutService.rejectPayout(id, adminId, reason);
       return res.json({
         success: true,
@@ -133,6 +150,14 @@ class PayoutController {
   async processPayout(req, res) {
     try {
       const { id } = req.params;
+
+      if (!id) {
+        return res.status(400).json({ success: false, message: 'Payout ID is required.' });
+      }
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({ success: false, message: 'Invalid payout ID.' });
+      }
+
       const payout = await payoutService.processPayoutAuto(id);
       return res.json({
         success: true,
@@ -142,11 +167,11 @@ class PayoutController {
     } catch (err) {
       const errObj = err && typeof err === 'object' ? err : {};
       const apiData = errObj?.response?.data;
-      const code = (apiData && apiData.code) || errObj.code || 'UNKNOWN_ERROR';
+      const code = (apiData && apiData.code) || errObj.code || 'TRANSFER_FAILED';
       const status = (apiData && apiData.status) || errObj.status;
-      const errMessage = (errObj && errObj.message) || String(err);
-      const detailMessage = apiData?.message;
-      const message = detailMessage ? `${errMessage}: ${detailMessage}` : errMessage;
+      
+      // Sanitize the error: prefer the clean Paystack message if available, instead of "Request failed with status code 400..."
+      const message = apiData?.message || (errObj && errObj.message) || String(err);
 
       logger.error(`[Payout] processPayout error: ${message} | code: ${code} | Paystack: ${JSON.stringify(apiData) ?? 'n/a'}`);
 
@@ -164,6 +189,14 @@ class PayoutController {
       const adminId = req.user.userId;
       const { id } = req.params;
       const { transferReference } = req.body || {};
+
+      if (!id) {
+        return res.status(400).json({ success: false, message: 'Payout ID is required.' });
+      }
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({ success: false, message: 'Invalid payout ID.' });
+      }
+
       const payout = await payoutService.markManuallyCompleted(id, adminId, transferReference);
       return res.json({
         success: true,
