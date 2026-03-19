@@ -22,7 +22,7 @@ router.post("/subscribe", authenticate, async (req, res) => {
 
     const success = await pushNotificationService.registerSubscription(
       userId,
-      subscription
+      subscription,
     );
 
     if (success) {
@@ -50,9 +50,8 @@ router.post("/unsubscribe", authenticate, async (req, res) => {
   try {
     const userId = req.user?.userId || req.user?.id;
 
-    const success = await pushNotificationService.unregisterSubscription(
-      userId
-    );
+    const success =
+      await pushNotificationService.unregisterSubscription(userId);
 
     if (success) {
       res.json({
@@ -102,7 +101,7 @@ router.get("/preferences", authenticate, async (req, res) => {
   try {
     const userId = req.user?.userId || req.user?.id;
     const user = await User.findById(userId).select(
-      "pushNotificationPreferences"
+      "pushNotificationPreferences",
     );
 
     if (!user) {
