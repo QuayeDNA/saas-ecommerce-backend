@@ -1,115 +1,365 @@
 // src/services/payoutService.js
+//
+// Payout modes:
+//   AUTO       — agent requests → balance deducted → Paystack transfer initiated immediately (no admin)
+//   SEMI-AUTO  — agent requests → admin approves → Paystack transfer initiated by admin action
+//   MANUAL     — agent requests → admin approves → admin sends money outside platform → marks complete
+//
+// Transfer webhook (transfer.success / transfer.failed) handles async confirmation for AUTO + SEMI-AUTO.
+
 import mongoose from 'mongoose';
 import PayoutRequest from '../models/PayoutRequest.js';
 import EarningsTransaction from '../models/EarningsTransaction.js';
 import User from '../models/User.js';
 import paystackService from './paystackService.js';
 import notificationService from './notificationService.js';
-import logger from '../utils/logger.js';
 import settingsService from './settingsService.js';
+import logger from '../utils/logger.js';
 import { getFeeConfig } from '../utils/paystackHelpers.js';
 
-// constants removed; values come from settings
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Run `operation(session)` inside a MongoDB transaction when the server
+ * supports it (replica set / Atlas). Gracefully falls back to running without
+ * a session on standalone instances (Render free tier, local dev).
+ *
+ * The fallback triggers on ANY error from startSession/startTransaction —
+ * standalone MongoDB throws "Transaction numbers are only allowed on a replica
+ * set member or mongos" from startTransaction().
+ */
+async function withTransaction(operation) {
+  // Hard bypass — set FORCE_NO_TRANSACTIONS=true in env on standalone MongoDB
+  // to skip the session attempt entirely and avoid the error log noise.
+  if (process.env.FORCE_NO_TRANSACTIONS === 'true') {
+    return operation(null);
+  }
+
+  let session = null;
+
+  try {
+    session = await mongoose.startSession();
+  } catch {
+    // startSession itself failed — run without session
+    return operation(null);
+  }
+
+  try {
+    session.startTransaction();
+  } catch {
+    // startTransaction failed — standalone MongoDB
+    // End the session cleanly before falling back
+    try { session.endSession(); } catch { /* ignore */ }
+    return operation(null);
+  }
+
+  // Session + transaction started successfully — run the operation
+  try {
+    const result = await operation(session);
+    try {
+      await session.commitTransaction();
+    } catch (commitErr) {
+      // Some standalone builds accept startTransaction but reject commit.
+      // If the error is a topology error, the writes already applied — continue.
+      if (!isTopologyError(commitErr)) throw commitErr;
+      logger.warn('[Payout] withTransaction: commit not supported, writes already applied', {
+        message: commitErr.message,
+      });
+    }
+    return result;
+  } catch (err) {
+    try { await session.abortTransaction(); } catch { /* ignore — standalone */ }
+    throw err;
+  } finally {
+    try { session.endSession(); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Returns true when the error is a MongoDB topology/replica-set error that
+ * means transactions are unsupported — NOT a business logic or validation error.
+ * Only these errors should trigger the no-session fallback.
+ */
+function isTopologyError(err) {
+  if (!err) return false;
+  const msg  = (err.message || '').toLowerCase();
+  const code = err.code;
+  // MongoServerError codes for "transactions not supported on this topology"
+  if ([20, 61, 263].includes(code)) return true;
+  return (
+    msg.includes('transaction numbers are only allowed') ||
+    msg.includes('replica set') ||
+    msg.includes('transactions are not') ||
+    msg.includes('does not support transactions') ||
+    msg.includes('cannot use a session that is not in a transaction')
+  );
+}
+
+/**
+ * Deduct `amount` from the agent's earningsBalance and write an EarningsTransaction.
+ * Works with or without a Mongoose session.
+ */
+async function deductEarnings(userId, amount, payoutId, description, session) {
+  const opts = session ? { session, new: true } : { new: true };
+  const user = await User.findByIdAndUpdate(
+    userId,
+    { $inc: { earningsBalance: -amount } },
+    opts,
+  );
+  if (!user) throw new Error('User not found');
+  if (user.earningsBalance < 0) {
+    // Roll back — we over-deducted. Restore and throw.
+    await User.findByIdAndUpdate(userId, { $inc: { earningsBalance: amount } }, opts);
+    throw new Error('Insufficient earnings balance');
+  }
+
+  const txData = {
+    user: userId,
+    type: 'payout',
+    amount: -amount,
+    balanceAfter: user.earningsBalance,
+    description,
+    relatedPayout: payoutId,
+    metadata: { auto: true },
+  };
+  if (session) {
+    await EarningsTransaction.create([txData], { session });
+  } else {
+    await EarningsTransaction.create(txData);
+  }
+  return user;
+}
+
+/**
+ * Restore `amount` to the agent's earningsBalance and write a credit EarningsTransaction.
+ * Called on transfer failure or payout rejection after deduction already occurred.
+ */
+async function refundEarnings(userId, amount, payoutId, reason = 'transfer_failed') {
+  const user = await User.findByIdAndUpdate(
+    userId,
+    { $inc: { earningsBalance: amount } },
+    { new: true },
+  );
+  if (!user) {
+    logger.error('[Payout] refundEarnings — user not found', { userId, amount, payoutId });
+    return;
+  }
+  await EarningsTransaction.create({
+    user: userId,
+    type: 'credit',
+    amount,
+    balanceAfter: user.earningsBalance,
+    description: `Refund for failed payout #${payoutId}`,
+    relatedPayout: payoutId,
+    metadata: { reason },
+  });
+  logger.info('[Payout] Earnings refunded', { userId, amount, payoutId });
+}
+
+/**
+ * Notify agent of a payout status change. Never throws.
+ */
+async function notifyAgent(userId, title, message, type, extra = {}) {
+  try {
+    await notificationService.createInAppNotification(
+      userId.toString(), title, message, type,
+      { type: `payout_${type}`, ...extra },
+    );
+  } catch (err) {
+    logger.warn('[Payout] Notification failed', { userId, title, message: err.message });
+  }
+}
+
+// ─── Service ──────────────────────────────────────────────────────────────────
 
 class PayoutService {
+
+  // ── Fee Calculation ──────────────────────────────────────────────────────────
+
   /**
-   * Calculate the Paystack transfer fee and net amount for a payout.
-   * @param {number} amount - Gross payout amount in GHS
-   * @param {'mobile_money'|'bank_account'} destinationType
-   * @returns {{ transferFee: number, paystackFee: number, platformFee: number, netAmount: number, feeBearer: string }}
+   * Returns fee breakdown for a payout:
+   *   paystackFee   — Paystack's flat transfer fee (GHS)
+   *   platformFee   — Platform's % cut of the gross amount (GHS)
+   *   transferFee   — total fee (paystackFee + platformFee)
+   *   netAmount     — what the agent actually receives
+   *   feeBearer     — 'agent' | 'platform'
    */
   async calculateTransferFee(amount, destinationType) {
-    const feeConfig = await getFeeConfig();
-    const transferFees = feeConfig.paystackTransferFees || {};
-    // Paystack flat transfer fee per transaction
+    const cfg = await getFeeConfig();
+    const fees = cfg.paystackTransferFees || {};
+
     const paystackFee = destinationType === 'bank_account'
-      ? (transferFees.bank_account || 8.0)
-      : (transferFees.mobile_money || 1.0);
-    // Platform's own percentage cut of the payout amount
-    const platformFeePercent = feeConfig.platformPayoutFeePercent || 0;
+      ? (fees.bank_account ?? 8.0)
+      : (fees.mobile_money ?? 1.0);
+
+    const platformFeePercent = cfg.platformPayoutFeePercent ?? 0;
     const platformFee = Math.round(amount * platformFeePercent) / 100;
     const transferFee = Math.round((paystackFee + platformFee) * 100) / 100;
-    const feeBearer = feeConfig.payoutFeeBearer || 'agent';
-
-    // If agent bears fees, they receive less. If platform bears, they receive full amount.
-    const netAmount = feeBearer === 'agent'
+    const feeBearer   = cfg.payoutFeeBearer ?? 'agent';
+    const netAmount   = feeBearer === 'agent'
       ? Math.max(0, Math.round((amount - transferFee) * 100) / 100)
       : amount;
 
-    return { transferFee, paystackFee, platformFee, netAmount, feeBearer };
+    return { paystackFee, platformFee, transferFee, netAmount, feeBearer };
   }
 
-  // helper that attempts a mongodb transaction and gracefully falls back to
-  // non-transactional execution if the server isn't a replica set (e.g. local
-  // development). Mirrors orderService.executeWithTransaction.
-  async withTransaction(operation) {
-    let session;
+  // ── Destination Validation ───────────────────────────────────────────────────
 
-    // Some local setups (standalone mongod) do not support transactions. In such
-    // cases, we fall back to running without sessions.
-    try {
-      session = await mongoose.startSession();
-    } catch (startErr) {
-      logger.warn('[Payout] transactions unavailable, running without session', { message: startErr.message });
-      return await operation(null);
-    }
-
-    try {
-      try {
-        session.startTransaction();
-      } catch (startTxErr) {
-        logger.warn('[Payout] transactions not supported on this Mongo deployment, running without session', {
-          message: startTxErr.message,
-        });
-        session.endSession();
-        return await operation(null);
+  async validateDestination(destination) {
+    if (destination.type === 'mobile_money') {
+      if (!this._isValidGhanaPhone(destination.phoneNumber)) {
+        throw new Error('Invalid Ghana phone number format');
       }
-
-      let result;
-      try {
-        result = await operation(session);
-      } catch (opErr) {
-        // abort if possible then rethrow
-        try {
-          if (session.transaction && session.transaction.state === 'TRANSACTION_STARTED') {
-            await session.abortTransaction();
-          }
-        } catch (abortErr) {
-          // Ignore abort failures on standalone mongod (no transactions)
-          if (!abortErr.message?.includes('Transaction numbers are only allowed')) {
-            logger.warn('[Payout] failed to abort transaction', { message: abortErr.message });
-          }
-        }
-        session.endSession();
-        throw opErr;
+      const network = this._detectNetwork(destination.phoneNumber);
+      if (network !== destination.mobileProvider) {
+        throw new Error(`Phone number does not match ${destination.mobileProvider} network`);
       }
-
+    } else if (destination.type === 'bank_account') {
       try {
-        await session.commitTransaction();
-      } catch (commitErr) {
-        // Some Mongo deployments (standalone) will reject commitTransaction with this error.
-        // In that case, the writes have already been applied and we can safely proceed.
-        if (!commitErr.message?.includes('Transaction numbers are only allowed')) {
-          throw commitErr;
-        }
-        logger.warn('[Payout] commitTransaction not supported, continuing without transaction', {
-          message: commitErr.message,
-        });
+        const resolved = await paystackService.resolveAccountNumber(
+          destination.accountNumber, destination.bankCode,
+        );
+        destination.recipientName = resolved.account_name;
+      } catch {
+        throw new Error('Could not verify bank account. Please check account number and bank.');
       }
-
-      session.endSession();
-      return result;
-    } catch (opErr) {
-      // Any other errors should bubble up
-      session.endSession();
-      throw opErr;
     }
   }
 
+  _isValidGhanaPhone(phone) {
+    const c = String(phone).replace(/[\s\-()]/g, '');
+    return /^0?[2-5]\d{8,9}$/.test(c) || /^233[2-5]\d{8}$/.test(c);
+  }
+
+  _detectNetwork(phone) {
+    const last9 = String(phone).replace(/\D/g, '').slice(-9);
+    const prefix = last9.slice(0, 2);
+    if (['24', '54', '55', '59'].includes(prefix)) return 'MTN';
+    if (['20', '50'].includes(prefix))             return 'VOD';
+    if (['27', '57', '26', '56'].includes(prefix)) return 'ATL';
+    return null;
+  }
+
+  // ── Paystack Recipient ───────────────────────────────────────────────────────
+
+  async _ensurePaystackRecipient(payout) {
+    if (payout.destination?.recipientCode) return payout.destination.recipientCode;
+
+    const dest = payout.destination;
+    const name = dest.recipientName || payout.user?.fullName || 'Recipient';
+
+    const payload = {
+      name,
+      currency: 'GHS',
+      type:           dest.type === 'mobile_money' ? 'mobile_money' : 'nuban',
+      account_number: dest.type === 'mobile_money' ? dest.phoneNumber : dest.accountNumber,
+      bank_code:      dest.type === 'mobile_money' ? dest.mobileProvider : dest.bankCode,
+    };
+
+    const recipient = await paystackService.createTransferRecipient(payload);
+    payout.destination.recipientCode = recipient.recipient_code;
+    await payout.save();
+    return recipient.recipient_code;
+  }
+
+  // ── Initiate Paystack Transfer ───────────────────────────────────────────────
+
+  /**
+   * Calls Paystack /transfer and updates the payout document to 'processing'.
+   * Throws a clean, structured error if Paystack rejects the transfer.
+   * Does NOT deduct earnings — caller must deduct before calling this.
+   *
+   * On Paystack Starter plan, the transfer API returns 400 "Transfer feature
+   * is not available on your account". We surface this clearly so the admin
+   * can fall back to manual completion.
+   */
+  async _initiatePaystackTransfer(payout) {
+    await paystackService.ensureKeys();
+    if (!paystackService.isConfigured()) {
+      throw Object.assign(new Error('Paystack is not configured for transfers'), {
+        code: 'PAYSTACK_NOT_CONFIGURED',
+      });
+    }
+
+    // Recalculate fees if not set (handles legacy payouts)
+    if (!payout.netAmount || !payout.transferFee) {
+      const fees = await this.calculateTransferFee(payout.amount, payout.destination?.type);
+      payout.transferFee = fees.transferFee;
+      payout.netAmount   = fees.netAmount;
+      await payout.save();
+    }
+
+    if (payout.netAmount <= 0) {
+      throw Object.assign(
+        new Error('Net payout amount is zero or negative after fees. Adjust amount or fee settings.'),
+        { code: 'ZERO_NET_AMOUNT' },
+      );
+    }
+
+    const recipientCode = await this._ensurePaystackRecipient(payout);
+    const transferRef   = `payout_${payout._id}_${Date.now()}`;
+
+    let transfer;
+    try {
+      transfer = await paystackService.initiateTransfer({
+        source:    'balance',
+        amount:    paystackService.convertToPesewas(payout.netAmount),
+        recipient: recipientCode,
+        reference: transferRef,
+        reason:    `Payout for ${payout.user?.fullName || payout.user}`,
+      });
+    } catch (err) {
+      // Extract the cleanest possible message from Paystack
+      const psData    = err?.response?.data;
+      const psMessage = psData?.message || err.message;
+      const psCode    = psData?.code || 'TRANSFER_FAILED';
+
+      // Save the failure reason without changing status — admin can retry or mark manual
+      payout.paystackTransfer = {
+        ...(payout.paystackTransfer || {}),
+        failureReason: psMessage,
+      };
+      await payout.save().catch(() => {});
+
+      logger.error('[Payout] Paystack transfer rejected', {
+        payoutId: payout._id, code: psCode, message: psMessage,
+      });
+
+      throw Object.assign(new Error(psMessage), { code: psCode, paystackData: psData });
+    }
+
+    payout.status = 'processing';
+    payout.paystackTransfer = {
+      transferCode:      transfer.transfer_code || transfer.id,
+      transferReference: transferRef,
+      recipientCode,
+      status:            transfer.status || 'pending',
+      transferredAt:     new Date(),
+    };
+    await payout.save();
+
+    logger.info('[Payout] Transfer initiated', {
+      payoutId: payout._id, transferCode: payout.paystackTransfer.transferCode,
+    });
+
+    return payout;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PUBLIC API — Agent Actions
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Agent submits a payout request.
+   * Returns { payout, mode: 'auto' | 'semi_auto' | 'manual' }
+   *
+   * If autoPayoutEnabled is true, the caller should immediately invoke
+   * processAutoRequestedPayout(payout._id) in the background.
+   */
   async requestPayout(userId, amount, destination) {
-    return await this.withTransaction(async (session) => {
-      const queryOpts = session ? { session } : undefined;
-      const user = await User.findById(userId, null, queryOpts);
+    return withTransaction(async (session) => {
+      const opts = session ? { session } : {};
+      const user = await User.findById(userId, null, opts);
       if (!user) throw new Error('User not found');
 
       const balance = Number(user.earningsBalance) || 0;
@@ -117,490 +367,389 @@ class PayoutService {
         throw new Error(`Insufficient earnings. Available: GHS ${balance.toFixed(2)}`);
       }
 
-      // fetch configured minimums and auto-payout flag
-      const payoutSettings = await settingsService.getPayoutSettings();
-      const { minimumPayoutAmounts, autoPayoutEnabled } = payoutSettings;
+      const { minimumPayoutAmounts, autoPayoutEnabled } =
+        await settingsService.getPayoutSettings();
+
       const minPayout = destination.type === 'bank_account'
         ? minimumPayoutAmounts.bank_account
         : minimumPayoutAmounts.mobile_money;
+
       if (amount < minPayout) {
-        throw new Error(`Minimum payout: GHS ${minPayout}`);
+        throw new Error(`Minimum payout is GHS ${minPayout}`);
       }
 
-      const existingPending = await PayoutRequest.findOne({
-        user: userId,
-        status: { $in: ['pending', 'approved', 'processing'] },
-      }, null, queryOpts);
-
-      if (existingPending) {
+      const existing = await PayoutRequest.findOne(
+        { user: userId, status: { $in: ['pending', 'approved', 'processing'] } },
+        null, opts,
+      );
+      if (existing) {
         throw new Error('You have a pending payout request. Please wait for it to be processed.');
       }
 
       await this.validateDestination(destination);
 
-      // Calculate transfer fee and net amount
-      const { transferFee, paystackFee, platformFee, netAmount, feeBearer } = await this.calculateTransferFee(amount, destination.type);
+      const fees = await this.calculateTransferFee(amount, destination.type);
 
       const payout = new PayoutRequest({
-        user: userId,
+        user:        userId,
         amount,
-        transferFee,
-        netAmount,
+        transferFee: fees.transferFee,
+        netAmount:   fees.netAmount,
         destination,
         requestedAt: new Date(),
-        metadata: { feeBearer, paystackFee, platformFee, autoPayoutEnabled },
+        metadata:    {
+          feeBearer:   fees.feeBearer,
+          paystackFee: fees.paystackFee,
+          platformFee: fees.platformFee,
+        },
       });
-      if (session) {
-        await payout.save({ session });
-      } else {
-        await payout.save();
-      }
 
-      logger.info('[Payout] Request created', { userId, amount, payoutId: payout._id, autoPayoutEnabled });
+      if (session) await payout.save({ session });
+      else         await payout.save();
 
-      try {
-        if (!autoPayoutEnabled) {
-          const admins = await User.find({ userType: 'super_admin', isActive: true }).select('_id');
-          for (const admin of admins) {
-            await notificationService.createInAppNotification(
-              admin._id.toString(),
-              'New Payout Request',
-              `${user.fullName} requested a payout of GHS ${amount.toFixed(2)}`,
-              'info',
-              { type: 'payout_request', payoutId: payout._id }
-            );
-          }
+      logger.info('[Payout] Request created', {
+        userId, amount, payoutId: payout._id, autoPayoutEnabled,
+      });
+
+      // Notify admins only when they need to take action (semi-auto / manual)
+      if (!autoPayoutEnabled) {
+        const admins = await User.find({ userType: 'super_admin', isActive: true }).select('_id');
+        for (const admin of admins) {
+          await notifyAgent(
+            admin._id,
+            'New Payout Request',
+            `${user.fullName} requested a payout of GHS ${amount.toFixed(2)}`,
+            'info',
+            { payoutId: payout._id },
+          );
         }
-      } catch (notifErr) {
-        logger.warn('[Payout] Failed to notify admins', { message: notifErr.message });
       }
 
-      return { payout, autoPayoutEnabled: Boolean(autoPayoutEnabled) };
+      const mode = autoPayoutEnabled ? 'auto' : 'semi_auto';
+      return { payout, mode, autoPayoutEnabled: Boolean(autoPayoutEnabled) };
     });
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Mode: AUTO
+  // Agent request → immediate Paystack transfer (no admin step)
+  // ═══════════════════════════════════════════════════════════════════════════
+
   /**
-   * Auto-approve and immediately initiate a Paystack transfer for a payout.
-   * Used when autoPayoutEnabled = true — admin step is skipped entirely.
+   * Deduct earnings atomically, then fire the Paystack transfer.
+   * If the transfer fails (e.g. Starter plan restriction), earnings are
+   * refunded and the payout is set back to 'pending' so it appears in the
+   * admin queue for manual resolution.
    */
   async processAutoRequestedPayout(payoutId) {
-    // Step 1: auto-approve (deducting balance)
     const payout = await PayoutRequest.findById(payoutId).populate('user');
     if (!payout) throw new Error('Payout not found');
-    if (payout.status !== 'pending') throw new Error(`Payout already ${payout.status}`);
+    if (payout.status !== 'pending') {
+      throw new Error(`Cannot auto-process payout with status: ${payout.status}`);
+    }
 
-    // Deduct balance and mark approved in one atomic operation
-    await this.withTransaction(async (session) => {
-      const user = payout.user;
+    // ── Step 1: Deduct earnings atomically ────────────────────────────────────
+    await withTransaction(async (session) => {
+      const user    = payout.user;
       const balance = Number(user.earningsBalance) || 0;
       if (balance < payout.amount) throw new Error('Insufficient earnings balance');
 
-      user.earningsBalance = balance - payout.amount;
-      const saveOpts = session ? { session, validateBeforeSave: false } : { validateBeforeSave: false };
-      await user.save(saveOpts);
+      const updated = await User.findByIdAndUpdate(
+        user._id,
+        { $inc: { earningsBalance: -payout.amount } },
+        session ? { session, new: true } : { new: true },
+      );
 
-      const txData = [{
-        user: user._id,
-        type: 'payout',
-        amount: -payout.amount,
-        balanceAfter: user.earningsBalance,
+      const txData = {
+        user:        user._id,
+        type:        'payout',
+        amount:      -payout.amount,
+        balanceAfter: updated.earningsBalance,
         description: `Auto-payout request #${payout._id}`,
         relatedPayout: payout._id,
-        metadata: { destination: payout.destination, auto: true },
-      }];
-      if (session) {
-        await EarningsTransaction.create(txData, { session });
-      } else {
-        await EarningsTransaction.create(txData);
-      }
+        metadata:    { auto: true },
+      };
+      if (session) await EarningsTransaction.create([txData], { session });
+      else         await EarningsTransaction.create(txData);
 
-      payout.status = 'approved';
-      payout.reviewedAt = new Date();
+      payout.status      = 'approved';
+      payout.reviewedAt  = new Date();
       payout.processedAt = new Date();
-      payout.metadata = { ...(payout.metadata || {}), autoApproved: true };
-      if (session) {
-        await payout.save({ session });
-      } else {
-        await payout.save();
-      }
+      payout.metadata    = { ...(payout.metadata || {}), autoApproved: true };
+      await payout.save();
     });
 
-    // Step 2: immediately initiate transfer
-    return await this.processPayoutAuto(payoutId);
+    // ── Step 2: Initiate Paystack transfer ────────────────────────────────────
+    try {
+      await this._initiatePaystackTransfer(payout);
+      return payout;
+    } catch (err) {
+      // Transfer failed — refund earnings and surface clearly
+      logger.error('[Payout] Auto-payout transfer failed, refunding earnings', {
+        payoutId, code: err.code, message: err.message,
+      });
+
+      await refundEarnings(payout.user._id, payout.amount, payoutId, 'auto_transfer_failed');
+
+      // Reset to pending so it shows in admin queue for manual resolution
+      payout.status      = 'pending';
+      payout.reviewedAt  = undefined;
+      payout.processedAt = undefined;
+      payout.metadata    = {
+        ...(payout.metadata || {}),
+        autoApproved:   false,
+        autoFailReason: err.message,
+        autoFailCode:   err.code,
+        autoFailedAt:   new Date(),
+      };
+      await payout.save().catch(() => {});
+
+      await notifyAgent(
+        payout.user._id,
+        'Auto-Payout Failed',
+        `Your payout of GHS ${payout.amount.toFixed(2)} could not be processed automatically. An admin will review it shortly.`,
+        'error',
+        { payoutId },
+      );
+
+      throw err;
+    }
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Mode: SEMI-AUTO  (Admin step 1: approve + deduct)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Admin approves the payout — deducts earnings and marks as approved.
+   * A separate call to processApprovedPayout() fires the actual Paystack transfer.
+   *
+   * Passing `transferReference` skips the Paystack transfer entirely and marks
+   * the payout complete immediately (used when the admin already sent money manually).
+   */
   async approvePayout(payoutId, adminId, transferReference = null) {
-    return await this.withTransaction(async (session) => {
-      let payout;
-      if (session) {
-        payout = await PayoutRequest.findById(payoutId).populate('user').session(session);
-      } else {
-        payout = await PayoutRequest.findById(payoutId).populate('user');
-      }
-      if (!payout) throw new Error('Payout not found');
-      if (payout.status !== 'pending') {
-        throw new Error(`Payout is already ${payout.status}`);
+    return withTransaction(async (session) => {
+      const payout = session
+        ? await PayoutRequest.findById(payoutId).populate('user').session(session)
+        : await PayoutRequest.findById(payoutId).populate('user');
+
+      if (!payout)                    throw new Error('Payout not found');
+      if (payout.status !== 'pending') throw new Error(`Payout is already ${payout.status}`);
+
+      const fees = payout.netAmount != null
+        ? { netAmount: payout.netAmount }
+        : await this.calculateTransferFee(payout.amount, payout.destination?.type ?? 'mobile_money');
+
+      if (fees.netAmount <= 0) {
+        throw new Error('Net amount is zero or negative after fees. Adjust amount or fee settings before approving.');
       }
 
-      // Prevent approving payouts that result in no net payment to the agent
-      let netAmount = payout.netAmount;
-      if (netAmount == null) {
-        const feeInfo = await this.calculateTransferFee(payout.amount, payout.destination?.type || 'mobile_money');
-        netAmount = feeInfo.netAmount;
-      }
-      if (typeof netAmount === 'number' && netAmount <= 0) {
-        throw new Error('Payout net amount is zero or negative after fees; adjust amount or fees before approving.');
-      }
-
-      const user = payout.user;
+      const user    = payout.user;
       const balance = Number(user.earningsBalance) || 0;
-      if (balance < payout.amount) {
-        throw new Error('Insufficient earnings balance');
-      }
+      if (balance < payout.amount) throw new Error('Insufficient earnings balance');
 
-      user.earningsBalance = balance - payout.amount;
-      if (session) {
-        await user.save({ session, validateBeforeSave: false });
-      } else {
-        await user.save({ validateBeforeSave: false });
-      }
+      // Atomic deduction
+      const updated = await User.findByIdAndUpdate(
+        user._id,
+        { $inc: { earningsBalance: -payout.amount } },
+        session ? { session, new: true } : { new: true },
+      );
 
-      const txData = [
-        {
-          user: user._id,
-          type: 'payout',
-          amount: -payout.amount,
-          balanceAfter: user.earningsBalance,
-          description: `Payout request #${payout._id}`,
-          relatedPayout: payout._id,
-          metadata: { destination: payout.destination },
-        },
-      ];
-      if (session) {
-        await EarningsTransaction.create(txData, { session });
-      } else {
-        await EarningsTransaction.create(txData);
-      }
+      const txData = {
+        user:         user._id,
+        type:         'payout',
+        amount:       -payout.amount,
+        balanceAfter: updated.earningsBalance,
+        description:  `Payout approved #${payout._id}`,
+        relatedPayout: payout._id,
+        metadata:     { destination: payout.destination },
+      };
+      if (session) await EarningsTransaction.create([txData], { session });
+      else         await EarningsTransaction.create(txData);
 
-      payout.status = 'approved';
-      payout.reviewedBy = adminId;
-      payout.reviewedAt = new Date();
+      payout.status      = transferReference ? 'completed' : 'approved';
+      payout.reviewedBy  = adminId;
+      payout.reviewedAt  = new Date();
       payout.processedAt = new Date();
       if (transferReference) {
-        payout.status = 'completed';
         payout.completedAt = new Date();
-        payout.paystackTransfer = payout.paystackTransfer || {};
-        payout.paystackTransfer.transferReference = transferReference;
+        payout.paystackTransfer = {
+          ...(payout.paystackTransfer || {}),
+          transferReference,
+        };
       }
-      if (session) {
-        await payout.save({ session });
-      } else {
-        await payout.save();
-      }
+      await payout.save();
 
-      logger.info('[Payout] Approved', { payoutId, userId: user._id, amount: payout.amount });
+      logger.info('[Payout] Approved', {
+        payoutId, userId: user._id, amount: payout.amount, transferReference,
+      });
 
-      try {
-        await notificationService.createInAppNotification(
-          user._id.toString(),
-          'Payout Approved',
-          `Your payout request of GHS ${payout.amount.toFixed(2)} has been approved.${transferReference ? ' Transfer reference: ' + transferReference : ''}`,
-          'success',
-          { type: 'payout_approved', payoutId: payout._id }
-        );
-      } catch (notifErr) {
-        logger.warn('[Payout] Failed to notify agent', { message: notifErr.message });
-      }
+      const msg = transferReference
+        ? `Your payout of GHS ${payout.amount.toFixed(2)} has been approved and completed. Reference: ${transferReference}`
+        : `Your payout request of GHS ${payout.amount.toFixed(2)} has been approved. Transfer in progress.`;
+      await notifyAgent(user._id, 'Payout Approved', msg, 'success', { payoutId });
 
       return payout;
     });
   }
+
+  /**
+   * Admin fires the Paystack transfer for an already-approved payout (semi-auto path).
+   * Does not touch earnings — deduction happened in approvePayout.
+   * If Paystack rejects, leaves the payout as 'approved' so the admin can
+   * retry or fall back to markManuallyCompleted.
+   */
+  async processApprovedPayout(payoutId) {
+    const payout = await PayoutRequest.findById(payoutId).populate('user');
+    if (!payout) throw new Error('Payout not found');
+
+    if (payout.status === 'completed') {
+      throw Object.assign(new Error('Payout is already completed'), { code: 'ALREADY_COMPLETED' });
+    }
+    if (payout.status === 'processing') {
+      throw Object.assign(new Error('Payout is already being processed'), { code: 'ALREADY_PROCESSING' });
+    }
+    if (payout.status !== 'approved') {
+      throw Object.assign(
+        new Error(`Payout must be in 'approved' state. Current: ${payout.status}`),
+        { code: 'NOT_APPROVED', status: payout.status },
+      );
+    }
+
+    return this._initiatePaystackTransfer(payout);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Mode: MANUAL  (Admin sends money outside platform, then marks complete)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Admin marks an approved or failed payout as manually completed.
+   * If the payout was 'failed' (Paystack webhook set it), earnings are
+   * re-deducted here since the refundEarnings already ran on failure.
+   */
+  async markManuallyCompleted(payoutId, adminId, transferReference) {
+    const payout = await PayoutRequest.findById(payoutId).populate('user');
+    if (!payout) throw new Error('Payout not found');
+
+    if (!['approved', 'failed', 'pending'].includes(payout.status)) {
+      throw new Error(`Cannot manually complete payout with status: ${payout.status}`);
+    }
+
+    // If failed, earnings were already refunded by the webhook handler.
+    // Re-deduct them now since we're confirming the money was actually sent.
+    if (payout.status === 'failed') {
+      const user    = payout.user;
+      const balance = Number(user.earningsBalance) || 0;
+      if (balance < payout.amount) {
+        throw new Error(
+          `Agent has insufficient earnings (GHS ${balance.toFixed(2)}) to finalise this payout. ` +
+          `Consider rejecting instead.`
+        );
+      }
+      await deductEarnings(
+        user._id,
+        payout.amount,
+        payoutId,
+        `Manual completion re-deduction for payout #${payoutId}`,
+        null,
+      );
+    }
+
+    // If pending (auto-payout fell back), deduct earnings now
+    if (payout.status === 'pending') {
+      const user    = payout.user;
+      const balance = Number(user.earningsBalance) || 0;
+      if (balance < payout.amount) {
+        throw new Error(`Insufficient earnings balance (GHS ${balance.toFixed(2)})`);
+      }
+      await deductEarnings(
+        user._id,
+        payout.amount,
+        payoutId,
+        `Manual completion for pending payout #${payoutId}`,
+        null,
+      );
+    }
+
+    payout.status      = 'completed';
+    payout.reviewedBy  = payout.reviewedBy || adminId;
+    payout.completedAt = new Date();
+    payout.paystackTransfer = {
+      ...(payout.paystackTransfer || {}),
+      transferReference: transferReference || `manual_${payoutId}_${Date.now()}`,
+    };
+    payout.metadata = {
+      ...(payout.metadata || {}),
+      manuallyCompleted: true,
+      completedBy:       adminId,
+    };
+    await payout.save();
+
+    logger.info('[Payout] Manually completed', { payoutId, adminId, transferReference });
+
+    const ref = transferReference ? ` Reference: ${transferReference}` : '';
+    await notifyAgent(
+      payout.user._id,
+      'Payout Completed',
+      `Your payout of GHS ${payout.amount.toFixed(2)} has been sent.${ref}`,
+      'success',
+      { payoutId },
+    );
+
+    return payout;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Admin: Reject payout
+  // ═══════════════════════════════════════════════════════════════════════════
 
   async rejectPayout(payoutId, adminId, rejectionReason) {
     const payout = await PayoutRequest.findById(payoutId).populate('user');
     if (!payout) throw new Error('Payout not found');
 
-    const isPending = payout.status === 'pending';
-    const isApprovedOrProcessing = ['approved', 'processing'].includes(payout.status);
-    const isFailed = payout.status === 'failed';
+    const refundable = ['approved', 'processing'].includes(payout.status);
+    const rejectable = ['pending', 'approved', 'processing', 'failed'].includes(payout.status);
 
-    if (!isPending && !isApprovedOrProcessing && !isFailed) {
-      throw new Error(`Payout cannot be declined in its current status (${payout.status})`);
+    if (!rejectable) {
+      throw new Error(`Payout cannot be rejected from status: ${payout.status}`);
     }
 
-    // Refund agent if it was already approved/processing (earnings already deducted)
-    if (isApprovedOrProcessing) {
-      try {
-        await this.refundFailedPayout(payout);
-        logger.info('[Payout] Refunded earnings for declined payout', { payoutId, userId: payout.user._id });
-      } catch (refundErr) {
-        logger.error('[Payout] Failed to refund earnings for declined payout', { payoutId, message: refundErr.message });
-        // Proceed with rejection anyway, but log that manual reconciliation is needed.
-      }
+    // Refund earnings if they were already deducted
+    if (refundable) {
+      await refundEarnings(payout.user._id, payout.amount, payoutId, 'admin_rejected');
     }
 
-    payout.status = 'rejected';
-    payout.reviewedBy = adminId;
-    payout.reviewedAt = new Date();
-    payout.rejectionReason = rejectionReason || 'Declined by administrator';
+    payout.status          = 'rejected';
+    payout.reviewedBy      = adminId;
+    payout.reviewedAt      = new Date();
+    payout.rejectionReason = rejectionReason || 'Rejected by administrator';
     await payout.save();
 
     logger.info('[Payout] Rejected', { payoutId, userId: payout.user._id });
 
-    try {
-      await notificationService.createInAppNotification(
-        payout.user._id.toString(),
-        'Payout Declined',
-        `Your payout request of GHS ${payout.amount.toFixed(2)} was declined. ${payout.rejectionReason}`,
-        'error',
-        { type: 'payout_rejected', payoutId: payout._id }
-      );
-    } catch (notifErr) {
-      logger.warn('[Payout] Failed to notify agent', { message: notifErr.message });
-    }
+    await notifyAgent(
+      payout.user._id,
+      'Payout Rejected',
+      `Your payout of GHS ${payout.amount.toFixed(2)} was rejected. ${payout.rejectionReason}`,
+      'error',
+      { payoutId },
+    );
 
     return payout;
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Paystack Webhook Handler
+  // ═══════════════════════════════════════════════════════════════════════════
+
   /**
-   * Admin manually marks an approved (or failed) payout as completed.
-   * Used when Paystack Transfers are unavailable (Starter tier) and admin
-   * sends the money outside the platform (e.g. direct MoMo/bank transfer).
+   * Handles transfer.success and transfer.failed events from Paystack.
+   * These are async confirmations — the payout is already in 'processing' state.
+   *
+   * transfer.success → mark completed, credit profit notification
+   * transfer.failed  → mark failed, refund earnings, notify agent
    */
-async markManuallyCompleted(payoutId, adminId, transferReference) {
-  const payout = await PayoutRequest.findById(payoutId).populate('user');
-  if (!payout) throw new Error('Payout not found');
-  if (!['approved', 'failed'].includes(payout.status)) {
-    throw new Error(`Payout cannot be manually completed from status: ${payout.status}`);
-  }
-
-  await this.withTransaction(async (session) => {
-    if (payout.status === 'failed') {
-      const user = payout.user;
-      const balance = Number(user.earningsBalance) || 0;
-
-      if (balance < payout.amount) {
-        throw new Error(
-          'Agent has insufficient earnings balance to finalize this previously-failed payout. Ensure they have enough balance or reject this request.'
-        );
-      }
-
-      // Use findByIdAndUpdate — works reliably on standalone MongoDB without sessions
-      const updatedUser = await User.findByIdAndUpdate(
-        user._id,
-        { $inc: { earningsBalance: -payout.amount } },
-        session ? { session, new: true } : { new: true }
-      );
-
-      const txData = [{
-        user: user._id,
-        type: 'payout',
-        amount: -payout.amount,
-        balanceAfter: updatedUser.earningsBalance,
-        description: `Manual completion deduction for previously failed payout #${payout._id}`,
-        relatedPayout: payout._id,
-        metadata: { destination: payout.destination, manualRecovery: true },
-      }];
-
-      if (session) {
-        await EarningsTransaction.create(txData, { session });
-      } else {
-        await EarningsTransaction.create(txData);
-      }
-    }
-
-    payout.status = 'completed';
-    payout.reviewedBy = payout.reviewedBy || adminId;
-    payout.completedAt = new Date();
-    payout.paystackTransfer = payout.paystackTransfer || {};
-    payout.paystackTransfer.transferReference =
-      transferReference || `manual_${payout._id}_${Date.now()}`;
-    payout.metadata = {
-      ...(payout.metadata || {}),
-      manuallyCompleted: true,
-      completedBy: adminId,
-    };
-
-    // Save payout without session — it was fetched outside the transaction
-    // and passing a session here is what triggers the replica-set error
-    await payout.save();
-  });
-
-  logger.info('[Payout] Manually completed', { payoutId, adminId, transferReference });
-
-  try {
-    await notificationService.createInAppNotification(
-      payout.user._id.toString(),
-      'Payout Completed',
-      `Your payout of GHS ${payout.amount.toFixed(2)} has been sent.${transferReference ? ' Reference: ' + transferReference : ''}`,
-      'success',
-      { type: 'payout_completed', payoutId: payout._id }
-    );
-  } catch (notifErr) {
-    logger.warn('[Payout] Failed to notify agent of manual completion', { message: notifErr.message });
-  }
-
-  return payout;
-}
-
-  async processPayoutAuto(payoutId) {
-    const payout = await PayoutRequest.findById(payoutId).populate('user');
-    if (!payout) {
-      const err = new Error('Payout not found');
-      err.code = 'NOT_FOUND';
-      throw err;
-    }
-
-    if (payout.status === 'completed') {
-      const err = new Error('Payout is already completed');
-      err.code = 'ALREADY_COMPLETED';
-      err.status = payout.status;
-      throw err;
-    }
-
-    if (payout.status === 'processing') {
-      const err = new Error('Payout is already being processed');
-      err.code = 'ALREADY_PROCESSING';
-      err.status = payout.status;
-      throw err;
-    }
-
-    if (payout.status !== 'approved') {
-      const err = new Error('Payout must be approved first');
-      err.code = 'NOT_APPROVED';
-      err.status = payout.status;
-      throw err;
-    }
-
-    // Recalculate fees if not already set or if transferFee is 0 (legacy/unconfigured payouts)
-    if (payout.netAmount == null || payout.transferFee == null || payout.transferFee === 0) {
-      const { transferFee, netAmount, feeBearer } = await this.calculateTransferFee(
-        payout.amount,
-        payout.destination?.type || 'mobile_money'
-      );
-      payout.transferFee = transferFee;
-      payout.netAmount = netAmount;
-      payout.metadata = { ...payout.metadata, feeBearer };
-    }
-
-    let recipientCode = payout.destination?.recipientCode;
-    if (!recipientCode) {
-      recipientCode = await this.createPaystackRecipient(payout);
-      payout.destination = payout.destination || {};
-      payout.destination.recipientCode = recipientCode;
-      await payout.save();
-    }
-
-    const transferRef = `payout_${payout._id}_${Date.now()}`;
-
-    // Transfer the net amount (after fee deduction if agent bears fees)
-    // Paystack charges the transfer fee on top of the transfer amount,
-    // so we send the net amount the agent should receive.
-    const transferAmountGHS = payout.netAmount;
-
-    try {
-      await paystackService.ensureKeys();
-      if (!paystackService.isConfigured()) {
-        const err = new Error('Paystack is not configured for transfers');
-        err.code = 'PAYSTACK_NOT_CONFIGURED';
-        throw err;
-      }
-
-      const transfer = await paystackService.initiateTransfer({
-        source: 'balance',
-        amount: paystackService.convertToPesewas(transferAmountGHS),
-        recipient: recipientCode,
-        reference: transferRef,
-        reason: `Payout for ${payout.user?.fullName || payout.userId}`,
-      });
-
-      payout.status = 'processing';
-      payout.paystackTransfer = {
-        transferCode: transfer.transfer_code || transfer.id,
-        transferReference: transferRef,
-        recipientCode,
-        status: transfer.status || 'pending',
-        transferredAt: new Date(),
-      };
-      await payout.save();
-
-      logger.info('[Payout] Transfer initiated', { payoutId, transferCode: transfer.transfer_code });
-      return payout;
-    } catch (err) {
-      // Save the failure reason before refunding so the original Paystack error is preserved
-      const paystackData = err?.response?.data;
-      const failureReason =
-        paystackData?.message ||
-        paystackData?.data?.message ||
-        paystackData?.error ||
-        err.message ||
-        'Transfer failed';
-
-      const originalError = err;
-      if (!err.code) {
-        err.code = 'TRANSFER_FAILED';
-      }
-
-      // DO NOT SET TO FAILED OR REFUND IMMEDIATELY for synchronous API errors.
-      // Leave the status as 'approved' to keep the funds deducted, and allow admin to fallback
-      // to manual payment ("Mark as paid") or reject the payout to trigger a refund.
-      payout.paystackTransfer = payout.paystackTransfer || {};
-      payout.paystackTransfer.failureReason = failureReason;
-      
-      try { await payout.save(); } catch (saveErr) {
-        logger.warn('[Payout] Failed to save failure reason', { payoutId, message: saveErr.message });
-      }
-      
-      logger.error('[Payout] Transfer initiation rejected by Paystack', { payoutId, error: failureReason });
-      throw originalError;
-    }
-  }
-
-  async createPaystackRecipient(payout) {
-    const dest = payout.destination;
-    const name = dest.recipientName || payout.user?.fullName || 'Recipient';
-
-    const data = {
-      name,
-      currency: 'GHS',
-    };
-
-    if (dest.type === 'mobile_money') {
-      data.type = 'mobile_money';
-      data.account_number = dest.phoneNumber;
-      data.bank_code = dest.mobileProvider;
-    } else {
-      data.type = 'nuban';
-      data.account_number = dest.accountNumber;
-      data.bank_code = dest.bankCode;
-    }
-
-    const recipient = await paystackService.createTransferRecipient(data);
-    return recipient.recipient_code;
-  }
-
-  async validateDestination(destination) {
-    if (destination.type === 'mobile_money') {
-      if (!this.isValidGhanaPhone(destination.phoneNumber)) {
-        throw new Error('Invalid Ghana phone number format');
-      }
-      const network = this.detectNetwork(destination.phoneNumber);
-      if (network !== destination.mobileProvider) {
-        throw new Error(`Phone number does not match ${destination.mobileProvider} network`);
-      }
-    } else if (destination.type === 'bank_account') {
-      try {
-        const resolved = await paystackService.resolveAccountNumber(
-          destination.accountNumber,
-          destination.bankCode
-        );
-        destination.recipientName = resolved.account_name;
-      } catch {
-        throw new Error('Could not verify bank account details. Please check account number and bank.');
-      }
-    }
-  }
-
   async handleTransferWebhook(event) {
     const { data } = event;
     const reference = data.reference;
@@ -610,110 +759,73 @@ async markManuallyCompleted(payoutId, adminId, transferReference) {
     }).populate('user');
 
     if (!payout) {
-      logger.warn('[Payout Webhook] Payout not found', { reference });
+      logger.warn('[Payout Webhook] No payout found for transfer reference', { reference });
       return;
     }
 
     if (event.event === 'transfer.success') {
-      payout.status = 'completed';
-      payout.completedAt = new Date();
+      if (payout.status === 'completed') {
+        logger.info('[Payout Webhook] Already completed — idempotency guard', { payoutId: payout._id });
+        return;
+      }
+      payout.status       = 'completed';
+      payout.completedAt  = new Date();
       if (payout.paystackTransfer) payout.paystackTransfer.status = 'success';
       await payout.save();
 
       logger.info('[Payout Webhook] Transfer successful', { payoutId: payout._id, amount: payout.amount });
 
-      try {
-        await notificationService.createInAppNotification(
-          payout.user._id.toString(),
-          'Payout Completed',
-          `Your payout of GHS ${payout.amount.toFixed(2)} has been sent successfully.`,
-          'success',
-          { type: 'payout_completed', payoutId: payout._id }
-        );
-      } catch (notifErr) {
-        logger.warn('[Payout Webhook] Failed to notify agent', { message: notifErr.message });
-      }
+      await notifyAgent(
+        payout.user._id,
+        'Payout Completed',
+        `Your payout of GHS ${payout.amount.toFixed(2)} has been sent successfully.`,
+        'success',
+        { payoutId: payout._id },
+      );
+
     } else if (event.event === 'transfer.failed') {
+      if (payout.status === 'failed') {
+        logger.info('[Payout Webhook] Already failed — idempotency guard', { payoutId: payout._id });
+        return;
+      }
+
+      const reason = data.failure_reason || data.reason || 'Transfer failed';
       payout.status = 'failed';
       if (payout.paystackTransfer) {
-        payout.paystackTransfer.status = 'failed';
-        payout.paystackTransfer.failureReason = data.failure_reason || data.reason || 'Transfer failed';
+        payout.paystackTransfer.status        = 'failed';
+        payout.paystackTransfer.failureReason = reason;
       }
       await payout.save();
 
-      logger.error('[Payout Webhook] Transfer failed', { payoutId: payout._id, reason: data.failure_reason });
+      logger.error('[Payout Webhook] Transfer failed', { payoutId: payout._id, reason });
 
-      await this.refundFailedPayout(payout);
+      // Refund earnings — agent can re-request
+      await refundEarnings(payout.user._id, payout.amount, payout._id, reason);
 
-      try {
-        await notificationService.createInAppNotification(
-          payout.user._id.toString(),
-          'Payout Failed',
-          `Your payout of GHS ${payout.amount.toFixed(2)} failed. The amount has been returned to your earnings balance.`,
-          'error',
-          { type: 'payout_failed', payoutId: payout._id }
-        );
-      } catch (notifErr) {
-        logger.warn('[Payout Webhook] Failed to notify agent', { message: notifErr.message });
-      }
+      await notifyAgent(
+        payout.user._id,
+        'Payout Failed',
+        `Your payout of GHS ${payout.amount.toFixed(2)} failed (${reason}). Your earnings have been restored.`,
+        'error',
+        { payoutId: payout._id },
+      );
     }
   }
 
-  async refundFailedPayout(payout) {
-    // Use withTransaction so it gracefully falls back on standalone MongoDB (no replica set)
-    return await this.withTransaction(async (session) => {
-      const userId = payout.user?._id || payout.user;
-      const updated = await User.findByIdAndUpdate(
-        userId,
-        { $inc: { earningsBalance: payout.amount } },
-        session ? { session, new: true } : { new: true }
-      );
-
-      const txData = [{
-        user: userId,
-        type: 'credit',
-        amount: payout.amount,
-        balanceAfter: updated.earningsBalance,
-        description: `Refund for failed payout #${payout._id}`,
-        relatedPayout: payout._id,
-        metadata: { reason: 'transfer_failed' },
-      }];
-
-      if (session) {
-        await EarningsTransaction.create(txData, { session });
-      } else {
-        await EarningsTransaction.create(txData);
-      }
-
-      logger.info('[Payout] Refunded earnings', { payoutId: payout._id, amount: payout.amount });
-    });
-  }
-
-  isValidGhanaPhone(phone) {
-    const cleaned = String(phone).replace(/[\s\-()]/g, '');
-    return /^0?[2-5]\d{8,9}$/.test(cleaned) || /^233[2-5]\d{8}$/.test(cleaned);
-  }
-
-  detectNetwork(phone) {
-    const cleaned = String(phone).replace(/\D/g, '');
-    const last9 = cleaned.slice(-9);
-    const prefix = last9.slice(0, 2);
-    if (['24', '54', '55', '59'].includes(prefix)) return 'MTN';
-    if (['20', '50'].includes(prefix)) return 'VOD';
-    if (['27', '57', '26', '56'].includes(prefix)) return 'ATL';
-    return null;
-  }
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Queries
+  // ═══════════════════════════════════════════════════════════════════════════
 
   async getEarningsDashboard(userId) {
     const user = await User.findById(userId).select('earningsBalance walletBalance');
     if (!user) throw new Error('User not found');
 
-    const earnings = await EarningsTransaction.aggregate([
+    const [agg] = await EarningsTransaction.aggregate([
       { $match: { user: user._id } },
       {
         $group: {
-          _id: null,
-          totalEarned: { $sum: { $cond: [{ $eq: ['$type', 'credit'] }, '$amount', 0] } },
+          _id:            null,
+          totalEarned:    { $sum: { $cond: [{ $eq: ['$type', 'credit'] }, '$amount', 0] } },
           totalWithdrawn: { $sum: { $cond: [{ $eq: ['$type', 'payout'] }, { $abs: '$amount' }, 0] } },
         },
       },
@@ -724,77 +836,76 @@ async markManuallyCompleted(payoutId, adminId, transferReference) {
       .limit(10)
       .lean();
 
-    // Include fee info so frontend can display estimated costs
-    const feeConfig = await getFeeConfig();
+    const feeConfig      = await getFeeConfig();
     const payoutSettings = await settingsService.getPayoutSettings();
 
+    // canAutoPayout is the single source of truth for "is auto mode actually live?".
+    // Requires BOTH the admin setting AND Paystack keys configured.
+    // Mirrors the logic in getAutoPayoutAvailability() so all components agree.
+    const paystackConfigured = paystackService.isConfigured();
+    const autoPayoutEnabled  = payoutSettings.autoPayoutEnabled || false;
+    const canAutoPayout      = autoPayoutEnabled && paystackConfigured;
+
+    const minMoMo = payoutSettings.minimumPayoutAmounts.mobile_money;
+
     return {
-      availableBalance: Number(user.earningsBalance) || 0,
-      walletBalance: Number(user.walletBalance) || 0,
-      totalEarned: earnings[0]?.totalEarned || 0,
-      totalWithdrawn: Math.abs(earnings[0]?.totalWithdrawn || 0),
+      availableBalance:         Number(user.earningsBalance) || 0,
+      walletBalance:            Number(user.walletBalance)   || 0,
+      totalEarned:              agg?.totalEarned    || 0,
+      totalWithdrawn:           Math.abs(agg?.totalWithdrawn || 0),
       recentPayouts,
       transferFees: {
-        mobile_money: feeConfig.paystackTransferFees?.mobile_money || 1.0,
-        bank_account: feeConfig.paystackTransferFees?.bank_account || 8.0,
+        mobile_money: feeConfig.paystackTransferFees?.mobile_money ?? 1.0,
+        bank_account: feeConfig.paystackTransferFees?.bank_account ?? 8.0,
       },
-      payoutFeeBearer: feeConfig.payoutFeeBearer || 'agent',
-      platformPayoutFeePercent: feeConfig.platformPayoutFeePercent || 0,
-      autoPayoutEnabled: payoutSettings.autoPayoutEnabled || false,
-      minimumPayoutAmounts: payoutSettings.minimumPayoutAmounts,
-      canRequestPayout: (Number(user.earningsBalance) || 0) >= payoutSettings.minimumPayoutAmounts.mobile_money,
+      payoutFeeBearer:          feeConfig.payoutFeeBearer          ?? 'agent',
+      platformPayoutFeePercent: feeConfig.platformPayoutFeePercent ?? 0,
+      autoPayoutEnabled,
+      canAutoPayout,
+      paystackConfigured,
+      minimumPayoutAmounts:     payoutSettings.minimumPayoutAmounts,
+      canRequestPayout:         (Number(user.earningsBalance) || 0) >= minMoMo,
     };
   }
 
   async getPayoutsForUser(userId, filters = {}) {
     const query = { user: userId };
     if (filters.status) query.status = filters.status;
-    const payouts = await PayoutRequest.find(query).sort({ createdAt: -1 }).limit(50).lean();
-    return payouts;
+    return PayoutRequest.find(query).sort({ createdAt: -1 }).limit(50).lean();
   }
 
   async getPendingPayoutsForAdmin(filters = {}) {
-    // By default return pending, but allow filtering for all actionable statuses
     const statusFilter = filters.status
       ? { status: filters.status }
       : { status: { $in: ['pending', 'approved', 'processing'] } };
 
-    const payouts = await PayoutRequest.find(statusFilter)
+    return PayoutRequest.find(statusFilter)
       .populate('user', 'fullName email phone earningsBalance userType')
       .sort({ requestedAt: 1 })
       .lean();
-    return payouts;
   }
 
   async getPayoutHistoryForAdmin({ page = 1, limit = 25, status, userId, search, startDate, endDate } = {}) {
     const query = {};
 
-    if (status && status !== 'all') {
-      query.status = status;
-    }
-
-    if (userId) {
-      query.user = userId;
-    }
-
+    if (status && status !== 'all') query.status = status;
+    if (userId) query.user = userId;
     if (startDate || endDate) {
       query.requestedAt = {};
       if (startDate) query.requestedAt.$gte = new Date(startDate);
-      if (endDate) query.requestedAt.$lte = new Date(endDate);
+      if (endDate)   query.requestedAt.$lte = new Date(endDate);
     }
-
-    if (search && typeof search === 'string' && search.trim()) {
-      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const regex = new RegExp(escaped, 'i');
+    if (search?.trim()) {
+      const re = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
       query.$or = [
-        { 'paystackTransfer.transferReference': regex },
-        { 'destination.phoneNumber': regex },
-        { 'destination.accountNumber': regex },
+        { 'paystackTransfer.transferReference': re },
+        { 'destination.phoneNumber':            re },
+        { 'destination.accountNumber':          re },
       ];
     }
 
-    const total = await PayoutRequest.countDocuments(query);
-    const pages = Math.max(1, Math.ceil(total / limit));
+    const total  = await PayoutRequest.countDocuments(query);
+    const pages  = Math.max(1, Math.ceil(total / limit));
     const pageNum = Math.min(Math.max(1, Number(page) || 1), pages);
 
     const payouts = await PayoutRequest.find(query)
@@ -804,15 +915,7 @@ async markManuallyCompleted(payoutId, adminId, transferReference) {
       .limit(limit)
       .lean();
 
-    return {
-      payouts,
-      pagination: {
-        total,
-        page: pageNum,
-        limit,
-        pages,
-      },
-    };
+    return { payouts, pagination: { total, page: pageNum, limit, pages } };
   }
 }
 

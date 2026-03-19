@@ -19,12 +19,8 @@ import { isBusinessUser } from "../utils/userTypeHelpers.js";
 import { getPriceForUserType } from "../utils/pricingHelpers.js";
 
 class OrderService {
-  /**
-   * Get the correct navigation link based on user type
-   * @param {string} userType - User type (agent, super_admin, etc.)
-   * @param {string} page - Page to navigate to (wallet, orders, etc.)
-   * @returns {string} Navigation link
-   */
+  // ─── Navigation Helper ────────────────────────────────────────────────────────
+
   getNavigationLink(userType, page) {
     const routes = {
       agent: {
@@ -35,92 +31,31 @@ class OrderService {
         wallet: "/superadmin/wallet",
         orders: "/superadmin/orders",
       },
-      admin: {
-        wallet: "/admin/wallet",
-        orders: "/admin/orders",
-      },
+      admin: { wallet: "/admin/wallet", orders: "/admin/orders" },
     };
-
     return routes[userType]?.[page] || `/${page}`;
   }
 
-  // Check if MongoDB supports transactions (replica set or sharded cluster)
-  async supportsTransactions() {
-    try {
-      const adminDb = mongoose.connection.db.admin();
-      const result = await adminDb.command({ replSetGetStatus: 1 });
-      return result.ok === 1;
-    } catch (error) {
-      // If replSetGetStatus fails, we're probably on a standalone instance
-      logger.info(
-        "MongoDB transactions not supported (standalone instance)",
-        error.message
-      );
-      return false;
-    }
-  }
+  // ─── Transaction Support ──────────────────────────────────────────────────────
 
-  // More robust transaction support check for production
-  async checkTransactionSupport() {
-    try {
-      // Try to start a session and transaction to see if it works
-      const session = await mongoose.startSession();
-      session.startTransaction();
-      await session.abortTransaction();
-      session.endSession();
-      logger.info("MongoDB transactions are supported");
-      return true;
-    } catch (error) {
-      logger.info("MongoDB transactions not supported:", error.message);
-      return false;
-    }
-  }
-
-  // Test transaction support and log results
-  async testTransactionSupport() {
-    logger.info("Testing MongoDB transaction support...");
-    const supportsTransactions = await this.checkTransactionSupport();
-
-    if (supportsTransactions) {
-      logger.info("✅ MongoDB transactions are supported and working");
-    } else {
-      logger.info(
-        "⚠️ MongoDB transactions are not supported, will use fallback mode"
-      );
-    }
-
-    return supportsTransactions;
-  }
-
-  // Execute operation with or without transactions - more robust for production
+  /**
+   * Run `operation(session)` inside a MongoDB transaction when the deployment
+   * supports it (replica set / Atlas). Gracefully falls back to no-session on
+   * standalone MongoDB (local dev / Render free tier).
+   *
+   * CRITICAL: Only falls back for topology errors. All other errors (E11000,
+   * validation, business logic) are re-thrown immediately — running the
+   * operation twice would cause double wallet debits.
+   */
   async executeWithTransaction(operation) {
-    // Check if we're in production and should avoid transactions
-    const isProduction = process.env.NODE_ENV === "production";
-    const forceNoTransactions = process.env.FORCE_NO_TRANSACTIONS === "true";
-
-    if (isProduction && forceNoTransactions) {
-      logger.info("Forcing non-transactional execution in production");
-      return await operation(null);
+    if (process.env.FORCE_NO_TRANSACTIONS === "true") {
+      return operation(null);
     }
 
-    /**
-     * Determine whether an error represents "transactions not supported" on
-     * this MongoDB topology.  Only these errors should trigger the no-session
-     * fallback — all other errors (e.g. duplicate-key E11000, validation errors)
-     * must propagate immediately so operations are NOT re-run, which would
-     * cause double wallet debits.
-     */
-    const isTransactionUnsupportedError = (err) => {
-      if (!err) return false;
-      const msg = (err.message || "").toLowerCase();
-      const code = err.code;
-      // MongoServerError codes for transaction/replica-set not available
-      const unsupportedCodes = [
-        20,   // Transaction numbers are only allowed on a replica set member
-        263,  // Transactions are not allowed
-        61,   // Operation cannot be run in a transaction
-      ];
-      if (unsupportedCodes.includes(code)) return true;
+    const isTopologyError = (err) => {
+      const msg = (err?.message || "").toLowerCase();
+      const code = err?.code;
+      if ([20, 61, 263].includes(code)) return true;
       return (
         msg.includes("transaction numbers are only allowed") ||
         msg.includes("replica set") ||
@@ -130,103 +65,201 @@ class OrderService {
       );
     };
 
-    let sessionStarted = false;
     let session = null;
+    let sessionStarted = false;
 
     try {
       session = await mongoose.startSession();
       session.startTransaction();
       sessionStarted = true;
-      logger.debug("Transaction started successfully");
 
       const result = await operation(session);
       await session.commitTransaction();
-      logger.debug("Transaction committed successfully");
       return result;
     } catch (error) {
-      logger.error("Error during transaction execution:", error.message);
-
-      // Abort the session if it was started
       if (session) {
         try {
-          if (
-            session.transaction &&
-            session.transaction.state === "TRANSACTION_STARTED"
-          ) {
+          if (session.transaction?.state === "TRANSACTION_STARTED") {
             await session.abortTransaction();
-            logger.debug("Transaction aborted successfully");
-          } else {
-            logger.debug("Transaction already committed or not started");
           }
-        } catch (abortError) {
-          logger.warn("Failed to abort transaction:", abortError.message);
+        } catch (abortErr) {
+          logger.warn("Failed to abort transaction:", abortErr.message);
         }
       }
 
-      // ── CRITICAL: only fall back to no-session if the error is a
-      // "transactions not supported" topology error.  Any other error
-      // (E11000, validation, business logic) must be re-thrown immediately
-      // to prevent re-running the operation and causing double wallet debits.
-      if (!sessionStarted || isTransactionUnsupportedError(error)) {
+      if (!sessionStarted || isTopologyError(error)) {
         logger.warn(
-          "Transaction not supported by this MongoDB topology, falling back to non-transactional execution:",
-          error.message
-        );
-        logger.warn(
-          "This is normal for standalone MongoDB instances or when transactions are not supported"
+          "MongoDB transactions not supported, running without session:",
+          error.message,
         );
         try {
           return await operation(null);
         } catch (fallbackError) {
-          logger.error("Fallback operation also failed:", fallbackError.message);
+          logger.error("Fallback operation failed:", fallbackError.message);
           throw fallbackError;
         }
       }
 
-      // For all other errors: just re-throw — do NOT run the operation again.
       throw error;
     } finally {
       if (session) {
         try {
           session.endSession();
-          logger.debug("Session ended successfully");
-        } catch (endError) {
-          logger.warn("Failed to end session:", endError.message);
+        } catch {
+          /* ignore */
         }
       }
     }
   }
 
-  // Create single order
-  async createSingleOrder(orderData, tenantId, userId) {
-    // Validate tenantId
-    if (!tenantId) {
-      throw new Error(
-        "tenantId must be provided and cannot be null or undefined"
+  // ─── Storefront Profit Credit ─────────────────────────────────────────────────
+
+  /**
+   * Credits the agent's earningsBalance with the markup profit for a completed
+   * storefront order. Must be called from EVERY path that sets a storefront
+   * order to status:'completed'.
+   *
+   * IDEMPOTENCY — safe to call multiple times:
+   *   Primary:   EarningsTransaction.findOne({ relatedOrder, type:'credit' })
+   *   Secondary: order.metadata.profitCredited flag (avoids repeated DB queries)
+   *
+   * Never throws — earnings credit must never block order completion.
+   *
+   * @param {import('mongoose').Document} order  Populated order document
+   */
+  async _creditStorefrontProfit(order) {
+    if (!order || order.orderType !== "storefront") return;
+    if (order.status !== "completed") return;
+
+    // Fast-path: already marked on in-memory document
+    if (order.metadata?.profitCredited) return;
+
+    const totalMarkup = Number(order.storefrontData?.totalMarkup) || 0;
+    if (totalMarkup <= 0) {
+      logger.info(
+        `[OrderService] _creditStorefrontProfit — zero markup, skipping`,
+        {
+          orderId: order._id,
+          orderNumber: order.orderNumber,
+        },
       );
+      return;
     }
 
-    // Ensure tenantId is a string
+    try {
+      // Primary idempotency: check the immutable ledger first
+      const existingTxn = await EarningsTransaction.findOne({
+        relatedOrder: order._id,
+        type: "credit",
+      });
+      if (existingTxn) {
+        // Keep flag in sync
+        await Order.findByIdAndUpdate(order._id, {
+          "metadata.profitCredited": true,
+        }).catch(() => {});
+        return;
+      }
+
+      // Resolve agentId via storefront (authoritative) then fall back to createdBy
+      let agentId = order.createdBy;
+      if (order.storefrontData?.storefrontId) {
+        const sf = await AgentStorefront.findById(
+          order.storefrontData.storefrontId,
+        )
+          .select("agentId")
+          .lean();
+        if (sf?.agentId) agentId = sf.agentId;
+      }
+
+      if (!agentId) {
+        logger.error(
+          `[OrderService] _creditStorefrontProfit — cannot resolve agentId`,
+          {
+            orderId: order._id,
+            orderNumber: order.orderNumber,
+          },
+        );
+        return;
+      }
+
+      // Atomic balance increment
+      const updatedAgent = await User.findByIdAndUpdate(
+        agentId,
+        { $inc: { earningsBalance: totalMarkup } },
+        { new: true, runValidators: false },
+      );
+      if (!updatedAgent) {
+        logger.error(
+          `[OrderService] _creditStorefrontProfit — agent not found`,
+          {
+            agentId,
+            orderId: order._id,
+          },
+        );
+        return;
+      }
+
+      // Immutable earnings record
+      await EarningsTransaction.create({
+        user: agentId,
+        type: "credit",
+        amount: totalMarkup,
+        balanceAfter: updatedAgent.earningsBalance,
+        description: `Storefront profit — Order ${order.orderNumber}`,
+        relatedOrder: order._id,
+        metadata: {
+          orderNumber: order.orderNumber,
+          storefrontId: order.storefrontData.storefrontId?.toString(),
+          customerTotal: Number(order.total) || 0,
+          tierCost: Number(order.storefrontData?.totalTierCost) || 0,
+          markup: totalMarkup,
+          itemCount: (order.storefrontData?.items || []).length,
+          source: "storefront_order_completed",
+        },
+      });
+
+      // Mark order to short-circuit future calls
+      await Order.findByIdAndUpdate(order._id, {
+        "metadata.profitCredited": true,
+      }).catch(() => {});
+
+      logger.info(
+        `[OrderService] Credited GH₵${totalMarkup.toFixed(2)} to agent ${agentId} ` +
+          `for order ${order.orderNumber}. New balance: GH₵${updatedAgent.earningsBalance.toFixed(2)}`,
+      );
+    } catch (err) {
+      // Never propagate — order completion must not be blocked by earnings credit
+      logger.error(`[OrderService] _creditStorefrontProfit failed`, {
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+        error: err.message,
+      });
+    }
+  }
+
+  // ─── Create Single Order ──────────────────────────────────────────────────────
+
+  async createSingleOrder(orderData, tenantId, userId) {
+    if (!tenantId)
+      throw new Error(
+        "tenantId must be provided and cannot be null or undefined",
+      );
     const tenantIdStr = tenantId.toString();
 
-    // Check for duplicate orders first (outside transaction for better performance)
     const duplicateCheck =
       await duplicateOrderPreventionService.checkForDuplicates(
         orderData,
         userId,
         tenantIdStr,
-        { forceOverride: orderData.forceOverride }
+        { forceOverride: orderData.forceOverride },
       );
-
     if (duplicateCheck.isDuplicate && !duplicateCheck.canProceed) {
-      // Throw error with duplicate information for frontend handling
       const error = new Error(duplicateCheck.message);
       error.code = "DUPLICATE_ORDER_DETECTED";
       error.duplicateInfo = duplicateCheck;
       throw error;
     }
 
-    // Execute the main transaction
     const result = await this.executeWithTransaction(async (session) => {
       const {
         packageGroupId,
@@ -236,100 +269,62 @@ class OrderService {
         quantity = 1,
       } = orderData;
 
-      // Get bundle details with provider info - try without tenantId first
-      let bundle = session
-        ? await Bundle.findOne({
-            _id: packageItemId,
-            packageId: packageGroupId,
-            isActive: true,
-            isDeleted: false,
-          })
-            .populate("providerId", "name code")
-            .session(session)
-        : await Bundle.findOne({
-            _id: packageItemId,
-            packageId: packageGroupId,
-            isActive: true,
-            isDeleted: false,
-          }).populate("providerId", "name code");
-
-      if (!bundle) {
-        // Fallback: try to find bundle by ID only
-        bundle = session
-          ? await Bundle.findOne({
-              _id: packageItemId,
-              isActive: true,
-              isDeleted: false,
-            })
+      const findBundle = (q) =>
+        session
+          ? Bundle.findOne(q)
               .populate("providerId", "name code")
               .session(session)
-          : await Bundle.findOne({
-              _id: packageItemId,
-              isActive: true,
-              isDeleted: false,
-            }).populate("providerId", "name code");
-      }
+          : Bundle.findOne(q).populate("providerId", "name code");
 
-      if (!bundle) {
-        throw new Error("Bundle not found or inactive");
-      }
+      const bundle =
+        (await findBundle({
+          _id: packageItemId,
+          packageId: packageGroupId,
+          isActive: true,
+          isDeleted: false,
+        })) ||
+        (await findBundle({
+          _id: packageItemId,
+          isActive: true,
+          isDeleted: false,
+        }));
+      if (!bundle) throw new Error("Bundle not found or inactive");
 
-      // Get user to determine pricing
       const user = session
         ? await User.findById(userId).session(session)
         : await User.findById(userId);
+      if (!user) throw new Error("User not found");
 
-      if (!user) {
-        throw new Error("User not found");
-      }
-
-      // Calculate order total using user-specific pricing
       const userPrice = getPriceForUserType(bundle, user.userType);
       const orderTotal = userPrice * quantity;
 
-      // Determine order status based on wallet balance and user type
-      let orderStatus = "pending"; // Default to pending for agents
+      let orderStatus = "pending";
       let paymentStatus = "pending";
 
       if (user.walletBalance >= orderTotal) {
-        // Sufficient balance - DEDUCT WALLET IMMEDIATELY
-        // idempotencyKey ties this debit to the specific order attempt so that
-        // a retry or session-fallback execution cannot debit the wallet twice.
-        const debitIdempotencyKey = `single_order_${userId}_${customerPhone}_${Date.now()}`;
+        const idempotencyKey = `single_order_${userId}_${customerPhone}_${Date.now()}`;
         await walletService.debitWallet(
           userId.toString(),
           orderTotal,
           `Payment for order (${customerPhone})`,
-          null, // orderId will be added after order creation
-          { orderType: "single", idempotencyKey: debitIdempotencyKey },
-          session // participate in outer transaction
+          null,
+          { orderType: "single", idempotencyKey },
+          session,
         );
-
-        // Mark as paid immediately
         paymentStatus = "paid";
-
-        // Only set status to confirmed for super admins, agents stay pending
-        if (user.userType === "super_admin") {
-          orderStatus = "confirmed";
-        }
-
+        if (user.userType === "super_admin") orderStatus = "confirmed";
         logger.info(
-          `Wallet deducted GH₵${orderTotal.toFixed(
-            2
-          )} for new order (${customerPhone})`
+          `Wallet deducted GH₵${orderTotal.toFixed(2)} for new order (${customerPhone})`,
         );
       } else {
-        // Insufficient balance - create as draft
         orderStatus = "draft";
         paymentStatus = "pending";
         logger.info(
-          `Order created as draft - insufficient balance. Required: GH₵${orderTotal.toFixed(
-            2
-          )}, Available: GH₵${user.walletBalance.toFixed(2)}`
+          `Order created as draft — insufficient balance. ` +
+            `Required: GH₵${orderTotal.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`,
         );
       }
 
-      // Create order
       const order = new Order({
         orderType: "single",
         tenantId: tenantIdStr,
@@ -341,39 +336,31 @@ class OrderService {
             packageDetails: {
               name: bundle.name,
               code: bundle._id.toString(),
-              price: userPrice, // Use user-specific price
+              price: userPrice,
               dataVolume: bundle.dataVolume,
               validity: bundle.validity,
               provider: bundle.providerId?.code || bundle.providerId?.name,
             },
             quantity,
-            unitPrice: userPrice, // Use user-specific price
+            unitPrice: userPrice,
             totalPrice: orderTotal,
             customerPhone,
             bundleSize: bundleSize
-              ? {
-                  value: bundleSize.value,
-                  unit: bundleSize.unit || "GB",
-                }
+              ? { value: bundleSize.value, unit: bundleSize.unit || "GB" }
               : undefined,
           },
         ],
         paymentMethod: "wallet",
         status: orderStatus,
-        paymentStatus: paymentStatus,
-        // The pre-save hook will calculate subtotal, total, and generate orderNumber
+        paymentStatus,
       });
 
       await saveOrderWithRetry(order, session);
-
-      const statusMessage =
+      logger.info(
         orderStatus === "draft"
-          ? `Order created as draft due to insufficient wallet balance. Required: GH₵${orderTotal.toFixed(
-              2
-            )}, Available: GH₵${user.walletBalance.toFixed(2)}`
-          : `Order created successfully: ${order.orderNumber}`;
-
-      logger.info(statusMessage);
+          ? `Draft order created (insufficient balance). Required: GH₵${orderTotal.toFixed(2)}`
+          : `Order created: ${order.orderNumber}`,
+      );
 
       return {
         order: order.toObject(),
@@ -383,45 +370,38 @@ class OrderService {
       };
     });
 
-    // Send notifications outside the transaction to avoid commit/abort issues
+    // Notifications outside transaction
     try {
       const { order, user, orderTotal, paymentStatus } = result;
-
-      // Notify super admins about new order
       const superAdmins = await User.find(
         { userType: "super_admin" },
-        "userType"
+        "userType",
       );
-
-      const superAdminIds = superAdmins.map((admin) => admin._id.toString());
+      const superAdminIds = superAdmins.map((a) => a._id.toString());
 
       for (const admin of superAdmins) {
         await notificationService.createInAppNotification(
           admin._id.toString(),
           "New Order Created",
-          `Order ${order.orderNumber} has been created by ${
-            user.agentCode || user.name || "User"
-          }. Amount: GH₵${orderTotal.toFixed(2)}`,
+          `Order ${order.orderNumber} created by ${user.agentCode || user.email}. Amount: GH₵${orderTotal.toFixed(2)}`,
           "info",
           {
             orderId: order._id.toString(),
             orderNumber: order.orderNumber,
             amount: orderTotal,
-            agentCode: user.agentCode || user.email,
             type: "new_order_created",
             navigationLink: this.getNavigationLink(admin.userType, "orders"),
-          }
+          },
         );
       }
 
-      // Broadcast order creation to all super admins via WebSocket
       if (superAdminIds.length > 0) {
         websocketService.broadcastOrderCreatedToAdmins(
           {
             orderId: order._id.toString(),
             orderNumber: order.orderNumber,
             status: order.status,
-            paymentStatus: paymentStatus,
+            paymentStatus,
             total: orderTotal,
             orderType: order.orderType,
             createdBy: {
@@ -433,52 +413,43 @@ class OrderService {
             items: order.items,
             createdAt: order.createdAt,
           },
-          superAdminIds
+          superAdminIds,
         );
       }
 
-      // Notify the order creator about their order
       await notificationService.createInAppNotification(
         userId.toString(),
         "Order Created Successfully",
-        `Your order ${order.orderNumber} has been created${
-          paymentStatus === "paid" ? " and paid" : " as draft"
-        }. GH₵${orderTotal.toFixed(2)} ${
-          paymentStatus === "paid" ? "deducted from wallet" : "required"
-        }.`,
+        `Order ${order.orderNumber} ${paymentStatus === "paid" ? "created and paid" : "created as draft"}. GH₵${orderTotal.toFixed(2)} ${paymentStatus === "paid" ? "deducted" : "required"}.`,
         "info",
         {
           orderId: order._id.toString(),
           orderNumber: order.orderNumber,
           amount: orderTotal,
-          paymentStatus: paymentStatus,
+          paymentStatus,
           type: "order_created",
           navigationLink: this.getNavigationLink(user.userType, "orders"),
-        }
+        },
       );
 
-      // Send push notification to user
       try {
         await pushNotificationService.sendOrderStatusUpdate(
           userId.toString(),
           order,
-          order.status
+          order.status,
         );
-      } catch (pushError) {
-        logger.error(
-          `Failed to send push notification for order creation: ${pushError.message}`
-        );
+      } catch (pushErr) {
+        logger.error(`Push notification failed: ${pushErr.message}`);
       }
-    } catch (error) {
-      logger.error(
-        `Failed to send order creation notification: ${error.message}`
-      );
+    } catch (err) {
+      logger.error(`Order creation notification failed: ${err.message}`);
     }
 
     return result.order;
   }
 
-  // Create bulk order (new logic)
+  // ─── Create Bulk Orders ───────────────────────────────────────────────────────
+
   async createBulkOrders({
     items,
     tenantId,
@@ -486,69 +457,50 @@ class OrderService {
     packageId,
     forceOverride = false,
   }) {
-    logger.debug(
-      `Bulk order service called with tenantId: ${tenantId} (type: ${typeof tenantId})`
-    );
-
-    // Validate tenantId
-    if (!tenantId) {
+    if (!tenantId)
       throw new Error(
-        "tenantId must be provided and cannot be null or undefined"
+        "tenantId must be provided and cannot be null or undefined",
       );
-    }
-
-    // Ensure tenantId is a string
     const tenantIdStr = tenantId.toString();
-    logger.debug(`tenantIdStr: ${tenantIdStr} (length: ${tenantIdStr.length})`);
 
-    // Check for duplicate orders first (outside transaction for better performance)
-    const bulkOrderData = { items, packageId, forceOverride };
     const duplicateCheck =
       await duplicateOrderPreventionService.checkForDuplicates(
-        bulkOrderData,
+        { items, packageId, forceOverride },
         userId,
         tenantIdStr,
-        { forceOverride }
+        { forceOverride },
       );
-
     if (duplicateCheck.isDuplicate && !duplicateCheck.canProceed) {
-      // Throw error with duplicate information for frontend handling
       const error = new Error(duplicateCheck.message);
       error.code = "DUPLICATE_ORDER_DETECTED";
       error.duplicateInfo = duplicateCheck;
       throw error;
     }
 
-    // Execute the main transaction
     const result = await this.executeWithTransaction(async (session) => {
       const createdOrders = [];
       const errors = [];
-      let totalOrderAmount = 0;
       const orderItems = [];
 
-      // Ensure tenantId and userId are ObjectId instances
-      const getObjectId = (id) => {
-        if (typeof id === "string") return new mongoose.Types.ObjectId(id);
-        if (id instanceof mongoose.Types.ObjectId) return id;
-        // fallback: try to convert
-        return new mongoose.Types.ObjectId(String(id));
-      };
-      const tenantObjectId = getObjectId(tenantIdStr);
-      const userObjectId = getObjectId(userId);
+      const toObjectId = (id) =>
+        id instanceof mongoose.Types.ObjectId
+          ? id
+          : new mongoose.Types.ObjectId(String(id));
 
-      // First pass: validate all items and calculate total
+      const tenantObjectId = toObjectId(tenantIdStr);
+      const userObjectId = toObjectId(userId);
+
+      // First pass: validate all items
       for (let i = 0; i < items.length; i++) {
-        const row = items[i];
-        const parsed = parseBulkOrderRow(row);
+        const parsed = parseBulkOrderRow(items[i]);
         if (parsed.error) {
-          errors.push({ index: i, row, error: parsed.error });
+          errors.push({ index: i, row: items[i], error: parsed.error });
           continue;
         }
 
-        // Look up the correct bundle (packageItem) within the specific package (packageGroup)
         const bundle = session
           ? await Bundle.findOne({
-              packageId: packageId,
+              packageId,
               dataVolume: parsed.value.bundleSize.value,
               dataUnit: parsed.value.bundleSize.unit,
               isActive: true,
@@ -557,7 +509,7 @@ class OrderService {
               .populate("providerId", "name code")
               .session(session)
           : await Bundle.findOne({
-              packageId: packageId,
+              packageId,
               dataVolume: parsed.value.bundleSize.value,
               dataUnit: parsed.value.bundleSize.unit,
               isActive: true,
@@ -567,148 +519,92 @@ class OrderService {
         if (!bundle) {
           errors.push({
             index: i,
-            row,
-            error:
-              "Bundle not found for specified data volume and unit in this package",
+            row: items[i],
+            error: "Bundle not found for specified volume/unit in this package",
           });
           continue;
         }
-
-        orderItems.push({
-          index: i,
-          row,
-          bundle,
-          parsed: parsed.value,
-        });
+        orderItems.push({ index: i, bundle, parsed: parsed.value });
       }
 
-      // Check wallet balance and get user info first to determine pricing
       const user = session
         ? await User.findById(userId).session(session)
         : await User.findById(userId);
+      if (!user) throw new Error("User not found");
 
-      if (!user) {
-        throw new Error("User not found");
-      }
-
-      // Calculate total order amount using user-specific pricing
-      totalOrderAmount = 0; // Reset the total amount
-      for (const item of orderItems) {
-        const userPrice = getPriceForUserType(item.bundle, user.userType);
-        totalOrderAmount += userPrice;
-      }
-
-      // Determine if we can process all orders or need to create as drafts
-      // NO wallet deduction here - only check balance sufficiency
+      const totalOrderAmount = orderItems.reduce(
+        (sum, item) => sum + getPriceForUserType(item.bundle, user.userType),
+        0,
+      );
       const canProcessAll = user.walletBalance >= totalOrderAmount;
 
       if (!canProcessAll) {
-        // Log insufficient balance for bulk order
         logger.info(
-          `Insufficient balance for bulk order. Required: GH₵${totalOrderAmount.toFixed(
-            2
-          )}, Available: GH₵${user.walletBalance.toFixed(
-            2
-          )}. Creating as drafts.`
+          `Insufficient balance for bulk order. Required: GH₵${totalOrderAmount.toFixed(2)}, ` +
+            `Available: GH₵${user.walletBalance.toFixed(2)}. Creating as drafts.`,
         );
-      }
-
-      // DEDUCT WALLET IMMEDIATELY for bulk orders with sufficient balance
-      if (canProcessAll) {
-        // idempotencyKey ties this debit to the specific bulk attempt so that
-        // a retry or session-fallback execution cannot debit the wallet twice.
-        const bulkDebitIdempotencyKey = `bulk_order_${userId}_${orderItems.length}_${Date.now()}`;
+      } else {
+        const idempotencyKey = `bulk_order_${userId}_${orderItems.length}_${Date.now()}`;
         await walletService.debitWallet(
           userId.toString(),
           totalOrderAmount,
           `Bulk order payment for ${orderItems.length} items`,
-          null, // orderId will be added after orders are created
-          { orderType: "bulk", itemCount: orderItems.length, idempotencyKey: bulkDebitIdempotencyKey },
-          session
+          null,
+          { orderType: "bulk", itemCount: orderItems.length, idempotencyKey },
+          session,
         );
-
         logger.info(
-          `Wallet deducted GH₵${totalOrderAmount.toFixed(2)} for bulk order (${
-            orderItems.length
-          } items)`
+          `Wallet deducted GH₵${totalOrderAmount.toFixed(2)} for bulk order (${orderItems.length} items)`,
         );
       }
 
       // Second pass: create orders
-      for (const item of orderItems) {
-        const { bundle, parsed, index, row } = item;
-        const packageGroup = bundle.packageId;
+      for (const { bundle, parsed, index } of orderItems) {
+        const userPrice = getPriceForUserType(bundle, user.userType);
+        const orderStatus = canProcessAll
+          ? user.userType === "super_admin"
+            ? "confirmed"
+            : "pending"
+          : "draft";
+        const paymentStatus = canProcessAll ? "paid" : "pending";
 
         try {
-          // Get user-specific price for this bundle
-          const userPrice = getPriceForUserType(bundle, user.userType);
-
-          // Determine order status and payment status based on wallet balance
-          let orderStatus = "pending"; // Default to pending for agents
-          let paymentStatus = "pending"; // Default to pending
-
-          if (canProcessAll) {
-            // Wallet was deducted - mark as paid
-            paymentStatus = "paid";
-
-            // Only set status to confirmed for super admins, agents stay pending
-            if (user.userType === "super_admin") {
-              orderStatus = "confirmed";
-            }
-          } else {
-            // Insufficient balance - create as draft
-            orderStatus = "draft";
-            paymentStatus = "pending";
-          }
-
           const order = new Order({
             orderType: "single",
             tenantId: tenantObjectId,
             createdBy: userObjectId,
             items: [
               {
-                packageGroup,
+                packageGroup: bundle.packageId,
                 packageItem: bundle._id,
                 packageDetails: {
                   name: bundle.name,
                   code: bundle._id.toString(),
-                  price: userPrice, // Use user-specific price
+                  price: userPrice,
                   dataVolume: bundle.dataVolume,
                   validity: bundle.validity,
                   validityUnit: bundle.validityUnit,
                   provider: bundle.providerId?.code || bundle.providerId?.name,
                 },
                 quantity: 1,
-                unitPrice: userPrice, // Use user-specific price
-                totalPrice: userPrice, // Use user-specific price
+                unitPrice: userPrice,
+                totalPrice: userPrice,
                 customerPhone: parsed.customerPhone,
                 bundleSize: parsed.bundleSize,
                 processingStatus: "pending",
               },
             ],
             status: orderStatus,
-            paymentStatus: paymentStatus,
+            paymentStatus,
           });
-
-          if (session) {
-            await saveOrderWithRetry(order, session);
-          } else {
-            await saveOrderWithRetry(order);
-          }
-
+          await (session
+            ? saveOrderWithRetry(order, session)
+            : saveOrderWithRetry(order));
           createdOrders.push(order);
         } catch (err) {
-          errors.push({ index, row, error: err.message });
+          errors.push({ index, row: items[index], error: err.message });
         }
       }
-
-      const statusMessage = canProcessAll
-        ? `Bulk order created successfully: ${createdOrders.length} orders (pending payment at completion)`
-        : `Bulk order created as drafts due to insufficient wallet balance. Required: GH₵${totalOrderAmount.toFixed(
-            2
-          )}, Available: GH₵${user.walletBalance.toFixed(2)}`;
-
-      logger.info(statusMessage);
 
       return {
         successCount: createdOrders.length,
@@ -716,57 +612,45 @@ class OrderService {
         failedRecords: errors,
         orders: createdOrders.map((o) => o._id),
         totalAmount: totalOrderAmount,
-        user: user.toObject(), // Pass user data for notifications
+        user: user.toObject(),
         orderCount: createdOrders.length,
       };
     });
 
-    // Send notifications outside the transaction to avoid commit/abort issues
     try {
       const { user, orderCount, totalAmount } = result;
-
-      // Notify super admins about bulk order
       const superAdmins = await User.find(
         { userType: "super_admin" },
-        "userType"
+        "userType",
       );
       for (const admin of superAdmins) {
         await notificationService.createInAppNotification(
           admin._id.toString(),
           "Bulk Order Created",
-          `Bulk order with ${orderCount} items has been created by ${
-            user.agentCode || user.name || "User"
-          }. Total amount: GH₵${totalAmount.toFixed(2)}`,
+          `Bulk order with ${orderCount} items created by ${user.agentCode || user.email}. Total: GH₵${totalAmount.toFixed(2)}`,
           "info",
           {
-            orderCount: orderCount,
-            totalAmount: totalAmount,
-            agentCode: user.agentCode || user.email,
+            orderCount,
+            totalAmount,
             type: "bulk_order_created",
             navigationLink: this.getNavigationLink(admin.userType, "orders"),
-          }
+          },
         );
       }
-
-      // Notify the order creator about their bulk order
       await notificationService.createInAppNotification(
         userId.toString(),
         "Bulk Order Created Successfully",
-        `Your bulk order with ${orderCount} items has been created and paid. GH₵${totalAmount.toFixed(
-          2
-        )} deducted from wallet. Automatic refund for any failed orders.`,
+        `Bulk order with ${orderCount} items created and paid. GH₵${totalAmount.toFixed(2)} deducted. Automatic refund for any failed orders.`,
         "info",
         {
-          orderCount: orderCount,
-          totalAmount: totalAmount,
+          orderCount,
+          totalAmount,
           type: "bulk_order_created",
           navigationLink: this.getNavigationLink(user.userType, "orders"),
-        }
+        },
       );
-    } catch (error) {
-      logger.error(
-        `Failed to send bulk order creation notification: ${error.message}`
-      );
+    } catch (err) {
+      logger.error(`Bulk order notification failed: ${err.message}`);
     }
 
     return {
@@ -778,12 +662,13 @@ class OrderService {
     };
   }
 
-  // Get orders with filtering
+  // ─── Get Orders ───────────────────────────────────────────────────────────────
+
   async getOrders(
     tenantId,
     filters = {},
     pagination = {},
-    currentUserId = null
+    currentUserId = null,
   ) {
     try {
       const {
@@ -806,8 +691,6 @@ class OrderService {
         excludeResolvedAfter3Days,
       } = filters;
 
-      // For super admins (tenantId is null), don't filter by tenant
-      // For regular users, filter by their tenant
       const query = tenantId ? { tenantId } : {};
 
       if (status) query.status = status;
@@ -817,66 +700,46 @@ class OrderService {
       if (createdBy) query.createdBy = createdBy;
       if (reported !== undefined) query.reported = reported;
 
-      // Exclude orders that are resolved and more than 10 minutes has passed
-      // Also exclude reported orders (not_received/checking) that are more than 24 hours old
       if (excludeResolvedAfter3Days) {
-        const tenMinutesAgo = new Date();
-        tenMinutesAgo.setMinutes(tenMinutesAgo.getMinutes() - 10);
-
-        const twentyFourHoursAgo = new Date();
-        twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
-
+        const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+        const twentyFourHoAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
         query.$and = query.$and || [];
         query.$and.push({
           $or: [
-            { receptionStatus: { $ne: "resolved" } }, // Not resolved - show it
+            { receptionStatus: { $ne: "resolved" } },
             {
-              // Resolved with resolvedAt timestamp and within 10 minutes - show it
               receptionStatus: "resolved",
-              resolvedAt: { $exists: true, $gte: tenMinutesAgo },
+              resolvedAt: { $exists: true, $gte: tenMinAgo },
             },
             {
-              // Resolved without resolvedAt (legacy), use updatedAt as fallback and within 10 minutes - show it
               receptionStatus: "resolved",
               resolvedAt: { $exists: false },
-              updatedAt: { $gte: tenMinutesAgo },
+              updatedAt: { $gte: tenMinAgo },
             },
           ],
         });
-
-        // Exclude reported orders (not_received/checking) older than 24 hours
         query.$and.push({
           $or: [
-            { reported: { $ne: true } }, // Not reported - show it
-            { receptionStatus: "resolved" }, // Resolved reports - already handled above (10 minute window)
+            { reported: { $ne: true } },
+            { receptionStatus: "resolved" },
             {
-              // Reported orders (not_received/checking) within 24 hours - show it
               reported: true,
               receptionStatus: { $in: ["not_received", "checking"] },
-              reportedAt: { $exists: true, $gte: twentyFourHoursAgo },
+              reportedAt: { $exists: true, $gte: twentyFourHoAgo },
             },
           ],
         });
       }
 
-      // Restrict draft orders to only the creator (agents can only see their own drafts)
       if (status === "draft") {
-        // If specifically filtering for drafts, only show user's own drafts
-        if (currentUserId) {
-          query.createdBy = currentUserId;
-        } else {
-          // If no currentUserId (super admin), don't show any drafts
-          query.status = { $ne: "draft" };
-        }
+        if (currentUserId) query.createdBy = currentUserId;
+        else query.status = { $ne: "draft" };
       } else if (!status && currentUserId) {
-        // If no specific status filter, exclude draft orders from other users
-        // AND always exclude pending_payment storefront orders (managed via storefront order manager)
         query.$or = [
           { status: { $nin: ["draft", "pending_payment"] } },
           { status: "draft", createdBy: currentUserId },
         ];
       } else if (!status) {
-        // No status filter and no currentUserId: exclude draft and pending_payment
         query.status = { $nin: ["draft", "pending_payment"] };
       }
 
@@ -886,28 +749,25 @@ class OrderService {
         if (endDate) query.createdAt.$lte = new Date(endDate);
       }
 
-      // Add provider filter - filter by package provider
-      if (provider) {
-        query["items.packageDetails.provider"] = provider;
-      }
+      if (provider) query["items.packageDetails.provider"] = provider;
 
       if (search) {
-        const searchConditions = [
+        const searchConds = [
           { orderNumber: { $regex: search, $options: "i" } },
           { "customerInfo.name": { $regex: search, $options: "i" } },
           { "customerInfo.phone": { $regex: search, $options: "i" } },
           { "items.customerPhone": { $regex: search, $options: "i" } },
         ];
-
-        // If we already have an $or condition (from draft restrictions), combine them
         if (query.$or) {
-          // We need to combine the existing $or with search conditions
-          // This is complex, so we'll use $and to combine both conditions
-          const existingOr = query.$or;
+          const existing = query.$or;
           delete query.$or;
-          query.$and = [{ $or: existingOr }, { $or: searchConditions }];
+          query.$and = [
+            ...(query.$and || []),
+            { $or: existing },
+            { $or: searchConds },
+          ];
         } else {
-          query.$or = searchConditions;
+          query.$or = searchConds;
         }
       }
 
@@ -922,7 +782,7 @@ class OrderService {
         Order.countDocuments(query),
       ]);
 
-      const result = {
+      return {
         orders,
         pagination: {
           total,
@@ -931,152 +791,102 @@ class OrderService {
           limit: Number(limit),
         },
       };
-
-      return result;
     } catch (error) {
       logger.error(`Get orders error: ${error.message}`);
       throw new Error("Failed to get orders");
     }
   }
 
-  // Process order item
+  // ─── Process Order Item ───────────────────────────────────────────────────────
+
   async processOrderItem(orderId, itemId, tenantId, userId) {
     return await this.executeWithTransaction(async (session) => {
-      // For super admins (tenantId is null), don't filter by tenant
-      // For regular users, filter by their tenant
       const query = tenantId ? { _id: orderId, tenantId } : { _id: orderId };
-
       const order = session
         ? await Order.findOne(query).session(session)
         : await Order.findOne(query);
-
-      if (!order) {
-        throw new Error("Order not found");
-      }
+      if (!order) throw new Error("Order not found");
 
       const item = order.items.id(itemId);
-      if (!item) {
-        throw new Error("Order item not found");
-      }
-
-      if (item.processingStatus !== "pending") {
+      if (!item) throw new Error("Order item not found");
+      if (item.processingStatus !== "pending")
         throw new Error("Order item is not in pending status");
-      }
 
       item.processingStatus = "processing";
       item.processedBy = userId;
+      session ? await order.save({ session }) : await order.save();
 
-      if (session) {
-        await order.save({ session });
-      } else {
-        await order.save();
-      }
-
-      // Simulate bundle processing (replace with actual API integration)
       let processedSuccessfully = false;
       try {
         await this.processMobileBundle(item);
         item.processingStatus = "completed";
         item.processedAt = new Date();
         processedSuccessfully = true;
-      } catch (processingError) {
+      } catch (processingErr) {
         item.processingStatus = "failed";
-        item.processingError = processingError.message;
+        item.processingError = processingErr.message;
       }
 
-      // Update order status
       await order.updateStatus();
-      if (session) {
-        await order.save({ session });
-      } else {
-        await order.save();
-      }
+      session ? await order.save({ session }) : await order.save();
 
       logger.info(
-        `Order ${order.orderNumber} status after updateStatus: ${order.status}, processedSuccessfully: ${processedSuccessfully}`
+        `Order ${order.orderNumber} → ${order.status} (success: ${processedSuccessfully})`,
       );
 
-      // REFUND WALLET IF ORDER FAILED
+      // Wallet refund on failure
       if (!processedSuccessfully && order.paymentStatus === "paid") {
         try {
-          logger.info(`Order ${order.orderNumber} failed, initiating refund`);
-          // Get fresh user data
           const orderCreator = session
             ? await User.findById(order.createdBy).session(session)
             : await User.findById(order.createdBy);
+          if (!orderCreator) throw new Error("Order creator not found");
 
-          if (!orderCreator) {
-            throw new Error("Order creator not found for refund");
-          }
-
-          // Calculate total for this order
-          const orderTotal = order.items.reduce(
-            (sum, item) => sum + item.totalPrice,
-            0
+          const refundAmount = order.items.reduce(
+            (s, i) => s + i.totalPrice,
+            0,
           );
-
-          logger.info(
-            `Refunding GH₵${orderTotal.toFixed(2)} for failed order ${
-              order.orderNumber
-            }`
-          );
-
-          // Refund wallet using walletService
           await walletService.creditWallet(
             order.createdBy.toString(),
-            orderTotal,
+            refundAmount,
             `Refund for failed order ${order.orderNumber}`,
             order._id,
             { orderType: order.orderType, refundReason: "order_failed" },
-            session
+            session,
           );
-
-          // Mark payment as refunded
           order.paymentStatus = "refunded";
-          order.items.forEach((orderItem) => {
-            orderItem.paymentStatus = "Refunded";
+          order.items.forEach((i) => {
+            i.paymentStatus = "Refunded";
           });
-          if (session) {
-            await order.save({ session });
-          } else {
-            await order.save();
-          }
-
+          session ? await order.save({ session }) : await order.save();
           logger.info(
-            `✅ Refunded GH₵${orderTotal.toFixed(2)} for failed order ${
-              order.orderNumber
-            }`
+            `Refunded GH₵${refundAmount.toFixed(2)} for failed order ${order.orderNumber}`,
           );
 
-          // Notify user about refund
           await notificationService.createInAppNotification(
             order.createdBy.toString(),
             "Order Refunded",
-            `Order ${order.orderNumber} failed and GH₵${orderTotal.toFixed(
-              2
-            )} has been refunded to your wallet.`,
+            `Order ${order.orderNumber} failed. GH₵${refundAmount.toFixed(2)} refunded to your wallet.`,
             "info",
             {
               orderId: order._id.toString(),
               orderNumber: order.orderNumber,
-              refundAmount: orderTotal,
+              refundAmount,
               type: "order_refund",
               navigationLink: this.getNavigationLink(
                 orderCreator.userType,
-                "wallet"
+                "wallet",
               ),
-            }
+            },
           );
-        } catch (refundError) {
+        } catch (refundErr) {
           logger.error(
-            `❌ Refund error for order ${order.orderNumber}: ${refundError.message}`
+            `Refund error for order ${order.orderNumber}: ${refundErr.message}`,
           );
-          logger.error(`Stack: ${refundError.stack}`);
-          // Don't throw - we want to continue with the order processing notification
         }
       }
 
-      // Update commission in real-time if order is completed and created by a business user
+      // Commission update (non-storefront business users)
       if (
         processedSuccessfully &&
         order.status === "completed" &&
@@ -1085,88 +895,71 @@ class OrderService {
         try {
           const agent = await User.findById(order.createdBy);
           if (agent && isBusinessUser(agent.userType)) {
-            // Update commission record in real-time for current month
             await commissionService.updateCommissionRealTime(order._id);
-            logger.info(
-              `Real-time commission updated for agent ${agent.fullName} after order ${order.orderNumber} completion`
-            );
           }
-        } catch (commissionError) {
+        } catch (commErr) {
           logger.error(
-            `Failed to update commission for order ${order._id}: ${commissionError.message}`
+            `Commission update failed for order ${order._id}: ${commErr.message}`,
           );
-          // Don't fail the order processing if commission update fails
         }
       }
 
-      // credit storefront profit when a storefront order reaches completed status
+      // Storefront profit credit — called here AND in markOrderCompleted to cover all paths
       if (
         processedSuccessfully &&
         order.status === "completed" &&
         order.orderType === "storefront"
       ) {
-        try {
-          await this._creditStorefrontProfit(order);
-        } catch (err) {
-          logger.error(
-            `Failed to credit storefront profit for order ${order._id}: ${err.message}`
-          );
-        }
+        await this._creditStorefrontProfit(order);
       }
 
-      // Send notification for order processing
+      // Notifications
       try {
-        const orderCreator = await User.findById(order.createdBy);
-        const processor = await User.findById(userId);
+        const [orderCreator, processor, superAdmins] = await Promise.all([
+          User.findById(order.createdBy),
+          User.findById(userId),
+          User.find({ userType: "super_admin" }, "userType"),
+        ]);
+        const processorName =
+          processor?.fullName || processor?.email || "Admin";
+        const statusLabel = processedSuccessfully ? "Completed" : "Failed";
 
         if (orderCreator) {
           await notificationService.createInAppNotification(
             orderCreator._id.toString(),
             "Order Processing Update",
-            `Your order ${order.orderNumber} is being processed by ${
-              processor?.fullName || processor?.email || "Admin"
-            }. Status: ${processedSuccessfully ? "Completed" : "Failed"}`,
+            `Order ${order.orderNumber} processed by ${processorName}. Status: ${statusLabel}`,
             processedSuccessfully ? "success" : "error",
             {
               orderId: order._id.toString(),
               orderNumber: order.orderNumber,
-              status: processedSuccessfully ? "completed" : "failed",
-              processedBy: processor?.fullName || processor?.email,
+              status: order.status,
               type: "order_processing_update",
               navigationLink: this.getNavigationLink(
                 orderCreator.userType,
-                "orders"
+                "orders",
               ),
-            }
+            },
           );
         }
-
-        // Notify super admins about order processing
-        const superAdmins = await User.find(
-          { userType: "super_admin" },
-          "userType"
-        );
         for (const admin of superAdmins) {
           await notificationService.createInAppNotification(
             admin._id.toString(),
             "Order Processed",
-            `Order ${order.orderNumber} has been processed by ${
-              processor?.fullName || processor?.email || "Admin"
-            }. Status: ${processedSuccessfully ? "Completed" : "Failed"}`,
+            `Order ${order.orderNumber} processed by ${processorName}. Status: ${statusLabel}`,
             processedSuccessfully ? "success" : "error",
             {
               orderId: order._id.toString(),
               orderNumber: order.orderNumber,
-              status: processedSuccessfully ? "completed" : "failed",
-              processedBy: processor?.fullName || processor?.email,
+              status: order.status,
               type: "order_processed",
               navigationLink: this.getNavigationLink(admin.userType, "orders"),
-            }
+            },
           );
         }
-      } catch (error) {
+      } catch (notifErr) {
         logger.error(
-          `Failed to send order processing notification: ${error.message}`
+          `Order processing notification failed: ${notifErr.message}`,
         );
       }
 
@@ -1174,140 +967,148 @@ class OrderService {
     });
   }
 
-  // Process bulk order
+  // ─── Process Bulk Order ───────────────────────────────────────────────────────
+
   async processBulkOrder(orderId, tenantId, userId) {
-    const order = await Order.findOne({
-      _id: orderId,
-      tenantId,
-    });
-
-    if (!order) {
-      throw new Error("Order not found");
-    }
-
-    if (order.orderType !== "bulk") {
+    const order = await Order.findOne({ _id: orderId, tenantId });
+    if (!order) throw new Error("Order not found");
+    if (order.orderType !== "bulk")
       throw new Error("Order is not a bulk order");
-    }
 
-    // Process all pending items in the bulk order
     const pendingItems = order.items.filter(
-      (item) => item.processingStatus === "pending"
+      (i) => i.processingStatus === "pending",
     );
-
     for (const item of pendingItems) {
       try {
         await this.processOrderItem(orderId, item._id, tenantId, userId);
-      } catch (error) {
-        logger.error(`Failed to process bulk order item: ${error.message}`);
-        // Continue processing other items
+      } catch (err) {
+        logger.error(`Bulk order item failed: ${err.message}`);
       }
     }
-
     logger.info(`Bulk order processing completed: ${orderId}`);
 
-    // Send notification for bulk order processing
     try {
-      const orderCreator = await User.findById(order.createdBy);
-      const processor = await User.findById(userId);
-
+      const [orderCreator, processor, superAdmins] = await Promise.all([
+        User.findById(order.createdBy),
+        User.findById(userId),
+        User.find({ userType: "super_admin" }, "userType"),
+      ]);
+      const processorName = processor?.fullName || processor?.email || "Admin";
       if (orderCreator) {
         await notificationService.createInAppNotification(
           orderCreator._id.toString(),
           "Bulk Order Processing Update",
-          `Your bulk order ${order.orderNumber} is being processed by ${
-            processor?.fullName || processor?.email || "Admin"
-          }.`,
+          `Bulk order ${order.orderNumber} processed by ${processorName}.`,
           "info",
           {
             orderId: order._id.toString(),
             orderNumber: order.orderNumber,
-            processedBy: processor?.fullName || processor?.email,
             type: "bulk_order_processing_update",
             navigationLink: this.getNavigationLink(
               orderCreator.userType,
-              "orders"
+              "orders",
             ),
-          }
+          },
         );
       }
-
-      // Notify super admins about bulk order processing
-      const superAdmins = await User.find(
-        { userType: "super_admin" },
-        "userType"
-      );
       for (const admin of superAdmins) {
         await notificationService.createInAppNotification(
           admin._id.toString(),
           "Bulk Order Processing",
-          `Bulk order ${order.orderNumber} is being processed by ${
-            processor?.fullName || processor?.email || "Admin"
-          }.`,
+          `Bulk order ${order.orderNumber} processed by ${processorName}.`,
           "info",
           {
             orderId: order._id.toString(),
             orderNumber: order.orderNumber,
-            processedBy: processor?.fullName || processor?.email,
             type: "bulk_order_processing",
             navigationLink: this.getNavigationLink(admin.userType, "orders"),
-          }
+          },
         );
       }
-    } catch (error) {
-      logger.error(
-        `Failed to send bulk order processing notification: ${error.message}`
-      );
+    } catch (err) {
+      logger.error(`Bulk order notification failed: ${err.message}`);
     }
 
     return order;
   }
 
-  // Simulate mobile bundle processing
+  // ─── Simulate Bundle Processing ───────────────────────────────────────────────
+
+  /** Placeholder — replace with your real provider API integration. */
   async processMobileBundle(item) {
-    // Simulate API call delay
     await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    // Simulate random success/failure (90% success rate)
-    const success = Math.random() > 0.1;
-
-    if (!success) {
-      throw new Error("Bundle activation failed - network error");
-    }
-
-    logger.info(`Bundle processed successfully for ${item.customerPhone}`);
+    if (Math.random() < 0.1)
+      throw new Error("Bundle activation failed — network error");
+    logger.info(`Bundle processed for ${item.customerPhone}`);
   }
 
-  // Get monthly revenue for user
+  // ─── Mark Order Completed (Admin direct path) ─────────────────────────────────
+
+  /**
+   * Used when an admin confirms a bundle was delivered via the provider dashboard
+   * (i.e. not through processOrderItem). Ensures _creditStorefrontProfit is always
+   * called regardless of how the order reaches 'completed' status.
+   */
+  async markOrderCompleted(orderId, adminId, tenantId = null) {
+    const query = tenantId ? { _id: orderId, tenantId } : { _id: orderId };
+    const order = await Order.findOne(query);
+    if (!order) throw new Error("Order not found");
+
+    // Even if already completed, run credit in case it was missed
+    if (order.status === "completed") {
+      if (order.orderType === "storefront")
+        await this._creditStorefrontProfit(order);
+      return order;
+    }
+
+    order.items.forEach((item) => {
+      if (item.processingStatus !== "failed")
+        item.processingStatus = "completed";
+    });
+    order.status = "completed";
+    order.processedBy = adminId;
+    await order.save();
+
+    try {
+      const agent = await User.findById(order.createdBy);
+      if (agent && isBusinessUser(agent.userType)) {
+        await commissionService.updateCommissionRealTime(order._id);
+      }
+    } catch (err) {
+      logger.error(
+        `Commission update failed for order ${order._id}: ${err.message}`,
+      );
+    }
+
+    if (order.orderType === "storefront") {
+      await this._creditStorefrontProfit(order);
+    }
+
+    return order;
+  }
+
+  // ─── Revenue & Analytics ──────────────────────────────────────────────────────
+
   async getMonthlyRevenue(userId, userType = "agent") {
-    const currentDate = new Date();
-    const startOfMonth = new Date(
-      currentDate.getFullYear(),
-      currentDate.getMonth(),
-      1
-    );
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const endOfMonth = new Date(
-      currentDate.getFullYear(),
-      currentDate.getMonth() + 1,
+      now.getFullYear(),
+      now.getMonth() + 1,
       0,
       23,
       59,
       59,
-      999
+      999,
     );
-
-    const matchCondition = {
+    const match = {
       status: "completed",
       createdAt: { $gte: startOfMonth, $lte: endOfMonth },
     };
-
-    // For business users, filter by orders they created (createdBy field)
-    if (isBusinessUser(userType)) {
-      matchCondition.createdBy = new mongoose.Types.ObjectId(userId);
-    }
-    // For super admin, get all orders (no additional filter needed)
-
-    const result = await Order.aggregate([
-      { $match: matchCondition },
+    if (isBusinessUser(userType))
+      match.createdBy = new mongoose.Types.ObjectId(userId);
+    const [result] = await Order.aggregate([
+      { $match: match },
       {
         $group: {
           _id: null,
@@ -1316,48 +1117,37 @@ class OrderService {
         },
       },
     ]);
-
     return {
-      monthlyRevenue: result[0]?.monthlyRevenue || 0,
-      orderCount: result[0]?.orderCount || 0,
-      month: currentDate.toLocaleString("default", {
-        month: "long",
-        year: "numeric",
-      }),
+      monthlyRevenue: result?.monthlyRevenue || 0,
+      orderCount: result?.orderCount || 0,
+      month: now.toLocaleString("default", { month: "long", year: "numeric" }),
     };
   }
 
-  // Get daily spending for user (today's completed orders)
   async getDailySpending(userId, userType = "agent") {
-    const currentDate = new Date();
+    const now = new Date();
     const startOfDay = new Date(
-      currentDate.getFullYear(),
-      currentDate.getMonth(),
-      currentDate.getDate()
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
     );
     const endOfDay = new Date(
-      currentDate.getFullYear(),
-      currentDate.getMonth(),
-      currentDate.getDate(),
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
       23,
       59,
       59,
-      999
+      999,
     );
-
-    const matchCondition = {
+    const match = {
       status: "completed",
       createdAt: { $gte: startOfDay, $lte: endOfDay },
     };
-
-    // For business users, filter by orders they created (createdBy field)
-    if (isBusinessUser(userType)) {
-      matchCondition.createdBy = new mongoose.Types.ObjectId(userId);
-    }
-    // For super admin, get all orders (no additional filter needed)
-
-    const result = await Order.aggregate([
-      { $match: matchCondition },
+    if (isBusinessUser(userType))
+      match.createdBy = new mongoose.Types.ObjectId(userId);
+    const [result] = await Order.aggregate([
+      { $match: match },
       {
         $group: {
           _id: null,
@@ -1366,58 +1156,32 @@ class OrderService {
         },
       },
     ]);
-
     return {
-      dailySpending: result[0]?.dailySpending || 0,
-      orderCount: result[0]?.orderCount || 0,
-      date: currentDate.toISOString().split("T")[0],
+      dailySpending: result?.dailySpending || 0,
+      orderCount: result?.orderCount || 0,
+      date: now.toISOString().split("T")[0],
     };
   }
 
-  // Get order analytics
   async getOrderAnalytics(tenantId, timeframe = "30d") {
     try {
-      // Convert timeframe to date
+      const days =
+        { "7d": 7, "30d": 30, "90d": 90, "365d": 365 }[timeframe] || 30;
       const endDate = new Date();
-      let startDate;
-
-      switch (timeframe) {
-        case "7d":
-          startDate = new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
-          break;
-        case "30d":
-          startDate = new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
-          break;
-        case "90d":
-          startDate = new Date(endDate.getTime() - 90 * 24 * 60 * 60 * 1000);
-          break;
-        case "365d":
-          startDate = new Date(endDate.getTime() - 365 * 24 * 60 * 60 * 1000);
-          break;
-        default:
-          startDate = new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
-      }
-
-      const stats = await Order.aggregate([
-        {
-          $match: {
-            tenantId: tenantId,
-            createdAt: { $gte: startDate, $lte: endDate },
-          },
-        },
+      const startDate = new Date(
+        endDate.getTime() - days * 24 * 60 * 60 * 1000,
+      );
+      const [stats] = await Order.aggregate([
+        { $match: { tenantId, createdAt: { $gte: startDate, $lte: endDate } } },
         {
           $group: {
             _id: null,
             totalOrders: { $sum: 1 },
             completedOrders: {
-              $sum: {
-                $cond: [{ $eq: ["$status", "completed"] }, 1, 0],
-              },
+              $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] },
             },
             totalRevenue: {
-              $sum: {
-                $cond: [{ $eq: ["$status", "completed"] }, "$total", 0],
-              },
+              $sum: { $cond: [{ $eq: ["$status", "completed"] }, "$total", 0] },
             },
             bulkOrders: {
               $sum: { $cond: [{ $eq: ["$orderType", "bulk"] }, 1, 0] },
@@ -1425,180 +1189,119 @@ class OrderService {
           },
         },
       ]);
-
-      let result;
-      if (stats.length === 0) {
-        result = {
-          totalOrders: 0,
-          completedOrders: 0,
-          totalRevenue: 0,
-          bulkOrders: 0,
-          completionRate: 0,
-          timeframe,
-        };
-      } else {
-        const statsData = stats[0];
-        const completionRate =
-          statsData.totalOrders > 0
-            ? (statsData.completedOrders / statsData.totalOrders) * 100
-            : 0;
-
-        result = {
-          totalOrders: statsData.totalOrders,
-          completedOrders: statsData.completedOrders,
-          totalRevenue: statsData.totalRevenue,
-          bulkOrders: statsData.bulkOrders,
-          completionRate: Math.round(completionRate * 100) / 100,
-          timeframe,
-        };
-      }
-
-      return result;
+      const completionRate =
+        stats?.totalOrders > 0
+          ? Math.round((stats.completedOrders / stats.totalOrders) * 10000) /
+            100
+          : 0;
+      return {
+        totalOrders: stats?.totalOrders || 0,
+        completedOrders: stats?.completedOrders || 0,
+        totalRevenue: stats?.totalRevenue || 0,
+        bulkOrders: stats?.bulkOrders || 0,
+        completionRate,
+        timeframe,
+      };
     } catch (error) {
       logger.error(`Get order analytics error: ${error.message}`);
       throw new Error("Failed to get order analytics");
     }
   }
 
-  // Process draft orders when wallet is topped up
+  // ─── Draft Order Processing ───────────────────────────────────────────────────
+
   async processDraftOrders(userId, tenantId) {
-    // Execute the main transaction
     const result = await this.executeWithTransaction(async (session) => {
-      // Get all draft orders for the user
       const draftOrders = session
         ? await Order.find({
             createdBy: userId,
             tenantId,
             status: "draft",
           }).session(session)
-        : await Order.find({
-            createdBy: userId,
-            tenantId,
-            status: "draft",
-          });
+        : await Order.find({ createdBy: userId, tenantId, status: "draft" });
+      if (draftOrders.length === 0)
+        return {
+          processed: 0,
+          message: "No draft orders found",
+          totalAmount: 0,
+        };
 
-      if (draftOrders.length === 0) {
-        return { processed: 0, message: "No draft orders found" };
-      }
-
-      // Get user's current wallet balance
       const user = session
         ? await User.findById(userId).session(session)
         : await User.findById(userId);
+      if (!user) throw new Error("User not found");
 
-      if (!user) {
-        throw new Error("User not found");
-      }
-
-      let totalRequired = 0;
-      const processableOrders = [];
-
-      // Calculate total required for all draft orders
-      for (const order of draftOrders) {
-        const orderTotal = order.items.reduce(
-          (sum, item) => sum + item.totalPrice,
-          0
-        );
-        totalRequired += orderTotal;
-        processableOrders.push({ order, orderTotal });
-      }
-
-      // Check if user has sufficient balance
+      const totalRequired = draftOrders.reduce(
+        (sum, o) => sum + o.items.reduce((s, i) => s + i.totalPrice, 0),
+        0,
+      );
       if (user.walletBalance < totalRequired) {
         throw new Error(
-          `Insufficient wallet balance to process all draft orders. Required: GH₵${totalRequired.toFixed(
-            2
-          )}, Available: GH₵${user.walletBalance.toFixed(2)}`
+          `Insufficient balance. Required: GH₵${totalRequired.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`,
         );
       }
 
-      // Process all draft orders - DEDUCT WALLET IMMEDIATELY
-      let processedCount = 0;
-      for (const { order, orderTotal } of processableOrders) {
-        // Deduct wallet for this order
+      let processed = 0;
+      for (const order of draftOrders) {
+        const orderTotal = order.items.reduce((s, i) => s + i.totalPrice, 0);
         await walletService.debitWallet(
           userId.toString(),
           orderTotal,
           `Payment for order ${order.orderNumber}`,
           order._id,
           { orderType: order.orderType },
-          session
+          session,
         );
-
-        // Update order status to pending (ready for processing)
-        order.status = "pending"; // Move from draft to pending
-        order.paymentStatus = "paid"; // Paid immediately
-
-        if (session) {
-          await order.save({ session });
-        } else {
-          await order.save();
-        }
-
-        processedCount++;
+        order.status = "pending";
+        order.paymentStatus = "paid";
+        session ? await order.save({ session }) : await order.save();
+        processed++;
       }
-
-      logger.info(
-        `Processed ${processedCount} draft orders for user ${userId}`
-      );
-
+      logger.info(`Processed ${processed} draft orders for user ${userId}`);
       return {
-        processed: processedCount,
-        message: `Successfully processed ${processedCount} draft orders`,
+        processed,
+        message: `Successfully processed ${processed} draft orders`,
         totalAmount: totalRequired,
         user: user.toObject(),
       };
     });
 
-    // Send notifications outside the transaction to avoid commit/abort issues
     try {
       const { processed, totalAmount, user } = result;
-
       if (processed > 0) {
         await notificationService.createInAppNotification(
           userId.toString(),
           "Draft Orders Processed",
-          `Successfully processed ${processed} draft orders. Total GH₵${totalAmount.toFixed(
-            2
-          )} deducted from wallet.`,
+          `Successfully processed ${processed} draft orders. GH₵${totalAmount.toFixed(2)} deducted.`,
           "success",
           {
             processedCount: processed,
-            totalAmount: totalAmount,
+            totalAmount,
             type: "draft_orders_processed",
             navigationLink: this.getNavigationLink(user.userType, "orders"),
-          }
+          },
         );
-
-        // Notify super admins about draft order processing
         const superAdmins = await User.find(
           { userType: "super_admin" },
-          "userType"
+          "userType",
         );
         for (const admin of superAdmins) {
           await notificationService.createInAppNotification(
             admin._id.toString(),
             "Draft Orders Processed",
-            `User ${
-              user.email || user.name || "User"
-            } processed ${processed} draft orders. Total amount: GH₵${totalAmount.toFixed(
-              2
-            )}`,
+            `User ${user.email} processed ${processed} draft orders. Total: GH₵${totalAmount.toFixed(2)}`,
             "info",
             {
               processedCount: processed,
-              totalAmount: totalAmount,
-              userEmail: user.email,
+              totalAmount,
               type: "draft_orders_processed",
               navigationLink: this.getNavigationLink(admin.userType, "orders"),
-            }
+            },
           );
         }
       }
-    } catch (error) {
-      logger.error(
-        `Failed to send draft order processing notification: ${error.message}`
-      );
+    } catch (err) {
+      logger.error(`Draft orders notification failed: ${err.message}`);
     }
 
     return {
@@ -1608,106 +1311,77 @@ class OrderService {
     };
   }
 
-  // Process single draft order
   async processSingleDraftOrder(orderId, userId, tenantId) {
-    // Execute the main transaction
     const result = await this.executeWithTransaction(async (session) => {
-      // Find the specific draft order
-      const query = {
-        _id: orderId,
-        createdBy: userId,
-        tenantId,
-        status: "draft",
-      };
-
       const order = session
-        ? await Order.findOne(query).session(session)
-        : await Order.findOne(query);
+        ? await Order.findOne({
+            _id: orderId,
+            createdBy: userId,
+            tenantId,
+            status: "draft",
+          }).session(session)
+        : await Order.findOne({
+            _id: orderId,
+            createdBy: userId,
+            tenantId,
+            status: "draft",
+          });
+      if (!order) throw new Error("Draft order not found or already processed");
 
-      if (!order) {
-        throw new Error("Draft order not found or already processed");
-      }
-
-      // Get user's current wallet balance
       const user = session
         ? await User.findById(userId).session(session)
         : await User.findById(userId);
+      if (!user) throw new Error("User not found");
 
-      if (!user) {
-        throw new Error("User not found");
-      }
-
-      // Calculate total required for this order
-      const orderTotal = order.items.reduce(
-        (sum, item) => sum + item.totalPrice,
-        0
-      );
-
-      // Check if user has sufficient balance
-      if (user.walletBalance < orderTotal) {
+      const orderTotal = order.items.reduce((s, i) => s + i.totalPrice, 0);
+      if (user.walletBalance < orderTotal)
         throw new Error(
-          `Insufficient wallet balance to process this order. Required: GH₵${orderTotal.toFixed(
-            2
-          )}, Available: GH₵${user.walletBalance.toFixed(2)}`
+          `Insufficient balance. Required: GH₵${orderTotal.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`,
         );
-      }
 
-      // Deduct wallet immediately
       await walletService.debitWallet(
         userId.toString(),
         orderTotal,
         `Payment for order ${order.orderNumber}`,
         order._id,
         { orderType: order.orderType },
-        session
+        session,
       );
-
-      // Move order from draft to pending
       order.status = "pending";
       order.paymentStatus = "paid";
-
-      if (session) {
-        await order.save({ session });
-      } else {
-        await order.save();
-      }
+      session ? await order.save({ session }) : await order.save();
 
       logger.info(
-        `Processed single draft order ${order.orderNumber} for user ${userId}`
+        `Processed single draft order ${order.orderNumber} for user ${userId}`,
       );
-
       return {
         processed: 1,
-        message: `Successfully processed draft order ${order.orderNumber}`,
+        message: `Draft order ${order.orderNumber} moved to pending`,
         totalAmount: orderTotal,
         order: order.toObject(),
         user: user.toObject(),
       };
     });
 
-    // Send notifications outside the transaction
     try {
-      const { order, totalAmount, user } = result;
-
       await notificationService.createInAppNotification(
         userId.toString(),
         "Draft Order Processed",
-        `Draft order ${
-          order.orderNumber
-        } moved to pending. GH₵${totalAmount.toFixed(2)} deducted from wallet.`,
+        `Draft order ${result.order.orderNumber} moved to pending. GH₵${result.totalAmount.toFixed(2)} deducted.`,
         "success",
         {
-          orderId: order._id.toString(),
-          orderNumber: order.orderNumber,
-          totalAmount: totalAmount,
+          orderId: result.order._id.toString(),
+          orderNumber: result.order.orderNumber,
+          totalAmount: result.totalAmount,
           type: "draft_order_processed",
-          navigationLink: this.getNavigationLink(user.userType, "orders"),
-        }
+          navigationLink: this.getNavigationLink(
+            result.user.userType,
+            "orders",
+          ),
+        },
       );
-    } catch (error) {
-      logger.error(
-        `Failed to send draft order processing notification: ${error.message}`
-      );
+    } catch (err) {
+      logger.error(`Draft order notification failed: ${err.message}`);
     }
 
     return {
@@ -1718,115 +1392,25 @@ class OrderService {
     };
   }
 
+  // ─── Cancel Order ─────────────────────────────────────────────────────────────
 
-  /**
-   * Internal helper used by controller and processing logic.
-   * Credits the agent's earningsBalance with the markup for a
-   * completed storefront order.  The operation is idempotent and
-   * will bail out if the profit has already been applied.
-   *
-   * @param {import('mongoose').Document} order  Mongoose order document
-   */
-  async _creditStorefrontProfit(order) {
-    if (!order || order.orderType !== 'storefront') return;
-    if (order.status !== 'completed') return;
-
-    // ── Primary idempotency: check EarningsTransaction record (survives even if
-    //    order.metadata.profitCredited save fails silently).
-    const existingTxn = await EarningsTransaction.findOne({
-      relatedOrder: order._id,
-      type: 'credit',
-    });
-    if (existingTxn) {
-      // Already credited — ensure the flag is set to prevent repeated checks
-      await Order.findByIdAndUpdate(order._id, { 'metadata.profitCredited': true }).catch(() => {});
-      return;
-    }
-
-    // ── Secondary idempotency: fast-path flag on the order document itself
-    if (order.metadata?.profitCredited) return;
-
-    const totalMarkup = Number(order.storefrontData?.totalMarkup) || 0;
-    if (totalMarkup <= 0) return;
-
-    const storefront = await AgentStorefront.findById(order.storefrontData.storefrontId);
-    if (!storefront) {
-      logger.error(`[OrderService] _creditStorefrontProfit: storefront not found for order ${order._id}`);
-      return;
-    }
-
-    const agentId = storefront.agentId;
-    const tierCost    = Number(order.storefrontData?.totalTierCost) || 0;
-    const customerTotal = Number(order.total) || 0;
-    const earningsRef = `SFTPROF-${order._id}`;
-
-    // ── Atomic balance increment ──────────────────────────────────────────────
-    const updatedAgent = await User.findByIdAndUpdate(
-      agentId,
-      { $inc: { earningsBalance: totalMarkup } },
-      { new: true, runValidators: false }
-    );
-
-    if (!updatedAgent) {
-      logger.error(`[OrderService] _creditStorefrontProfit: agent ${agentId} not found for order ${order._id}`);
-      return;
-    }
-
-    // ── Write immutable earnings transaction ──────────────────────────────────
-    await EarningsTransaction.create({
-      user: agentId,
-      type: 'credit',
-      amount: totalMarkup,
-      balanceAfter: updatedAgent.earningsBalance,
-      description: `Storefront profit — Order ${order.orderNumber}`,
-      reference: earningsRef,
-      relatedOrder: order._id,
-      metadata: {
-        orderNumber:  order.orderNumber,
-        storefrontId: order.storefrontData.storefrontId.toString(),
-        customerTotal,
-        tierCost,
-        markup:       totalMarkup,
-        itemCount:    (order.storefrontData.items || []).length,
-        source:       'storefront_order_completed',
-      },
-    });
-
-    // ── Mark order so concurrent/retry calls skip without doubly querying ETX ─
-    await Order.findByIdAndUpdate(order._id, { 'metadata.profitCredited': true }).catch(() => {});
-
-    logger.info(
-      `[OrderService] Credited GH₵${totalMarkup.toFixed(2)} earnings to agent ${agentId} for storefront order ${order.orderNumber}. New balance: GH₵${updatedAgent.earningsBalance.toFixed(2)}`
-    );
-  }
-
-  // Cancel order
   async cancelOrder(orderId, tenantId, userId, reason) {
-    // Execute the main transaction
     const result = await this.executeWithTransaction(async (session) => {
       const query = tenantId ? { _id: orderId, tenantId } : { _id: orderId };
-
       const order = session
         ? await Order.findOne(query).session(session)
         : await Order.findOne(query);
-
-      if (!order) {
-        throw new Error("Order not found");
-      }
+      if (!order) throw new Error("Order not found");
 
       if (!["pending", "confirmed", "draft"].includes(order.status)) {
         throw new Error("Order cannot be cancelled in current status");
       }
 
       if (order.status === "draft") {
-        if (session) {
-          await Order.deleteOne({ _id: orderId }).session(session);
-        } else {
-          await Order.deleteOne({ _id: orderId });
-        }
-
+        session
+          ? await Order.deleteOne({ _id: orderId }).session(session)
+          : await Order.deleteOne({ _id: orderId });
         logger.info(`Draft order deleted: ${order.orderNumber}`);
-
         return {
           ...order.toObject(),
           status: "deleted",
@@ -1836,24 +1420,19 @@ class OrderService {
         };
       }
 
-      // Several flows: generic wallet refund for normal orders, and
-      // storefront-specific reversal (agent debit + optional Paystack refund).
       let refundAmount = 0;
-      // refundTransaction was previously used to capture wallet credit output but
-      // the value is never consumed. removing to silence lint warning.
+      const isStorefront = order.orderType === "storefront";
 
-      const isStorefront = order.orderType === 'storefront';
-
-      if (!isStorefront &&
-          order.paymentStatus === "paid" &&
-          order.paymentMethod === "wallet" &&
-          order.total > 0) {
+      if (
+        !isStorefront &&
+        order.paymentStatus === "paid" &&
+        order.paymentMethod === "wallet" &&
+        order.total > 0
+      ) {
         try {
-          refundAmount = order.total;
           const orderCreator = await User.findById(order.createdBy);
-          if (!orderCreator) {
-            throw new Error("Order creator not found");
-          }
+          if (!orderCreator) throw new Error("Order creator not found");
+          refundAmount = order.total;
           await walletService.creditWallet(
             order.createdBy.toString(),
             refundAmount,
@@ -1865,49 +1444,44 @@ class OrderService {
               refundReason: reason || "Order cancelled",
               cancelledBy: userId,
             },
-            session
+            session,
           );
-          logger.info(`✅ Refunded GH₵${refundAmount.toFixed(2)} for cancelled order ${order.orderNumber} to user ${order.createdBy}`);
-        } catch (refundError) {
-          logger.error(`Failed to process wallet refund for order ${order.orderNumber}: ${refundError.message}`);
-          throw new Error(`Order cancellation failed: Unable to process refund - ${refundError.message}`);
+          logger.info(
+            `Refunded GH₵${refundAmount.toFixed(2)} for cancelled order ${order.orderNumber}`,
+          );
+        } catch (refundErr) {
+          throw new Error(
+            `Cancellation failed: Unable to process refund — ${refundErr.message}`,
+          );
         }
       }
 
-      // storefront orders no longer modify the wallet at all; only handle
-      // optional refund via Paystack if the customer paid that way.
-      if (isStorefront && order.storefrontData.paymentMethod?.type === 'paystack') {
+      if (
+        isStorefront &&
+        order.storefrontData?.paymentMethod?.type === "paystack"
+      ) {
         try {
           await storefrontService.refundPaystackOrder(order._id);
         } catch (err) {
-          logger.warn(`Paystack refund failed for cancelled order ${order.orderNumber}: ${err.message}`);
+          logger.warn(
+            `Paystack refund failed for order ${order.orderNumber}: ${err.message}`,
+          );
         }
       }
 
-      // Update item statuses
-      for (const item of order.items) {
-        if (item.processingStatus === "pending") {
+      order.items.forEach((item) => {
+        if (item.processingStatus === "pending")
           item.processingStatus = "cancelled";
-        }
-      }
-
+      });
       order.status = "cancelled";
       order.paymentStatus = refundAmount > 0 ? "refunded" : order.paymentStatus;
       order.notes = reason || "Order cancelled";
       order.processedBy = userId;
-
-      if (session) {
-        await order.save({ session });
-      } else {
-        await order.save();
-      }
+      session ? await order.save({ session }) : await order.save();
 
       logger.info(
-        `Order cancelled: ${order.orderNumber}${
-          refundAmount > 0 ? ` with ${refundAmount} GH₵ refund` : ""
-        }`
+        `Order cancelled: ${order.orderNumber}${refundAmount > 0 ? ` with GH₵${refundAmount} refund` : ""}`,
       );
-
       return {
         order: order.toObject(),
         orderCreator: order.createdBy,
@@ -1917,180 +1491,122 @@ class OrderService {
       };
     });
 
-    // Send notifications outside the transaction to avoid commit/abort issues
     try {
-      const {
-        order,
-        orderCreator,
-        canceller,
-        isDraft,
-        refundAmount,
-      } = result;
+      const { order, orderCreator, canceller, isDraft, refundAmount } = result;
+      const [creatorUser, cancellerUser] = await Promise.all([
+        User.findById(orderCreator),
+        User.findById(canceller),
+      ]);
+      const cancellerName =
+        cancellerUser?.fullName || cancellerUser?.email || "Admin";
 
       if (isDraft) {
-        // Send notification for draft order deletion
-        const orderCreatorUser = await User.findById(orderCreator);
-        const deleterUser = await User.findById(result.deleter);
-
-        if (orderCreatorUser) {
+        if (creatorUser) {
           await notificationService.createInAppNotification(
-            orderCreatorUser._id.toString(),
+            creatorUser._id.toString(),
             "Draft Order Deleted",
-            `Your draft order ${order.orderNumber} has been deleted by ${
-              deleterUser?.fullName || deleterUser?.email || "Admin"
-            }.`,
+            `Draft order ${order.orderNumber} deleted by ${cancellerName}.`,
             "info",
             {
               orderId: order._id.toString(),
               orderNumber: order.orderNumber,
-              deletedBy: deleterUser?.fullName || deleterUser?.email,
               type: "draft_order_deleted",
               navigationLink: this.getNavigationLink(
-                orderCreatorUser.userType,
-                "orders"
+                creatorUser.userType,
+                "orders",
               ),
-            }
+            },
           );
         }
       } else {
-        // Send notification for order cancellation
-        const orderCreatorUser = await User.findById(orderCreator);
-        const cancellerUser = await User.findById(canceller);
-
-        let notificationMessage = `Your order ${
-          order.orderNumber
-        } has been cancelled by ${
-          cancellerUser?.fullName || cancellerUser?.email || "Admin"
-        }. Reason: ${reason || "No reason provided"}`;
-
-        // Add refund information to the notification
-        if (refundAmount > 0) {
-          notificationMessage += `\n\n💰 Refund: GH₵${refundAmount} has been credited back to your wallet.`;
-        }
-
-        if (orderCreatorUser) {
+        let msg = `Order ${order.orderNumber} cancelled by ${cancellerName}. Reason: ${reason || "No reason provided"}`;
+        if (refundAmount > 0)
+          msg += `\n\nRefund: GH₵${refundAmount} credited to your wallet.`;
+        if (creatorUser) {
           await notificationService.createInAppNotification(
-            orderCreatorUser._id.toString(),
+            creatorUser._id.toString(),
             "Order Cancelled",
-            notificationMessage,
+            msg,
             "error",
             {
               orderId: order._id.toString(),
               orderNumber: order.orderNumber,
-              cancelledBy: cancellerUser?.fullName || cancellerUser?.email,
+              cancelledBy: cancellerName,
               reason: reason || "No reason provided",
               refundAmount,
               type: "order_cancelled",
               navigationLink: this.getNavigationLink(
-                orderCreatorUser.userType,
-                "orders"
+                creatorUser.userType,
+                "orders",
               ),
-            }
+            },
           );
         }
-
-        // Notify super admins about order cancellation
         const superAdmins = await User.find(
           { userType: "super_admin" },
-          "userType"
+          "userType",
         );
         for (const admin of superAdmins) {
-          let adminMessage = `Order ${
-            order.orderNumber
-          } has been cancelled by ${
-            cancellerUser?.fullName || cancellerUser?.email || "Admin"
-          }. Reason: ${reason || "No reason provided"}`;
-
-          if (refundAmount > 0) {
-            adminMessage += `\n\n💰 Refund: GH₵${refundAmount} has been refunded to the user's wallet.`;
-          }
-
+          let adminMsg = `Order ${order.orderNumber} cancelled by ${cancellerName}. Reason: ${reason || "No reason provided"}`;
+          if (refundAmount > 0)
+            adminMsg += `\n\nRefund: GH₵${refundAmount} returned to user's wallet.`;
           await notificationService.createInAppNotification(
             admin._id.toString(),
             "Order Cancelled",
-            adminMessage,
+            adminMsg,
             "warning",
             {
               orderId: order._id.toString(),
               orderNumber: order.orderNumber,
-              cancelledBy: cancellerUser?.fullName || cancellerUser?.email,
-              reason: reason || "No reason provided",
+              cancelledBy: cancellerName,
+              reason,
               refundAmount,
               type: "order_cancelled",
               navigationLink: this.getNavigationLink(admin.userType, "orders"),
-            }
+            },
           );
         }
       }
-    } catch (error) {
-      logger.error(
-        `Failed to send order cancellation notification: ${error.message}`
-      );
+    } catch (err) {
+      logger.error(`Order cancellation notification failed: ${err.message}`);
     }
 
     return result.order || result;
   }
 
-  // Report data delivery issue
+  // ─── Report Order ─────────────────────────────────────────────────────────────
+
   async reportOrder(orderId, tenantId, userId, description) {
-    // Find the order
     const query = tenantId ? { _id: orderId, tenantId } : { _id: orderId };
     const order = await Order.findOne(query);
-
-    if (!order) {
-      throw new Error("Order not found");
-    }
-
-    // Only allow reporting on completed orders
-    if (order.status !== "completed") {
+    if (!order) throw new Error("Order not found");
+    if (order.status !== "completed")
       throw new Error("Can only report issues on completed orders");
-    }
 
-    // Check if order is older than 2 hours
-    const orderDate = new Date(order.createdAt);
-    const twoHoursAgo = new Date();
-    twoHoursAgo.setHours(twoHoursAgo.getHours() - 2);
-
-    if (orderDate < twoHoursAgo) {
+    if (new Date(order.createdAt) < new Date(Date.now() - 2 * 60 * 60 * 1000)) {
       throw new Error("Cannot report issues on orders older than 2 hours");
     }
 
-    // Get the reporter user info
     const reporter = await User.findById(userId);
-    if (!reporter) {
-      throw new Error("Reporter not found");
-    }
+    if (!reporter) throw new Error("Reporter not found");
 
-    // Update order reception status to 'not_received' and mark as reported
     order.receptionStatus = "not_received";
     order.reported = true;
     order.reportedAt = new Date();
     await order.save();
 
-    // Create a report record (you might want to create a separate Report model for this)
     const reportId = new mongoose.Types.ObjectId();
-
-    // Log the report
     logger.info(
-      `Data delivery issue reported: Order ${order.orderNumber} by user ${
-        reporter.fullName || reporter.email
-      }. Reception status changed to 'not_received'.`
+      `Delivery issue reported: Order ${order.orderNumber} by ${reporter.fullName || reporter.email}`,
     );
 
-    // Send notification to super admin
     try {
-      // Find super admin users
       const superAdmins = await User.find({ userType: "super_admin" });
-
       for (const admin of superAdmins) {
         await notificationService.createInAppNotification(
           admin._id.toString(),
           "Data Delivery Issue Reported",
-          `User ${
-            reporter.fullName || reporter.email
-          } reported that data was not delivered for order ${
-            order.orderNumber
-          } (${order.items[0]?.customerPhone || "N/A"}). Issue: ${description}`,
+          `${reporter.fullName || reporter.email} reported non-delivery for order ${order.orderNumber} (${order.items[0]?.customerPhone || "N/A"}). Issue: ${description}`,
           "warning",
           {
             orderId: order._id.toString(),
@@ -2102,149 +1618,91 @@ class OrderService {
             reportId: reportId.toString(),
             type: "data_delivery_report",
             navigationLink: this.getNavigationLink(admin.userType, "orders"),
-          }
+          },
         );
       }
-    } catch (error) {
-      logger.error(
-        `Failed to send data delivery report notification: ${error.message}`
-      );
+    } catch (err) {
+      logger.error(`Delivery report notification failed: ${err.message}`);
     }
 
     return {
       order: order.toObject(),
       reportId: reportId.toString(),
-      reporter: {
-        id: userId,
-        name: reporter.fullName || reporter.email,
-      },
+      reporter: { id: userId, name: reporter.fullName || reporter.email },
     };
   }
 
-  /**
-   * Get single order by ID with caching
-   * @param {string} orderId - Order ID
-   * @param {string} tenantId - Tenant ID (optional, for access control)
-   * @returns {Promise<Object>} Order object
-   */
+  // ─── Order Lookup ─────────────────────────────────────────────────────────────
+
   async getOrderById(orderId, tenantId = null) {
     try {
-      // Build query based on tenant access
       const query = tenantId ? { _id: orderId, tenantId } : { _id: orderId };
-
-      const order = await Order.findOne(query)
+      return await Order.findOne(query)
         .populate("items.packageGroup", "name provider")
         .populate("createdBy", "fullName email")
         .populate("processedBy", "fullName email");
-
-      return order;
     } catch (error) {
       logger.error(`Get order by ID error: ${error.message}`);
       throw new Error("Failed to get order");
     }
   }
 
-  /**
-   * Update order reception status (admin only)
-   * @param {string} orderId - Order ID
-   * @param {string} receptionStatus - New reception status
-   * @param {string} adminId - Admin user ID making the change
-   * @param {string} tenantId - Tenant ID (optional)
-   * @returns {Promise<Object>} Updated order
-   */
+  // ─── Reception Status ─────────────────────────────────────────────────────────
+
   async updateReceptionStatus(
     orderId,
     receptionStatus,
     adminId,
-    tenantId = null
+    tenantId = null,
   ) {
-    try {
-      // Validate reception status
-      const validStatuses = [
-        "not_received",
-        "received",
-        "checking",
-        "resolved",
-      ];
-      if (!validStatuses.includes(receptionStatus)) {
-        throw new Error(`Invalid reception status: ${receptionStatus}`);
+    const validStatuses = ["not_received", "received", "checking", "resolved"];
+    if (!validStatuses.includes(receptionStatus))
+      throw new Error(`Invalid reception status: ${receptionStatus}`);
+
+    const query = tenantId ? { _id: orderId, tenantId } : { _id: orderId };
+    const order = await Order.findOne(query);
+    if (!order) throw new Error("Order not found");
+    if (order.status !== "completed")
+      throw new Error("Can only update reception status on completed orders");
+
+    const oldStatus = order.receptionStatus;
+    order.receptionStatus = receptionStatus;
+    if (receptionStatus === "resolved" && oldStatus !== "resolved")
+      order.resolvedAt = new Date();
+    order.updatedAt = new Date();
+    await order.save();
+
+    const admin = await User.findById(adminId);
+    logger.info(
+      `Reception status: Order ${order.orderNumber} → '${receptionStatus}' by ${admin?.fullName || adminId}`,
+    );
+
+    if (receptionStatus === "checking" || receptionStatus === "resolved") {
+      try {
+        const msg =
+          receptionStatus === "checking"
+            ? `We are investigating the delivery issue for order ${order.orderNumber}.`
+            : `The delivery issue for order ${order.orderNumber} has been resolved. Thank you.`;
+        await notificationService.createNotification(
+          order.createdBy.toString(),
+          receptionStatus === "checking"
+            ? "Issue Investigation Started"
+            : "Issue Resolved",
+          msg,
+          receptionStatus === "checking" ? "info" : "success",
+          {
+            orderId: order._id.toString(),
+            orderNumber: order.orderNumber,
+            receptionStatus,
+            type: "reception_status_update",
+          },
+        );
+      } catch (err) {
+        logger.error(`Reception status notification failed: ${err.message}`);
       }
-
-      // Find the order
-      const query = tenantId ? { _id: orderId, tenantId } : { _id: orderId };
-      const order = await Order.findOne(query);
-
-      if (!order) {
-        throw new Error("Order not found");
-      }
-
-      // Only allow status changes on completed orders
-      if (order.status !== "completed") {
-        throw new Error("Can only update reception status on completed orders");
-      }
-
-      const oldStatus = order.receptionStatus;
-      order.receptionStatus = receptionStatus;
-
-      // Set resolvedAt timestamp when status changes to resolved
-      if (receptionStatus === "resolved" && oldStatus !== "resolved") {
-        order.resolvedAt = new Date();
-      }
-
-      // Explicitly update the updatedAt field to ensure frontend 3-day logic works
-      order.updatedAt = new Date();
-      await order.save();
-
-      // Get admin info for logging
-      const admin = await User.findById(adminId);
-
-      // Log the status change
-      logger.info(
-        `Order reception status updated: Order ${
-          order.orderNumber
-        } changed from '${oldStatus}' to '${receptionStatus}' by admin ${
-          admin?.fullName || admin?.email || adminId
-        }`
-      );
-
-      // Send notification to the order creator if status changed to 'checking' or 'resolved'
-      if (receptionStatus === "checking" || receptionStatus === "resolved") {
-        try {
-          const statusMessage =
-            receptionStatus === "checking"
-              ? `We're currently investigating the data delivery issue for your order ${order.orderNumber}. We'll update you soon.`
-              : `The data delivery issue for your order ${order.orderNumber} has been resolved. Thank you for your patience.`;
-
-          await notificationService.createNotification(
-            order.createdBy.toString(),
-            receptionStatus === "checking"
-              ? "Issue Investigation Started"
-              : "Issue Resolved",
-            statusMessage,
-            receptionStatus === "checking" ? "info" : "success",
-            {
-              orderId: order._id.toString(),
-              orderNumber: order.orderNumber,
-              receptionStatus,
-              type: "reception_status_update",
-              navigationLink: this.getNavigationLink(
-                order.createdBy.userType,
-                "orders"
-              ),
-            }
-          );
-        } catch (notificationError) {
-          logger.error(
-            `Failed to send reception status notification: ${notificationError.message}`
-          );
-        }
-      }
-
-      return order;
-    } catch (error) {
-      logger.error(`Update reception status error: ${error.message}`);
-      throw new Error("Failed to update reception status");
     }
+
+    return order;
   }
 }
 
