@@ -41,7 +41,7 @@ const userSchema = new mongoose.Schema({
     ref: "User",
     required: function () {
       return ["agent", "super_agent", "dealer", "super_dealer"].includes(
-        this.userType
+        this.userType,
       );
     },
   },
@@ -49,7 +49,7 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: function () {
       return ["agent", "super_agent", "dealer", "super_dealer"].includes(
-        this.userType
+        this.userType,
       );
     },
     trim: true,
@@ -60,7 +60,7 @@ const userSchema = new mongoose.Schema({
     sparse: true, // Only enforce uniqueness when the field is present
     required: function () {
       return ["agent", "super_agent", "dealer", "super_dealer"].includes(
-        this.userType
+        this.userType,
       );
     },
   },
@@ -70,7 +70,7 @@ const userSchema = new mongoose.Schema({
     default: "services",
     required: function () {
       return ["agent", "super_agent", "dealer", "super_dealer"].includes(
-        this.userType
+        this.userType,
       );
     },
   },
@@ -80,7 +80,7 @@ const userSchema = new mongoose.Schema({
     default: "basic",
     required: function () {
       return ["agent", "super_agent", "dealer", "super_dealer"].includes(
-        this.userType
+        this.userType,
       );
     },
   },
@@ -90,7 +90,7 @@ const userSchema = new mongoose.Schema({
     default: "active",
     required: function () {
       return ["agent", "super_agent", "dealer", "super_dealer"].includes(
-        this.userType
+        this.userType,
       );
     },
   },
@@ -103,6 +103,23 @@ const userSchema = new mongoose.Schema({
     type: Number,
     default: 0,
     min: 0,
+  },
+  payoutAccount: {
+    type: {
+      type: String,
+      enum: ["mobile_money", "bank_account"],
+    },
+    mobileProvider: {
+      type: String,
+      enum: ["MTN", "TELECEL", "AT"],
+    },
+    phoneNumber: String,
+    bankCode: String,
+    accountNumber: String,
+    accountName: String,
+    recipientName: String,
+    recipientCode: String,
+    updatedAt: Date,
   },
   isVerified: {
     type: Boolean,
@@ -181,7 +198,7 @@ const userSchema = new mongoose.Schema({
     enum: ["pending", "active", "rejected"],
     default: function () {
       return ["agent", "super_agent", "dealer", "super_dealer"].includes(
-        this.userType
+        this.userType,
       )
         ? "pending"
         : "active";

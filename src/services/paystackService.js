@@ -1,21 +1,23 @@
-import axios from 'axios';
-import crypto from 'crypto';
-import logger from '../utils/logger.js';
+import axios from "axios";
+import crypto from "crypto";
+import logger from "../utils/logger.js";
 
 class PaystackService {
   constructor() {
-    this.baseUrl = 'https://api.paystack.co';
+    this.baseUrl = "https://api.paystack.co";
 
     // Paystack keys are now driven solely through environment variables.
     // Production uses live keys; development prefers live keys but can fallback to test.
-    const isProd = process.env.NODE_ENV === 'production';
+    const isProd = process.env.NODE_ENV === "production";
     this.secretKey = isProd
       ? process.env.PAYSTACK_LIVE_SECRET_KEY
-      : (process.env.PAYSTACK_LIVE_SECRET_KEY || process.env.PAYSTACK_TEST_SECRET_KEY);
+      : process.env.PAYSTACK_LIVE_SECRET_KEY ||
+        process.env.PAYSTACK_TEST_SECRET_KEY;
 
     this.publicKey = isProd
       ? process.env.PAYSTACK_LIVE_PUBLIC_KEY
-      : (process.env.PAYSTACK_LIVE_PUBLIC_KEY || process.env.PAYSTACK_TEST_PUBLIC_KEY);
+      : process.env.PAYSTACK_LIVE_PUBLIC_KEY ||
+        process.env.PAYSTACK_TEST_PUBLIC_KEY;
 
     // lastLoaded indicates whether we've attempted to read Settings. Still kept for signature checks.
     this._lastLoaded = null;
@@ -25,16 +27,18 @@ class PaystackService {
   async ensureKeys() {
     // In production we treat env vars as authoritative. In development we still use env vars.
     // This method is primarily used to ensure `this.secretKey` is set for signature validation.
-    const isProd = process.env.NODE_ENV === 'production';
+    const isProd = process.env.NODE_ENV === "production";
 
     // Use the correct env keys for each environment.
     this.publicKey = isProd
       ? process.env.PAYSTACK_LIVE_PUBLIC_KEY
-      : (process.env.PAYSTACK_LIVE_PUBLIC_KEY || process.env.PAYSTACK_TEST_PUBLIC_KEY);
+      : process.env.PAYSTACK_LIVE_PUBLIC_KEY ||
+        process.env.PAYSTACK_TEST_PUBLIC_KEY;
 
     this.secretKey = isProd
       ? process.env.PAYSTACK_LIVE_SECRET_KEY
-      : (process.env.PAYSTACK_LIVE_SECRET_KEY || process.env.PAYSTACK_TEST_SECRET_KEY);
+      : process.env.PAYSTACK_LIVE_SECRET_KEY ||
+        process.env.PAYSTACK_TEST_SECRET_KEY;
 
     // Avoid repeated reassignments in tight loops.
     const now = Date.now();
@@ -52,25 +56,37 @@ class PaystackService {
     // Ensure keys are available (env-driven only)
     await this.ensureKeys();
 
-    if (!this.secretKey) throw new Error('Paystack secret key is not configured');
+    if (!this.secretKey)
+      throw new Error("Paystack secret key is not configured");
 
     try {
-      logger.info('[Paystack] initializeTransaction', { reference: data.reference });
-      const resp = await axios.post(`${this.baseUrl}/transaction/initialize`, payload, {
-        headers: {
-          Authorization: `Bearer ${this.secretKey}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 15000,
+      logger.info("[Paystack] initializeTransaction", {
+        reference: data.reference,
       });
+      const resp = await axios.post(
+        `${this.baseUrl}/transaction/initialize`,
+        payload,
+        {
+          headers: {
+            Authorization: `Bearer ${this.secretKey}`,
+            "Content-Type": "application/json",
+          },
+          timeout: 15000,
+        },
+      );
 
       if (!resp?.data?.status) {
-        throw new Error(resp?.data?.message || 'Failed to initialize Paystack transaction');
+        throw new Error(
+          resp?.data?.message || "Failed to initialize Paystack transaction",
+        );
       }
 
       return resp.data.data;
     } catch (err) {
-      logger.error('[Paystack] initializeTransaction error', { message: err.message, data: err.response?.data });
+      logger.error("[Paystack] initializeTransaction error", {
+        message: err.message,
+        data: err.response?.data,
+      });
       throw err;
     }
   }
@@ -81,7 +97,8 @@ class PaystackService {
    */
   async createCustomer({ email, first_name, last_name, phone, metadata } = {}) {
     await this.ensureKeys();
-    if (!this.secretKey) throw new Error('Paystack secret key is not configured');
+    if (!this.secretKey)
+      throw new Error("Paystack secret key is not configured");
 
     try {
       const payload = { email };
@@ -90,29 +107,41 @@ class PaystackService {
       if (phone) payload.phone = phone;
       if (metadata) payload.metadata = metadata;
 
-      logger.info('[Paystack] createCustomer', { email });
+      logger.info("[Paystack] createCustomer", { email });
       const resp = await axios.post(`${this.baseUrl}/customer`, payload, {
-        headers: { Authorization: `Bearer ${this.secretKey}`, 'Content-Type': 'application/json' },
+        headers: {
+          Authorization: `Bearer ${this.secretKey}`,
+          "Content-Type": "application/json",
+        },
         timeout: 10000,
       });
 
       if (!resp?.data?.status) {
-        throw new Error(resp?.data?.message || 'Failed to create Paystack customer');
+        throw new Error(
+          resp?.data?.message || "Failed to create Paystack customer",
+        );
       }
 
       return resp.data.data;
     } catch (err) {
       // Paystack may return an error if customer exists — try to fallback to a query by email
-      logger.warn('[Paystack] createCustomer failed, attempting lookup', { email, message: err.message });
+      logger.warn("[Paystack] createCustomer failed, attempting lookup", {
+        email,
+        message: err.message,
+      });
       try {
         const q = await axios.get(`${this.baseUrl}/customer`, {
           headers: { Authorization: `Bearer ${this.secretKey}` },
           params: { email },
           timeout: 8000,
         });
-        if (q?.data?.status && q.data.data && q.data.data.length > 0) return q.data.data[0];
+        if (q?.data?.status && q.data.data && q.data.data.length > 0)
+          return q.data.data[0];
       } catch (lookupErr) {
-        logger.warn('[Paystack] fallback customer lookup failed', { email, message: lookupErr.message });
+        logger.warn("[Paystack] fallback customer lookup failed", {
+          email,
+          message: lookupErr.message,
+        });
       }
       throw err;
     }
@@ -120,19 +149,27 @@ class PaystackService {
 
   async verifyTransaction(reference) {
     await this.ensureKeys();
-    if (!this.secretKey) throw new Error('Paystack secret key is not configured');
+    if (!this.secretKey)
+      throw new Error("Paystack secret key is not configured");
 
     try {
-      logger.info('[Paystack] verifyTransaction', { reference });
-      const resp = await axios.get(`${this.baseUrl}/transaction/verify/${reference}`, {
-        headers: { Authorization: `Bearer ${this.secretKey}` },
-        timeout: 15000,
-      });
+      logger.info("[Paystack] verifyTransaction", { reference });
+      const resp = await axios.get(
+        `${this.baseUrl}/transaction/verify/${reference}`,
+        {
+          headers: { Authorization: `Bearer ${this.secretKey}` },
+          timeout: 15000,
+        },
+      );
 
-      if (!resp?.data?.status) throw new Error(resp?.data?.message || 'Paystack verification failed');
+      if (!resp?.data?.status)
+        throw new Error(resp?.data?.message || "Paystack verification failed");
       return resp.data.data;
     } catch (err) {
-      logger.error('[Paystack] verifyTransaction error', { reference, message: err.message });
+      logger.error("[Paystack] verifyTransaction error", {
+        reference,
+        message: err.message,
+      });
       throw err;
     }
   }
@@ -140,9 +177,12 @@ class PaystackService {
   verifyWebhookSignature(rawBody, signature) {
     // Note: ensureKeys is async so signature verification relies on whatever secretKey is currently loaded
     if (!rawBody || !signature || !this.secretKey) return false;
-    const hash = crypto.createHmac('sha512', this.secretKey).update(rawBody).digest('hex');
+    const hash = crypto
+      .createHmac("sha512", this.secretKey)
+      .update(rawBody)
+      .digest("hex");
     const isValid = hash === signature;
-    if (!isValid) logger.warn('[Paystack] webhook signature mismatch');
+    if (!isValid) logger.warn("[Paystack] webhook signature mismatch");
     return isValid;
   }
 
@@ -160,45 +200,62 @@ class PaystackService {
 
   async createSubaccount(data) {
     await this.ensureKeys();
-    if (!this.secretKey) throw new Error('Paystack secret key is not configured');
+    if (!this.secretKey)
+      throw new Error("Paystack secret key is not configured");
 
     try {
       const resp = await axios.post(`${this.baseUrl}/subaccount`, data, {
         headers: { Authorization: `Bearer ${this.secretKey}` },
         timeout: 15000,
       });
-      if (!resp?.data?.status) throw new Error(resp?.data?.message || 'Failed to create subaccount');
+      if (!resp?.data?.status)
+        throw new Error(resp?.data?.message || "Failed to create subaccount");
       return resp.data.data;
     } catch (err) {
-      logger.error('[Paystack] createSubaccount error', { message: err.message });
+      logger.error("[Paystack] createSubaccount error", {
+        message: err.message,
+      });
       throw err;
     }
   }
 
   /**
    * Create a transfer recipient (mobile money or bank) for payouts.
-   * Ghana: type 'mobile_money' with bank_code MTN|VOD|ATL; type 'nuban' for bank.
+   * Ghana: type 'mobile_money' with bank_code MTN|TELECEL|AT; type 'nuban' for bank.
    */
   async createTransferRecipient(data) {
     await this.ensureKeys();
-    if (!this.secretKey) throw new Error('Paystack secret key is not configured');
+    if (!this.secretKey)
+      throw new Error("Paystack secret key is not configured");
 
     try {
       const payload = {
-        type: data.type === 'mobile_money' ? 'mobile_money' : 'nuban',
+        type: data.type === "mobile_money" ? "mobile_money" : "nuban",
         name: data.name,
-        currency: data.currency || 'GHS',
+        currency: data.currency || "GHS",
         account_number: data.account_number,
         bank_code: data.bank_code,
       };
-      const resp = await axios.post(`${this.baseUrl}/transferrecipient`, payload, {
-        headers: { Authorization: `Bearer ${this.secretKey}`, 'Content-Type': 'application/json' },
-        timeout: 15000,
-      });
-      if (!resp?.data?.status) throw new Error(resp?.data?.message || 'Failed to create transfer recipient');
+      const resp = await axios.post(
+        `${this.baseUrl}/transferrecipient`,
+        payload,
+        {
+          headers: {
+            Authorization: `Bearer ${this.secretKey}`,
+            "Content-Type": "application/json",
+          },
+          timeout: 15000,
+        },
+      );
+      if (!resp?.data?.status)
+        throw new Error(
+          resp?.data?.message || "Failed to create transfer recipient",
+        );
       return resp.data.data;
     } catch (err) {
-      logger.error(`[Paystack] createTransferRecipient error: ${err.message} | Paystack: ${JSON.stringify(err.response?.data) ?? 'n/a'}`);
+      logger.error(
+        `[Paystack] createTransferRecipient error: ${err.message} | Paystack: ${JSON.stringify(err.response?.data) ?? "n/a"}`,
+      );
       throw err;
     }
   }
@@ -209,24 +266,31 @@ class PaystackService {
    */
   async initiateTransfer(opts) {
     await this.ensureKeys();
-    if (!this.secretKey) throw new Error('Paystack secret key is not configured');
+    if (!this.secretKey)
+      throw new Error("Paystack secret key is not configured");
 
     try {
       const payload = {
-        source: opts.source || 'balance',
+        source: opts.source || "balance",
         amount: Number(opts.amount),
         recipient: opts.recipient,
         reference: opts.reference,
-        reason: opts.reason || 'Payout',
+        reason: opts.reason || "Payout",
       };
       const resp = await axios.post(`${this.baseUrl}/transfer`, payload, {
-        headers: { Authorization: `Bearer ${this.secretKey}`, 'Content-Type': 'application/json' },
+        headers: {
+          Authorization: `Bearer ${this.secretKey}`,
+          "Content-Type": "application/json",
+        },
         timeout: 15000,
       });
-      if (!resp?.data?.status) throw new Error(resp?.data?.message || 'Failed to initiate transfer');
+      if (!resp?.data?.status)
+        throw new Error(resp?.data?.message || "Failed to initiate transfer");
       return resp.data.data;
     } catch (err) {
-      logger.error(`[Paystack] initiateTransfer error: ${err.message} | Paystack: ${JSON.stringify(err.response?.data) ?? 'n/a'}`);
+      logger.error(
+        `[Paystack] initiateTransfer error: ${err.message} | Paystack: ${JSON.stringify(err.response?.data) ?? "n/a"}`,
+      );
       throw err;
     }
   }
@@ -236,7 +300,8 @@ class PaystackService {
    */
   async resolveAccountNumber(accountNumber, bankCode) {
     await this.ensureKeys();
-    if (!this.secretKey) throw new Error('Paystack secret key is not configured');
+    if (!this.secretKey)
+      throw new Error("Paystack secret key is not configured");
 
     try {
       const resp = await axios.get(`${this.baseUrl}/bank/resolve`, {
@@ -244,10 +309,13 @@ class PaystackService {
         headers: { Authorization: `Bearer ${this.secretKey}` },
         timeout: 10000,
       });
-      if (!resp?.data?.status) throw new Error(resp?.data?.message || 'Failed to resolve account');
+      if (!resp?.data?.status)
+        throw new Error(resp?.data?.message || "Failed to resolve account");
       return resp.data.data;
     } catch (err) {
-      logger.error('[Paystack] resolveAccountNumber error', { message: err.message });
+      logger.error("[Paystack] resolveAccountNumber error", {
+        message: err.message,
+      });
       throw err;
     }
   }
