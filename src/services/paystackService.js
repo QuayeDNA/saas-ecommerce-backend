@@ -296,6 +296,48 @@ class PaystackService {
   }
 
   /**
+   * Issue a refund for a transaction reference (full or partial).
+   * @param {string} reference - Paystack transaction reference or ID
+   * @param {number} amountGHS - Optional partial refund amount (GHS)
+   * @param {string} reason - Optional refund reason
+   */
+  async refundTransaction(reference, amountGHS, reason) {
+    await this.ensureKeys();
+    if (!this.secretKey)
+      throw new Error("Paystack secret key is not configured");
+
+    if (!reference) throw new Error("Refund reference is required");
+
+    try {
+      const payload = {
+        transaction: reference,
+        ...(amountGHS ? { amount: this.convertToPesewas(amountGHS) } : {}),
+        ...(reason ? { reason } : {}),
+      };
+
+      const resp = await axios.post(`${this.baseUrl}/refund`, payload, {
+        headers: {
+          Authorization: `Bearer ${this.secretKey}`,
+          "Content-Type": "application/json",
+        },
+        timeout: 15000,
+      });
+
+      if (!resp?.data?.status)
+        throw new Error(resp?.data?.message || "Failed to initiate refund");
+
+      return resp.data.data;
+    } catch (err) {
+      logger.error("[Paystack] refundTransaction error", {
+        reference,
+        message: err.message,
+        data: err.response?.data,
+      });
+      throw err;
+    }
+  }
+
+  /**
    * Resolve bank account number to get account name (Ghana banks).
    */
   async resolveAccountNumber(accountNumber, bankCode) {

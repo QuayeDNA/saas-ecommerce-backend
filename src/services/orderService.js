@@ -237,6 +237,89 @@ class OrderService {
     }
   }
 
+  async _removeStorefrontProfit(
+    order,
+    reason = "storefront_refund",
+    session = null,
+  ) {
+    if (!order || order.orderType !== "storefront")
+      return { removed: false, amount: 0 };
+
+    const opts = session ? { session } : {};
+    const txns = await EarningsTransaction.find(
+      { relatedOrder: order._id, type: "credit" },
+      null,
+      opts,
+    );
+
+    if (!txns.length) {
+      if (order.metadata?.profitCredited) {
+        order.metadata.profitCredited = false;
+        order.metadata.profitReversedAt = new Date();
+        order.metadata.profitReversedReason = reason;
+        session ? await order.save({ session }) : await order.save();
+      }
+      return { removed: false, amount: 0 };
+    }
+
+    const total = txns.reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+    if (total <= 0) return { removed: false, amount: 0 };
+
+    let agentId = order.createdBy;
+    if (order.storefrontData?.storefrontId) {
+      const sf = await AgentStorefront.findById(
+        order.storefrontData.storefrontId,
+      )
+        .select("agentId")
+        .lean();
+      if (sf?.agentId) agentId = sf.agentId;
+    }
+
+    if (!agentId) {
+      logger.error(
+        "[OrderService] _removeStorefrontProfit — agentId not found",
+        {
+          orderId: order._id,
+        },
+      );
+      return { removed: false, amount: 0 };
+    }
+
+    const userUpdateOpts = session ? { session, new: true } : { new: true };
+    const updated = await User.findByIdAndUpdate(
+      agentId,
+      { $inc: { earningsBalance: -total } },
+      userUpdateOpts,
+    );
+
+    if (!updated) {
+      logger.error("[OrderService] _removeStorefrontProfit — agent not found", {
+        agentId,
+        orderId: order._id,
+      });
+      return { removed: false, amount: 0 };
+    }
+
+    await EarningsTransaction.deleteMany(
+      { _id: { $in: txns.map((tx) => tx._id) } },
+      opts,
+    );
+
+    order.metadata = order.metadata || {};
+    order.metadata.profitCredited = false;
+    order.metadata.profitReversedAt = new Date();
+    order.metadata.profitReversedReason = reason;
+    session ? await order.save({ session }) : await order.save();
+
+    logger.info("[OrderService] Storefront profit removed", {
+      orderId: order._id,
+      amount: total,
+      reason,
+    });
+
+    return { removed: true, amount: total };
+  }
+
   // ─── Create Single Order ──────────────────────────────────────────────────────
 
   async createSingleOrder(orderData, tenantId, userId) {
@@ -834,52 +917,99 @@ class OrderService {
         `Order ${order.orderNumber} → ${order.status} (success: ${processedSuccessfully})`,
       );
 
-      // Wallet refund on failure
+      // Refund on failure
       if (!processedSuccessfully && order.paymentStatus === "paid") {
         try {
-          const orderCreator = session
-            ? await User.findById(order.createdBy).session(session)
-            : await User.findById(order.createdBy);
-          if (!orderCreator) throw new Error("Order creator not found");
+          if (
+            order.orderType === "storefront" &&
+            order.storefrontData?.paymentMethod?.type === "paystack"
+          ) {
+            const refundAmount = Number(order.total) || 0;
+            const refund = await storefrontService.refundPaystackOrder(
+              order._id,
+              {
+                amount: refundAmount,
+                reason: "order_failed",
+              },
+            );
 
-          const refundAmount = order.items.reduce(
-            (s, i) => s + i.totalPrice,
-            0,
-          );
-          await walletService.creditWallet(
-            order.createdBy.toString(),
-            refundAmount,
-            `Refund for failed order ${order.orderNumber}`,
-            order._id,
-            { orderType: order.orderType, refundReason: "order_failed" },
-            session,
-          );
-          order.paymentStatus = "refunded";
-          order.items.forEach((i) => {
-            i.paymentStatus = "Refunded";
-          });
-          session ? await order.save({ session }) : await order.save();
-          logger.info(
-            `Refunded GH₵${refundAmount.toFixed(2)} for failed order ${order.orderNumber}`,
-          );
+            order.paymentStatus = "refunded";
+            order.metadata = order.metadata || {};
+            order.metadata.paystackRefund = {
+              status: "success",
+              reference: order.storefrontData?.paymentMethod?.reference,
+              amount: refundAmount,
+              reason: "order_failed",
+              refundId: refund?.id || refund?.refund_id,
+              refundedAt: new Date(),
+            };
 
-          await notificationService.createInAppNotification(
-            order.createdBy.toString(),
-            "Order Refunded",
-            `Order ${order.orderNumber} failed. GH₵${refundAmount.toFixed(2)} refunded to your wallet.`,
-            "info",
-            {
-              orderId: order._id.toString(),
-              orderNumber: order.orderNumber,
+            await this._removeStorefrontProfit(order, "order_failed", session);
+            session ? await order.save({ session }) : await order.save();
+
+            logger.info(
+              `Paystack refund initiated for failed storefront order ${order.orderNumber}`,
+            );
+          } else {
+            const orderCreator = session
+              ? await User.findById(order.createdBy).session(session)
+              : await User.findById(order.createdBy);
+            if (!orderCreator) throw new Error("Order creator not found");
+
+            const refundAmount = order.items.reduce(
+              (s, i) => s + i.totalPrice,
+              0,
+            );
+            await walletService.creditWallet(
+              order.createdBy.toString(),
               refundAmount,
-              type: "order_refund",
-              navigationLink: this.getNavigationLink(
-                orderCreator.userType,
-                "wallet",
-              ),
-            },
-          );
+              `Refund for failed order ${order.orderNumber}`,
+              order._id,
+              { orderType: order.orderType, refundReason: "order_failed" },
+              session,
+            );
+            order.paymentStatus = "refunded";
+            order.items.forEach((i) => {
+              i.paymentStatus = "Refunded";
+            });
+            session ? await order.save({ session }) : await order.save();
+            logger.info(
+              `Refunded GH₵${refundAmount.toFixed(2)} for failed order ${order.orderNumber}`,
+            );
+
+            await notificationService.createInAppNotification(
+              order.createdBy.toString(),
+              "Order Refunded",
+              `Order ${order.orderNumber} failed. GH₵${refundAmount.toFixed(2)} refunded to your wallet.`,
+              "info",
+              {
+                orderId: order._id.toString(),
+                orderNumber: order.orderNumber,
+                refundAmount,
+                type: "order_refund",
+                navigationLink: this.getNavigationLink(
+                  orderCreator.userType,
+                  "wallet",
+                ),
+              },
+            );
+          }
         } catch (refundErr) {
+          if (
+            order.orderType === "storefront" &&
+            order.storefrontData?.paymentMethod?.type === "paystack"
+          ) {
+            order.metadata = order.metadata || {};
+            order.metadata.paystackRefund = {
+              status: "failed",
+              reference: order.storefrontData?.paymentMethod?.reference,
+              amount: Number(order.total) || 0,
+              reason: "order_failed",
+              error: refundErr.message,
+              failedAt: new Date(),
+            };
+            session ? await order.save({ session }) : await order.save();
+          }
           logger.error(
             `Refund error for order ${order.orderNumber}: ${refundErr.message}`,
           );
@@ -1421,6 +1551,7 @@ class OrderService {
       }
 
       let refundAmount = 0;
+      let refundMethod = null;
       const isStorefront = order.orderType === "storefront";
 
       if (
@@ -1433,6 +1564,7 @@ class OrderService {
           const orderCreator = await User.findById(order.createdBy);
           if (!orderCreator) throw new Error("Order creator not found");
           refundAmount = order.total;
+          refundMethod = "wallet";
           await walletService.creditWallet(
             order.createdBy.toString(),
             refundAmount,
@@ -1461,12 +1593,42 @@ class OrderService {
         order.storefrontData?.paymentMethod?.type === "paystack"
       ) {
         try {
-          await storefrontService.refundPaystackOrder(order._id);
+          const refund = await storefrontService.refundPaystackOrder(
+            order._id,
+            {
+              amount: Number(order.total) || 0,
+              reason: "order_cancelled",
+            },
+          );
+          refundAmount = Number(order.total) || 0;
+          refundMethod = "paystack";
+          order.metadata = order.metadata || {};
+          order.metadata.paystackRefund = {
+            status: "success",
+            reference: order.storefrontData?.paymentMethod?.reference,
+            amount: refundAmount,
+            reason: "order_cancelled",
+            refundId: refund?.id || refund?.refund_id,
+            refundedAt: new Date(),
+          };
         } catch (err) {
+          order.metadata = order.metadata || {};
+          order.metadata.paystackRefund = {
+            status: "failed",
+            reference: order.storefrontData?.paymentMethod?.reference,
+            amount: Number(order.total) || 0,
+            reason: "order_cancelled",
+            error: err.message,
+            failedAt: new Date(),
+          };
           logger.warn(
             `Paystack refund failed for order ${order.orderNumber}: ${err.message}`,
           );
         }
+      }
+
+      if (isStorefront) {
+        await this._removeStorefrontProfit(order, "order_cancelled", session);
       }
 
       order.items.forEach((item) => {
@@ -1488,11 +1650,19 @@ class OrderService {
         canceller: userId,
         isDraft: false,
         refundAmount,
+        refundMethod,
       };
     });
 
     try {
-      const { order, orderCreator, canceller, isDraft, refundAmount } = result;
+      const {
+        order,
+        orderCreator,
+        canceller,
+        isDraft,
+        refundAmount,
+        refundMethod,
+      } = result;
       const [creatorUser, cancellerUser] = await Promise.all([
         User.findById(orderCreator),
         User.findById(canceller),
@@ -1520,8 +1690,12 @@ class OrderService {
         }
       } else {
         let msg = `Order ${order.orderNumber} cancelled by ${cancellerName}. Reason: ${reason || "No reason provided"}`;
-        if (refundAmount > 0)
-          msg += `\n\nRefund: GH₵${refundAmount} credited to your wallet.`;
+        if (refundAmount > 0) {
+          msg +=
+            refundMethod === "paystack"
+              ? `\n\nRefund: GH₵${refundAmount} sent back to the customer via Paystack.`
+              : `\n\nRefund: GH₵${refundAmount} credited to your wallet.`;
+        }
         if (creatorUser) {
           await notificationService.createInAppNotification(
             creatorUser._id.toString(),
@@ -1548,8 +1722,12 @@ class OrderService {
         );
         for (const admin of superAdmins) {
           let adminMsg = `Order ${order.orderNumber} cancelled by ${cancellerName}. Reason: ${reason || "No reason provided"}`;
-          if (refundAmount > 0)
-            adminMsg += `\n\nRefund: GH₵${refundAmount} returned to user's wallet.`;
+          if (refundAmount > 0) {
+            adminMsg +=
+              refundMethod === "paystack"
+                ? `\n\nRefund: GH₵${refundAmount} sent back to the customer via Paystack.`
+                : `\n\nRefund: GH₵${refundAmount} returned to user's wallet.`;
+          }
           await notificationService.createInAppNotification(
             admin._id.toString(),
             "Order Cancelled",

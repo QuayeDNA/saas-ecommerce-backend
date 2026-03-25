@@ -1033,7 +1033,7 @@ class StorefrontService {
    * Returns whatever the Paystack service returns (promise) or null if no
    * refund was attempted.
    */
-  async refundPaystackOrder(orderId) {
+  async refundPaystackOrder(orderId, options = {}) {
     const order = await Order.findById(orderId);
     if (!order || order.orderType !== "storefront") {
       throw new Error("Order not found or not a storefront order");
@@ -1044,20 +1044,24 @@ class StorefrontService {
       return null; // nothing to refund
     }
 
+    if (order.paymentStatus === "refunded") {
+      return null;
+    }
+
     const reference = pm.reference;
     if (!reference) {
       throw new Error("No Paystack reference available on order");
     }
 
     const ps = (await import("./paystackService.js")).default;
-    // paystackService should expose a refundTransaction/refund method
+    const amount = Number(options.amount) || Number(order.total) || 0;
+    const reason = options.reason || "storefront_refund";
+
     if (typeof ps.refundTransaction === "function") {
-      return ps.refundTransaction(reference);
-    } else if (typeof ps.refund === "function") {
-      return ps.refund(reference);
-    } else {
-      throw new Error("Paystack service does not support refunds");
+      return ps.refundTransaction(reference, amount, reason);
     }
+
+    throw new Error("Paystack service does not support refunds");
   }
 
   // =========================================================================
