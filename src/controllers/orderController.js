@@ -1064,6 +1064,10 @@ class OrderController {
 
           await order.save();
 
+          if (action === "completed" && order.orderType === "storefront") {
+            await orderService._creditStorefrontProfit(order);
+          }
+
           // Accumulate creator updates for batching
           const creatorId = order.createdBy.toString();
           if (!statusUpdatesByCreator.has(creatorId)) {
