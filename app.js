@@ -66,6 +66,8 @@ app.use(
       const allowed = [
         process.env.FRONTEND_URL,
         process.env.STOREFRONT_URL,  // dedicated public-store domain
+        'https://brytelinks.com',           // ← add this
+        'https://www.brytelinks.com',
         'https://brytelink-chi.vercel.app',
         'https://saas-ecommerce.vercel.app',
         'http://localhost:5173',
