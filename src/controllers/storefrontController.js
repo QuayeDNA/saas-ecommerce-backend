@@ -1,27 +1,28 @@
 // src/controllers/storefrontController.js
-import storefrontService from '../services/storefrontService.js';
-import paystackService from '../services/paystackService.js';
-import { initializePaystackCheckout } from '../utils/paystackHelpers.js';
-import { getPaystackCallbackUrl as getPublicCallbackUrl } from '../utils/networkUtil.js';
-import { validationResult } from 'express-validator';
-import logger from '../utils/logger.js';
-import Order from '../models/Order.js';
-import PaystackVerificationTask from '../models/PaystackVerificationTask.js';
+import storefrontService from "../services/storefrontService.js";
+import paystackService from "../services/paystackService.js";
+import { initializePaystackCheckout } from "../utils/paystackHelpers.js";
+import { validationResult } from "express-validator";
+import logger from "../utils/logger.js";
+import Order from "../models/Order.js";
+import PaystackVerificationTask from "../models/PaystackVerificationTask.js";
 
 // ─── Small helpers ────────────────────────────────────────────────────────────
 
 function validationGuard(req, res) {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    const errorsArray = errors.array().map(error => ({
-      type: 'field',
+    const errorsArray = errors.array().map((error) => ({
+      type: "field",
       value: error.value,
       msg: error.msg,
       path: error.param || error.path,
       location: error.location,
     }));
-    const firstErrorMsg = errorsArray[0]?.msg || 'Validation failed';
-    res.status(400).json({ success: false, message: firstErrorMsg, errors: errorsArray });
+    const firstErrorMsg = errorsArray[0]?.msg || "Validation failed";
+    res
+      .status(400)
+      .json({ success: false, message: firstErrorMsg, errors: errorsArray });
     return false;
   }
   return true;
@@ -38,7 +39,6 @@ function badRequest(res, message) {
 // ─── Controller ───────────────────────────────────────────────────────────────
 
 class StorefrontController {
-
   // =========================================================================
   // Public Endpoints (No Authentication)
   // =========================================================================
@@ -48,7 +48,9 @@ class StorefrontController {
    */
   async getPublicStorefront(req, res) {
     try {
-      const data = await storefrontService.getPublicStorefront(req.params.businessName);
+      const data = await storefrontService.getPublicStorefront(
+        req.params.businessName,
+      );
       res.json({ success: true, data });
     } catch (err) {
       logger.error(`[getPublicStorefront] ${err.message}`);
@@ -77,38 +79,62 @@ class StorefrontController {
         paymentType: orderData.paymentMethod?.type,
       });
 
-      const order = await storefrontService.createStorefrontOrder(businessName, orderData);
+      const order = await storefrontService.createStorefrontOrder(
+        businessName,
+        orderData,
+      );
 
       // ── Paystack inline checkout ─────────────────────────────────────────────
-      if (orderData.paymentMethod?.type === 'paystack') {
+      if (orderData.paymentMethod?.type === "paystack") {
         // Guard: check admin toggle for storefront Paystack payments
         try {
-          const settingsSvc = (await import('../services/settingsService.js')).default;
+          const settingsSvc = (await import("../services/settingsService.js"))
+            .default;
           const apiSettings = await settingsSvc.getApiSettings();
           if (!apiSettings.paystackStorefrontEnabled) {
-            return badRequest(res, 'Paystack payments are currently disabled for storefronts.');
+            return badRequest(
+              res,
+              "Paystack payments are currently disabled for storefronts.",
+            );
           }
         } catch (settingsErr) {
-          logger.warn(`[createStorefrontOrder] Could not verify paystackStorefrontEnabled: ${settingsErr.message}`);
+          logger.warn(
+            `[createStorefrontOrder] Could not verify paystackStorefrontEnabled: ${settingsErr.message}`,
+          );
         }
 
         const customerEmail = order.storefrontData.customerInfo?.email;
         if (!customerEmail) {
-          return badRequest(res, 'Customer email is required for Paystack payments');
+          return badRequest(
+            res,
+            "Customer email is required for Paystack payments",
+          );
         }
 
-        await paystackService.ensureKeys().catch(e =>
-          logger.warn('[createStorefrontOrder] ensureKeys failed', { message: e.message })
-        );
+        await paystackService
+          .ensureKeys()
+          .catch((e) =>
+            logger.warn("[createStorefrontOrder] ensureKeys failed", {
+              message: e.message,
+            }),
+          );
 
         // Reference encodes the order ID so we can look it up without needing metadata
-        const reference      = `storefront_${order._id}`;
-        const amountPesewas  = paystackService.convertToPesewas(order.total || 0);
+        const reference = `storefront_${order._id}`;
+        const amountPesewas = paystackService.convertToPesewas(
+          order.total || 0,
+        );
 
-        // Callback URL: ngrok/public URL → backend redirect → frontend
-        // Falls back to frontend URL directly if no ngrok is configured
-        const callbackUrl = getPublicCallbackUrl()
-          || `${(process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '')}/storefront/callback`;
+        // Callback URL: optional public backend → redirect → frontend
+        const frontendBase = (
+          process.env.FRONTEND_URL || "http://localhost:5173"
+        ).replace(/\/$/, "");
+        const publicBase = process.env.PUBLIC_URL
+          ? process.env.PUBLIC_URL.replace(/\/$/, "")
+          : null;
+        const callbackUrl = publicBase
+          ? `${publicBase}/wallet/topup/callback`
+          : `${frontendBase}/storefront/callback`;
 
         const init = await initializePaystackCheckout({
           email: customerEmail,
@@ -125,12 +151,12 @@ class StorefrontController {
 
         // Build response – include fee breakdown when fees were delegated
         const responseData = {
-          orderId:      order._id,
-          orderNumber:  order.orderNumber,
-          total:        order.total,               // amount charged (may include fees)
-          subtotal:     order.subtotal ?? order.total,  // base product price
-          status:       order.status,
-          paymentMethod: 'paystack',
+          orderId: order._id,
+          orderNumber: order.orderNumber,
+          total: order.total, // amount charged (may include fees)
+          subtotal: order.subtotal ?? order.total, // base product price
+          status: order.status,
+          paymentMethod: "paystack",
           paystack: {
             authorizationUrl: init.authorization_url,
             reference,
@@ -145,24 +171,28 @@ class StorefrontController {
 
         return res.status(201).json({
           success: true,
-          message: 'Order created. Paystack checkout initialized.',
+          message: "Order created. Paystack checkout initialized.",
           data: responseData,
         });
       }
 
       // ── Mobile Money / Bank Transfer (manual) ────────────────────────────────
-      const paymentTypeLabel = orderData.paymentMethod?.type === 'mobile_money' ? 'Mobile Money' : 'Bank Transfer';
+      const paymentTypeLabel =
+        orderData.paymentMethod?.type === "mobile_money"
+          ? "Mobile Money"
+          : "Bank Transfer";
       return res.status(201).json({
         success: true,
         message: `Order placed! Please complete your ${paymentTypeLabel} payment and the store owner will verify it.`,
         data: {
-          orderId:       order._id,
-          orderNumber:   order.orderNumber,
-          total:         order.total,
-          subtotal:      order.subtotal ?? order.total,
-          status:        order.status,
+          orderId: order._id,
+          orderNumber: order.orderNumber,
+          total: order.total,
+          subtotal: order.subtotal ?? order.total,
+          status: order.status,
           paymentMethod: orderData.paymentMethod?.type,
-          instructions: 'Send the exact amount and provide your transaction reference to the store owner for verification.',
+          instructions:
+            "Send the exact amount and provide your transaction reference to the store owner for verification.",
         },
       });
     } catch (err) {
@@ -190,66 +220,89 @@ class StorefrontController {
    */
   async verifyPaystackTransaction(req, res) {
     try {
-      const reference = (req.query.reference || req.body.reference || '').toString().trim();
-      if (!reference) return badRequest(res, 'reference is required');
+      const reference = (req.query.reference || req.body.reference || "")
+        .toString()
+        .trim();
+      if (!reference) return badRequest(res, "reference is required");
 
       // Only handle storefront references here — other references go to /api/wallet/paystack/verify
-      if (!reference.startsWith('storefront_')) {
-        return badRequest(res, 'This endpoint only handles storefront payment references');
+      if (!reference.startsWith("storefront_")) {
+        return badRequest(
+          res,
+          "This endpoint only handles storefront payment references",
+        );
       }
 
-      await paystackService.ensureKeys().catch(e =>
-        logger.warn('[SF verifyPaystackTransaction] ensureKeys failed', { message: e.message })
-      );
+      await paystackService
+        .ensureKeys()
+        .catch((e) =>
+          logger.warn("[SF verifyPaystackTransaction] ensureKeys failed", {
+            message: e.message,
+          }),
+        );
 
       // ── Step 1: Confirm with Paystack that payment succeeded ─────────────────
       let paystackData;
       try {
         paystackData = await paystackService.verifyTransaction(reference);
       } catch (err) {
-        logger.error(`[SF verifyPaystackTransaction] Paystack API error: ${err.message}`);
-        return res.status(502).json({ success: false, message: 'Could not verify payment with Paystack. Try again.' });
+        logger.error(
+          `[SF verifyPaystackTransaction] Paystack API error: ${err.message}`,
+        );
+        return res
+          .status(502)
+          .json({
+            success: false,
+            message: "Could not verify payment with Paystack. Try again.",
+          });
       }
 
-      if (!paystackData || paystackData.status !== 'success') {
-        return badRequest(res, 'Paystack transaction not successful. Payment may have been cancelled or failed.');
+      if (!paystackData || paystackData.status !== "success") {
+        return badRequest(
+          res,
+          "Paystack transaction not successful. Payment may have been cancelled or failed.",
+        );
       }
 
       // ── Step 2: Process & update the order ───────────────────────────────────
-      const result = await storefrontService.processPaystackPayment(paystackData);
+      const result =
+        await storefrontService.processPaystackPayment(paystackData);
 
       if (result.duplicate) {
         // Mark any background retry task done so the job doesn't keep re-processing.
         try {
           await PaystackVerificationTask.findOneAndUpdate(
             { reference },
-            { status: 'done', lastError: null },
-            { new: true }
+            { status: "done", lastError: null },
+            { new: true },
           );
         } catch {
           // ignore
         }
 
         // Idempotency: already processed — fetch the order and return success
-        const orderId = reference.replace('storefront_', '');
-        const order   = await Order.findById(orderId).lean();
+        const orderId = reference.replace("storefront_", "");
+        const order = await Order.findById(orderId).lean();
         return res.json({
           success: true,
-          message: 'Payment already confirmed — your order is being processed.',
+          message: "Payment already confirmed — your order is being processed.",
           data: {
-            orderId:     order?._id,
+            orderId: order?._id,
             orderNumber: order?.orderNumber,
-            status:      order?.status,
+            status: order?.status,
             paymentStatus: order?.paymentStatus,
           },
         });
       }
 
       if (!result.processed) {
-        logger.warn('[SF verifyPaystackTransaction] processPaystackPayment returned unprocessed', { reason: result.reason, reference });
+        logger.warn(
+          "[SF verifyPaystackTransaction] processPaystackPayment returned unprocessed",
+          { reason: result.reason, reference },
+        );
         return res.status(400).json({
           success: false,
-          message: `Payment could not be processed: ${result.reason || 'unknown error'}`,
+          message: `Payment could not be processed: ${result.reason || "unknown error"}`,
         });
       }
 
@@ -257,8 +310,8 @@ class StorefrontController {
       try {
         await PaystackVerificationTask.findOneAndUpdate(
           { reference },
-          { status: 'done', lastError: null },
-          { new: true }
+          { status: "done", lastError: null },
+          { new: true },
         );
       } catch {
         // ignore
@@ -267,13 +320,13 @@ class StorefrontController {
       // ── Step 3: Return confirmed order to frontend ────────────────────────────
       return res.json({
         success: true,
-        message: 'Payment confirmed! Your order is now queued for processing.',
+        message: "Payment confirmed! Your order is now queued for processing.",
         data: {
-          orderId:       result.order._id,
-          orderNumber:   result.order.orderNumber,
-          status:        result.order.status,
+          orderId: result.order._id,
+          orderNumber: result.order.orderNumber,
+          status: result.order.status,
           paymentStatus: result.order.paymentStatus,
-          total:         result.order.total,
+          total: result.order.total,
         },
       });
     } catch (err) {
@@ -289,10 +342,13 @@ class StorefrontController {
   async createStorefront(req, res) {
     try {
       if (!validationGuard(req, res)) return;
-      const storefront = await storefrontService.createStorefront(req.user.userId, req.body);
+      const storefront = await storefrontService.createStorefront(
+        req.user.userId,
+        req.body,
+      );
       const message = storefront.isApproved
-        ? 'Storefront created and auto-approved. Your store is now live.'
-        : 'Storefront created. Awaiting admin approval.';
+        ? "Storefront created and auto-approved. Your store is now live."
+        : "Storefront created. Awaiting admin approval.";
       res.status(201).json({ success: true, message, data: storefront });
     } catch (err) {
       logger.error(`[createStorefront] ${err.message}`);
@@ -302,22 +358,27 @@ class StorefrontController {
 
   async getAgentStorefront(req, res) {
     try {
-      const storefront = await storefrontService.getAgentStorefront(req.user.userId);
-      if (!storefront) return res.status(404).json({ success: false, message: 'No storefront found' });
+      const storefront = await storefrontService.getAgentStorefront(
+        req.user.userId,
+      );
+      if (!storefront)
+        return res
+          .status(404)
+          .json({ success: false, message: "No storefront found" });
 
       if (storefront.suspendedByAdmin) {
         return res.json({
           success: true,
           data: storefront,
           suspended: true,
-          suspensionMessage: `Your storefront has been suspended by an administrator.${storefront.suspensionReason ? ` Reason: ${storefront.suspensionReason}` : ''} Contact support.`,
+          suspensionMessage: `Your storefront has been suspended by an administrator.${storefront.suspensionReason ? ` Reason: ${storefront.suspensionReason}` : ""} Contact support.`,
         });
       }
 
       res.json({ success: true, data: storefront });
     } catch (err) {
       logger.error(`[getAgentStorefront] ${err.message}`);
-      serverError(res, 'Internal server error');
+      serverError(res, "Internal server error");
     }
   }
 
@@ -325,9 +386,20 @@ class StorefrontController {
     try {
       if (!validationGuard(req, res)) return;
       const sf = await storefrontService.getAgentStorefront(req.user.userId);
-      if (!sf) return res.status(404).json({ success: false, message: 'Storefront not found' });
-      const updated = await storefrontService.updateStorefront(sf._id, req.body, req.user.userId);
-      res.json({ success: true, message: 'Storefront updated successfully', data: updated });
+      if (!sf)
+        return res
+          .status(404)
+          .json({ success: false, message: "Storefront not found" });
+      const updated = await storefrontService.updateStorefront(
+        sf._id,
+        req.body,
+        req.user.userId,
+      );
+      res.json({
+        success: true,
+        message: "Storefront updated successfully",
+        data: updated,
+      });
     } catch (err) {
       logger.error(`[updateStorefront] ${err.message}`);
       badRequest(res, err.message);
@@ -336,8 +408,14 @@ class StorefrontController {
 
   async createPaystackSubaccount(req, res) {
     try {
-      const result = await storefrontService.createPaystackSubaccount(req.user.userId);
-      res.json({ success: true, message: 'Paystack subaccount created', data: result });
+      const result = await storefrontService.createPaystackSubaccount(
+        req.user.userId,
+      );
+      res.json({
+        success: true,
+        message: "Paystack subaccount created",
+        data: result,
+      });
     } catch (err) {
       logger.error(`[createPaystackSubaccount] ${err.message}`);
       badRequest(res, err.message);
@@ -347,9 +425,15 @@ class StorefrontController {
   async deactivateStorefront(req, res) {
     try {
       const sf = await storefrontService.getAgentStorefront(req.user.userId);
-      if (!sf) return res.status(404).json({ success: false, message: 'Storefront not found' });
+      if (!sf)
+        return res
+          .status(404)
+          .json({ success: false, message: "Storefront not found" });
       await storefrontService.deactivateStorefront(sf._id, req.user.userId);
-      res.json({ success: true, message: 'Storefront deactivated. Reactivate anytime.' });
+      res.json({
+        success: true,
+        message: "Storefront deactivated. Reactivate anytime.",
+      });
     } catch (err) {
       logger.error(`[deactivateStorefront] ${err.message}`);
       badRequest(res, err.message);
@@ -359,9 +443,19 @@ class StorefrontController {
   async reactivateStorefront(req, res) {
     try {
       const sf = await storefrontService.getAgentStorefront(req.user.userId);
-      if (!sf) return res.status(404).json({ success: false, message: 'Storefront not found' });
-      const updated = await storefrontService.reactivateStorefront(sf._id, req.user.userId);
-      res.json({ success: true, message: 'Storefront reactivated. Your store is now live!', data: updated });
+      if (!sf)
+        return res
+          .status(404)
+          .json({ success: false, message: "Storefront not found" });
+      const updated = await storefrontService.reactivateStorefront(
+        sf._id,
+        req.user.userId,
+      );
+      res.json({
+        success: true,
+        message: "Storefront reactivated. Your store is now live!",
+        data: updated,
+      });
     } catch (err) {
       logger.error(`[reactivateStorefront] ${err.message}`);
       badRequest(res, err.message);
@@ -371,9 +465,12 @@ class StorefrontController {
   async deleteStorefront(req, res) {
     try {
       const sf = await storefrontService.getAgentStorefront(req.user.userId);
-      if (!sf) return res.status(404).json({ success: false, message: 'Storefront not found' });
+      if (!sf)
+        return res
+          .status(404)
+          .json({ success: false, message: "Storefront not found" });
       await storefrontService.deleteStorefront(sf._id, req.user.userId);
-      res.json({ success: true, message: 'Storefront deleted successfully' });
+      res.json({ success: true, message: "Storefront deleted successfully" });
     } catch (err) {
       logger.error(`[deleteStorefront] ${err.message}`);
       badRequest(res, err.message);
@@ -384,23 +481,28 @@ class StorefrontController {
 
   async getAvailableBundles(req, res) {
     try {
-      const bundles = await storefrontService.getAgentBundlesForPricing(req.user.userId);
+      const bundles = await storefrontService.getAgentBundlesForPricing(
+        req.user.userId,
+      );
       res.json({ success: true, data: bundles });
     } catch (err) {
       logger.error(`[getAvailableBundles] ${err.message}`);
-      serverError(res, 'Internal server error');
+      serverError(res, "Internal server error");
     }
   }
 
   async getCurrentPricing(req, res) {
     try {
       const sf = await storefrontService.getAgentStorefront(req.user.userId);
-      if (!sf) return res.status(404).json({ success: false, message: 'Storefront not found' });
+      if (!sf)
+        return res
+          .status(404)
+          .json({ success: false, message: "Storefront not found" });
       const pricing = await storefrontService.getStorefrontPricing(sf._id);
       res.json({ success: true, data: pricing });
     } catch (err) {
       logger.error(`[getCurrentPricing] ${err.message}`);
-      serverError(res, 'Internal server error');
+      serverError(res, "Internal server error");
     }
   }
 
@@ -408,9 +510,19 @@ class StorefrontController {
     try {
       if (!validationGuard(req, res)) return;
       const sf = await storefrontService.getAgentStorefront(req.user.userId);
-      if (!sf) return res.status(404).json({ success: false, message: 'Storefront not found' });
-      const results = await storefrontService.setPricing(sf._id, req.body.pricing);
-      res.json({ success: true, message: `Pricing updated: ${results.created} created, ${results.updated} updated`, data: results });
+      if (!sf)
+        return res
+          .status(404)
+          .json({ success: false, message: "Storefront not found" });
+      const results = await storefrontService.setPricing(
+        sf._id,
+        req.body.pricing,
+      );
+      res.json({
+        success: true,
+        message: `Pricing updated: ${results.created} created, ${results.updated} updated`,
+        data: results,
+      });
     } catch (err) {
       logger.error(`[setPricing] ${err.message}`);
       badRequest(res, err.message);
@@ -421,9 +533,20 @@ class StorefrontController {
     try {
       if (!validationGuard(req, res)) return;
       const sf = await storefrontService.getAgentStorefront(req.user.userId);
-      if (!sf) return res.status(404).json({ success: false, message: 'Storefront not found' });
-      const results = await storefrontService.toggleBundles(sf._id, req.body.bundles, req.user.userId);
-      res.json({ success: true, message: `Bundles updated: ${results.enabled} enabled, ${results.disabled} disabled`, data: results });
+      if (!sf)
+        return res
+          .status(404)
+          .json({ success: false, message: "Storefront not found" });
+      const results = await storefrontService.toggleBundles(
+        sf._id,
+        req.body.bundles,
+        req.user.userId,
+      );
+      res.json({
+        success: true,
+        message: `Bundles updated: ${results.enabled} enabled, ${results.disabled} disabled`,
+        data: results,
+      });
     } catch (err) {
       logger.error(`[toggleBundles] ${err.message}`);
       badRequest(res, err.message);
@@ -436,18 +559,31 @@ class StorefrontController {
     try {
       const { status, limit = 50, offset = 0 } = req.query;
       const sf = await storefrontService.getAgentStorefront(req.user.userId);
-      if (!sf) return res.status(404).json({ success: false, message: 'Storefront not found' });
+      if (!sf)
+        return res
+          .status(404)
+          .json({ success: false, message: "Storefront not found" });
 
       const filters = {};
       if (status) filters.status = status;
 
       const { orders, total } = await storefrontService.getStorefrontOrders(
-        sf._id, filters, { limit: parseInt(limit), offset: parseInt(offset) }
+        sf._id,
+        filters,
+        { limit: parseInt(limit), offset: parseInt(offset) },
       );
-      res.json({ success: true, data: { orders, total, limit: parseInt(limit), offset: parseInt(offset) } });
+      res.json({
+        success: true,
+        data: {
+          orders,
+          total,
+          limit: parseInt(limit),
+          offset: parseInt(offset),
+        },
+      });
     } catch (err) {
       logger.error(`[getStorefrontOrders] ${err.message}`);
-      serverError(res, 'Internal server error');
+      serverError(res, "Internal server error");
     }
   }
 
@@ -461,9 +597,13 @@ class StorefrontController {
       const order = await storefrontService.verifyManualPayment(
         req.params.orderId,
         { notes: req.body.notes },
-        req.user.userId
+        req.user.userId,
       );
-      res.json({ success: true, message: 'Payment verified. Order queued for admin processing.', data: order });
+      res.json({
+        success: true,
+        message: "Payment verified. Order queued for admin processing.",
+        data: order,
+      });
     } catch (err) {
       logger.error(`[verifyPayment] ${err.message}`);
       badRequest(res, err.message);
@@ -472,8 +612,12 @@ class StorefrontController {
 
   async rejectOrder(req, res) {
     try {
-      const order = await storefrontService.rejectOrder(req.params.orderId, req.body.reason, req.user.userId);
-      res.json({ success: true, message: 'Order rejected', data: order });
+      const order = await storefrontService.rejectOrder(
+        req.params.orderId,
+        req.body.reason,
+        req.user.userId,
+      );
+      res.json({ success: true, message: "Order rejected", data: order });
     } catch (err) {
       logger.error(`[rejectOrder] ${err.message}`);
       badRequest(res, err.message);
@@ -484,22 +628,30 @@ class StorefrontController {
     try {
       const { startDate, endDate } = req.query;
       const sf = await storefrontService.getAgentStorefront(req.user.userId);
-      if (!sf) return res.status(404).json({ success: false, message: 'Storefront not found' });
-      const analytics = await storefrontService.getStorefrontAnalytics(sf._id, { startDate, endDate });
+      if (!sf)
+        return res
+          .status(404)
+          .json({ success: false, message: "Storefront not found" });
+      const analytics = await storefrontService.getStorefrontAnalytics(sf._id, {
+        startDate,
+        endDate,
+      });
       res.json({ success: true, data: analytics });
     } catch (err) {
       logger.error(`[getAnalytics] ${err.message}`);
-      serverError(res, 'Internal server error');
+      serverError(res, "Internal server error");
     }
   }
 
   async getEarnings(req, res) {
     try {
-      const earnings = await storefrontService.getStorefrontEarnings(req.user.userId);
+      const earnings = await storefrontService.getStorefrontEarnings(
+        req.user.userId,
+      );
       res.json({ success: true, data: earnings });
     } catch (err) {
       logger.error(`[getEarnings] ${err.message}`);
-      serverError(res, 'Internal server error');
+      serverError(res, "Internal server error");
     }
   }
 
@@ -511,12 +663,21 @@ class StorefrontController {
     try {
       const { status, search, limit = 20, offset = 0 } = req.query;
       const { storefronts, total } = await storefrontService.getAllStorefronts(
-        { status, search }, { limit: parseInt(limit), offset: parseInt(offset) }
+        { status, search },
+        { limit: parseInt(limit), offset: parseInt(offset) },
       );
-      res.json({ success: true, data: { storefronts, total, limit: parseInt(limit), offset: parseInt(offset) } });
+      res.json({
+        success: true,
+        data: {
+          storefronts,
+          total,
+          limit: parseInt(limit),
+          offset: parseInt(offset),
+        },
+      });
     } catch (err) {
       logger.error(`[getAllStorefronts] ${err.message}`);
-      serverError(res, 'Internal server error');
+      serverError(res, "Internal server error");
     }
   }
 
@@ -526,27 +687,36 @@ class StorefrontController {
       res.json({ success: true, data: stats });
     } catch (err) {
       logger.error(`[getAdminStats] ${err.message}`);
-      serverError(res, 'Internal server error');
+      serverError(res, "Internal server error");
     }
   }
 
   async getAdminStorefrontById(req, res) {
     try {
-      const detail = await storefrontService.getAdminStorefrontById(req.params.storefrontId);
+      const detail = await storefrontService.getAdminStorefrontById(
+        req.params.storefrontId,
+      );
       res.json({ success: true, data: detail });
     } catch (err) {
       logger.error(`[getAdminStorefrontById] ${err.message}`);
-      if (err.message === 'Storefront not found') {
+      if (err.message === "Storefront not found") {
         return res.status(404).json({ success: false, message: err.message });
       }
-      serverError(res, 'Internal server error');
+      serverError(res, "Internal server error");
     }
   }
 
   async approveStorefront(req, res) {
     try {
-      const storefront = await storefrontService.approveStorefront(req.params.storefrontId, req.user.userId);
-      res.json({ success: true, message: 'Storefront approved successfully', data: storefront });
+      const storefront = await storefrontService.approveStorefront(
+        req.params.storefrontId,
+        req.user.userId,
+      );
+      res.json({
+        success: true,
+        message: "Storefront approved successfully",
+        data: storefront,
+      });
     } catch (err) {
       logger.error(`[approveStorefront] ${err.message}`);
       badRequest(res, err.message);
@@ -556,9 +726,15 @@ class StorefrontController {
   async adminSuspendStorefront(req, res) {
     try {
       const storefront = await storefrontService.adminSuspendStorefront(
-        req.params.storefrontId, req.user.userId, req.body.reason
+        req.params.storefrontId,
+        req.user.userId,
+        req.body.reason,
       );
-      res.json({ success: true, message: 'Storefront suspended successfully', data: storefront });
+      res.json({
+        success: true,
+        message: "Storefront suspended successfully",
+        data: storefront,
+      });
     } catch (err) {
       logger.error(`[adminSuspendStorefront] ${err.message}`);
       badRequest(res, err.message);
@@ -567,8 +743,15 @@ class StorefrontController {
 
   async adminUnsuspendStorefront(req, res) {
     try {
-      const storefront = await storefrontService.adminUnsuspendStorefront(req.params.storefrontId, req.user.userId);
-      res.json({ success: true, message: 'Storefront unsuspended. Store is now live.', data: storefront });
+      const storefront = await storefrontService.adminUnsuspendStorefront(
+        req.params.storefrontId,
+        req.user.userId,
+      );
+      res.json({
+        success: true,
+        message: "Storefront unsuspended. Store is now live.",
+        data: storefront,
+      });
     } catch (err) {
       logger.error(`[adminUnsuspendStorefront] ${err.message}`);
       badRequest(res, err.message);
@@ -578,9 +761,14 @@ class StorefrontController {
   async adminDeleteStorefront(req, res) {
     try {
       await storefrontService.adminDeleteStorefront(
-        req.params.storefrontId, req.user.userId, req.body.reason
+        req.params.storefrontId,
+        req.user.userId,
+        req.body.reason,
       );
-      res.json({ success: true, message: 'Storefront deleted. Agent notified.' });
+      res.json({
+        success: true,
+        message: "Storefront deleted. Agent notified.",
+      });
     } catch (err) {
       logger.error(`[adminDeleteStorefront] ${err.message}`);
       badRequest(res, err.message);
@@ -589,18 +777,20 @@ class StorefrontController {
 
   async toggleAutoApprove(req, res) {
     try {
-      if (typeof req.body.enabled !== 'boolean') {
-        return badRequest(res, 'enabled must be a boolean');
+      if (typeof req.body.enabled !== "boolean") {
+        return badRequest(res, "enabled must be a boolean");
       }
-      const result = await storefrontService.toggleAutoApprove(req.body.enabled);
+      const result = await storefrontService.toggleAutoApprove(
+        req.body.enabled,
+      );
       res.json({
         success: true,
-        message: `Auto-approve ${result.autoApproveStorefronts ? 'enabled' : 'disabled'}`,
+        message: `Auto-approve ${result.autoApproveStorefronts ? "enabled" : "disabled"}`,
         data: result,
       });
     } catch (err) {
       logger.error(`[toggleAutoApprove] ${err.message}`);
-      serverError(res, 'Internal server error');
+      serverError(res, "Internal server error");
     }
   }
 
@@ -612,12 +802,22 @@ class StorefrontController {
     try {
       const { businessName } = req.params;
       const { ref } = req.query;
-      if (!ref) return res.status(400).json({ success: false, message: 'ref query parameter is required' });
-      const data = await storefrontService.trackPublicOrder(businessName, ref.trim());
+      if (!ref)
+        return res
+          .status(400)
+          .json({ success: false, message: "ref query parameter is required" });
+      const data = await storefrontService.trackPublicOrder(
+        businessName,
+        ref.trim(),
+      );
       res.json({ success: true, data });
     } catch (err) {
       logger.error(`[trackPublicOrder] ${err.message}`);
-      const status = ['Order not found', 'Store not found'].includes(err.message) ? 404 : 400;
+      const status = ["Order not found", "Store not found"].includes(
+        err.message,
+      )
+        ? 404
+        : 400;
       res.status(status).json({ success: false, message: err.message });
     }
   }
@@ -634,7 +834,9 @@ class StorefrontController {
       res.json({ success: true, data });
     } catch (err) {
       logger.error(`[getRandomStorefronts] ${err.message}`);
-      res.status(500).json({ success: false, message: 'Failed to load storefronts' });
+      res
+        .status(500)
+        .json({ success: false, message: "Failed to load storefronts" });
     }
   }
 }

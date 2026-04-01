@@ -6,9 +6,6 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon app.js",
-    "dev:with-ngrok": "node scripts/dev-with-ngrok.js",
-    "ngrok:configure": "node scripts/install-ngrok-token.js",
-    "ngrok:set-paystack-urls": "node scripts/update-paystack-urls-from-ngrok.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "build": "npm install && npm install --only=dev && npm install --only=production",
