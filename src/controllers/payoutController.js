@@ -19,6 +19,18 @@ function validateObjectId(id, res) {
   return true;
 }
 
+function validateUserId(id, res) {
+  if (!id) {
+    res.status(400).json({ success: false, message: "User ID is required." });
+    return false;
+  }
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    res.status(400).json({ success: false, message: "Invalid user ID." });
+    return false;
+  }
+  return true;
+}
+
 /**
  * Map a service-level error to a clean HTTP response.
  * Extracts `code` and `paystackData` attached by payoutService when Paystack rejects.
@@ -280,6 +292,74 @@ class PayoutController {
         message: err.message,
       });
       return res.status(500).json({ success: false, message: err.message });
+    }
+  }
+
+  async getEarningsReconciliation(req, res) {
+    try {
+      const { userId } = req.query;
+      if (!validateUserId(userId, res)) return;
+      const data = await payoutService.getEarningsReconciliation(userId);
+      return res.json({ success: true, data });
+    } catch (err) {
+      logger.error("[Payout] getEarningsReconciliation", {
+        message: err.message,
+      });
+      return res.status(400).json({ success: false, message: err.message });
+    }
+  }
+
+  async applyEarningsReconciliation(req, res) {
+    try {
+      const { userId, reason } = req.body || {};
+      if (!validateUserId(userId, res)) return;
+      const data = await payoutService.applyEarningsReconciliation(
+        userId,
+        req.user.userId,
+        reason,
+      );
+      return res.json({ success: true, data });
+    } catch (err) {
+      logger.error("[Payout] applyEarningsReconciliation", {
+        message: err.message,
+      });
+      return res.status(400).json({ success: false, message: err.message });
+    }
+  }
+
+  async getEarningsBackfillPreview(req, res) {
+    try {
+      const { userId, limit } = req.query;
+      if (!validateUserId(userId, res)) return;
+      const data = await payoutService.getEarningsBackfillPreview(
+        userId,
+        Number(limit) || 50,
+      );
+      return res.json({ success: true, data });
+    } catch (err) {
+      logger.error("[Payout] getEarningsBackfillPreview", {
+        message: err.message,
+      });
+      return res.status(400).json({ success: false, message: err.message });
+    }
+  }
+
+  async applyEarningsBackfill(req, res) {
+    try {
+      const { userId, reason, limit } = req.body || {};
+      if (!validateUserId(userId, res)) return;
+      const data = await payoutService.applyEarningsBackfill(
+        userId,
+        req.user.userId,
+        reason,
+        Number(limit) || 50,
+      );
+      return res.json({ success: true, data });
+    } catch (err) {
+      logger.error("[Payout] applyEarningsBackfill", {
+        message: err.message,
+      });
+      return res.status(400).json({ success: false, message: err.message });
     }
   }
 }

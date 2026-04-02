@@ -1261,8 +1261,21 @@ class StorefrontService {
         $group: {
           _id: null,
           totalOrders: { $sum: 1 },
-          // Gross revenue = what customers paid (paid orders only)
-          totalRevenue: { $sum: "$total" },
+          // Gross revenue = storefront price (tier cost + markup) for completed orders
+          totalRevenue: {
+            $sum: {
+              $cond: [
+                { $eq: ["$status", "completed"] },
+                {
+                  $add: [
+                    "$storefrontData.totalTierCost",
+                    "$storefrontData.totalMarkup",
+                  ],
+                },
+                0,
+              ],
+            },
+          },
           // Cost to fulfil = tier cost of completed orders (already paid from wallet)
           totalCost: {
             $sum: {

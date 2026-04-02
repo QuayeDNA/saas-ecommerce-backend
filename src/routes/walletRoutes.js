@@ -18,7 +18,7 @@ router.get(
   "/transactions",
   authenticate,
   validate(walletValidation.transactionHistory),
-  walletController.getTransactionHistory
+  walletController.getTransactionHistory,
 );
 
 // ── Wallet-enabled users (agents etc.) ───────────────────────────────────────
@@ -26,21 +26,18 @@ router.get(
   "/check-pending-topup",
   authenticate,
   authorizeWalletUser,
-  walletController.checkPendingTopUpRequest
+  walletController.checkPendingTopUpRequest,
 );
 router.post(
   "/request-top-up",
   authenticate,
   authorizeWalletUser,
   validate(walletValidation.topUpRequest),
-  walletController.requestWalletTopUp
+  walletController.requestWalletTopUp,
 );
 
 // Paystack: get public key for inline checkout (publicly accessible)
-router.get(
-  "/paystack/public-key",
-  walletController.getPaystackPublicKey
-);
+router.get("/paystack/public-key", walletController.getPaystackPublicKey);
 
 // Paystack: generate checkout config (no DB write — safe to call and abandon)
 router.post(
@@ -48,18 +45,22 @@ router.post(
   authenticate,
   authorizeWalletUser,
   validate(walletValidation.paystackInitiate),
-  walletController.initiatePaystackTopUp
+  walletController.initiatePaystackTopUp,
 );
 
 // Paystack: verify payment after inline modal callback
 router.get(
   "/paystack/verify",
   authenticate,
-  walletController.verifyPaystackTransaction
+  walletController.verifyPaystackTransaction,
 );
 
 // ── Earnings & payouts ────────────────────────────────────────────────────────
-router.get("/earnings/dashboard", authenticate, payoutController.getEarningsDashboard);
+router.get(
+  "/earnings/dashboard",
+  authenticate,
+  payoutController.getEarningsDashboard,
+);
 router.get("/payouts", authenticate, payoutController.getPayouts);
 router.post("/payouts/request", authenticate, payoutController.requestPayout);
 
@@ -69,48 +70,107 @@ router.post(
   authenticate,
   authorize("super_admin"),
   validate(walletValidation.adminTopUp),
-  walletController.topUpWallet
+  walletController.topUpWallet,
 );
 router.post(
   "/debit",
   authenticate,
   authorize("super_admin"),
   validate(walletValidation.adminTopUp),
-  walletController.adminDebitWallet
+  walletController.adminDebitWallet,
 );
 router.get(
   "/pending-requests",
   authenticate,
   authorize("super_admin"),
-  walletController.getPendingTopUpRequests
+  walletController.getPendingTopUpRequests,
 );
 router.post(
   "/requests/:transactionId/process",
   authenticate,
   authorize("super_admin"),
   validate(walletValidation.processTopUpRequest),
-  walletController.processTopUpRequest
+  walletController.processTopUpRequest,
 );
 router.get(
   "/analytics",
   authenticate,
   authorize("super_admin"),
-  walletController.getWalletAnalytics
+  walletController.getWalletAnalytics,
 );
 router.get(
   "/admin-transactions",
   authenticate,
   authorize("super_admin"),
-  walletController.getAdminTransactions
+  walletController.getAdminTransactions,
 );
 
 // Admin payout queue
-router.get("/admin/payouts", authenticate, authorize("super_admin"), payoutController.getPendingPayouts);
-router.get("/admin/payouts/history", authenticate, authorize("super_admin"), payoutController.getPayoutHistory);
-router.put("/admin/payouts/:id/approve", authenticate, authorize("super_admin"), payoutController.approvePayout);
-router.put("/admin/payouts/:id/reject", authenticate, authorize("super_admin"), payoutController.rejectPayout);
-router.post("/admin/payouts/:id/process", authenticate, authorize("super_admin"), payoutController.processPayout);
-router.put("/admin/payouts/:id/complete", authenticate, authorize("super_admin"), payoutController.markManuallyCompleted);
-router.get("/admin/payouts/availability", authenticate, authorize("super_admin"), payoutController.getAutoPayoutAvailability);
+router.get(
+  "/admin/payouts",
+  authenticate,
+  authorize("super_admin"),
+  payoutController.getPendingPayouts,
+);
+router.get(
+  "/admin/payouts/history",
+  authenticate,
+  authorize("super_admin"),
+  payoutController.getPayoutHistory,
+);
+router.put(
+  "/admin/payouts/:id/approve",
+  authenticate,
+  authorize("super_admin"),
+  payoutController.approvePayout,
+);
+router.put(
+  "/admin/payouts/:id/reject",
+  authenticate,
+  authorize("super_admin"),
+  payoutController.rejectPayout,
+);
+router.post(
+  "/admin/payouts/:id/process",
+  authenticate,
+  authorize("super_admin"),
+  payoutController.processPayout,
+);
+router.put(
+  "/admin/payouts/:id/complete",
+  authenticate,
+  authorize("super_admin"),
+  payoutController.markManuallyCompleted,
+);
+router.get(
+  "/admin/payouts/availability",
+  authenticate,
+  authorize("super_admin"),
+  payoutController.getAutoPayoutAvailability,
+);
+router.get(
+  "/admin/earnings/reconcile",
+  authenticate,
+  authorize("super_admin"),
+  payoutController.getEarningsReconciliation,
+);
+router.post(
+  "/admin/earnings/reconcile/adjust",
+  authenticate,
+  authorize("super_admin"),
+  payoutController.applyEarningsReconciliation,
+);
+router.get(
+  "/admin/earnings/backfill",
+  authenticate,
+  authorize("super_admin"),
+  payoutController.getEarningsBackfillPreview,
+);
+router.post(
+  "/admin/earnings/backfill/apply",
+  authenticate,
+  authorize("super_admin"),
+  payoutController.applyEarningsBackfill,
+);
 
 export default router;
