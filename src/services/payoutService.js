@@ -1031,6 +1031,7 @@ class PayoutService {
           type: "credit",
           $or: [
             { "metadata.source": "storefront_order_completed" },
+            { "metadata.source": "admin_reconciliation" },
             {
               $and: [
                 { relatedOrder: { $exists: true, $ne: null } },
