@@ -18,6 +18,7 @@ import notificationService from "./notificationService.js";
 import settingsService from "./settingsService.js";
 import logger from "../utils/logger.js";
 import { getFeeConfig } from "../utils/paystackHelpers.js";
+import { computeStorefrontProfit } from "../utils/storefrontProfit.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1096,38 +1097,35 @@ class PayoutService {
     const user = await User.findById(userId).select("earningsBalance");
     if (!user) throw new Error("User not found");
 
-    const [agg] = await EarningsTransaction.aggregate([
-      {
-        $match: {
-          user: user._id,
-          type: "credit",
-          $or: [
-            { "metadata.source": "storefront_order_completed" },
-            {
-              $and: [
-                { relatedOrder: { $exists: true, $ne: null } },
-                {
-                  description: { $regex: "^Storefront profit", $options: "i" },
-                },
-              ],
-            },
-          ],
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          totalEarned: { $sum: "$amount" },
-        },
-      },
-    ]);
+    const storefronts = await AgentStorefront.find({ agentId: userId })
+      .select("_id")
+      .lean();
+    const storefrontIds = storefronts.map((sf) => sf._id);
+
+    let totalEarned = 0;
+    if (storefrontIds.length > 0) {
+      const cursor = Order.find({
+        orderType: "storefront",
+        status: "completed",
+        "storefrontData.storefrontId": { $in: storefrontIds },
+      })
+        .select(
+          "total storefrontData.totalTierCost storefrontData.totalMarkup storefrontData.items metadata.paystack.paystackCollectionFee",
+        )
+        .lean()
+        .cursor();
+
+      for await (const order of cursor) {
+        const profitData = computeStorefrontProfit(order);
+        totalEarned += Number(profitData.profit) || 0;
+      }
+    }
 
     const [completedWithdrawn] = await PayoutRequest.aggregate([
       { $match: { user: user._id, status: "completed" } },
       { $group: { _id: null, total: { $sum: "$amount" } } },
     ]);
 
-    const totalEarned = agg?.totalEarned || 0;
     const totalWithdrawn = Math.abs(completedWithdrawn?.total || 0);
     const expectedAvailable = totalEarned - totalWithdrawn;
     const availableBalance = Number(user.earningsBalance) || 0;
@@ -1222,7 +1220,6 @@ class PayoutService {
           orderType: "storefront",
           status: "completed",
           "storefrontData.storefrontId": { $in: storefrontIds },
-          "storefrontData.totalMarkup": { $gt: 0 },
         },
       },
       {
@@ -1250,7 +1247,18 @@ class PayoutService {
         $project: {
           _id: 1,
           orderNumber: 1,
-          totalMarkup: "$storefrontData.totalMarkup",
+          total: 1,
+          storefrontData: {
+            totalMarkup: "$storefrontData.totalMarkup",
+            totalTierCost: "$storefrontData.totalTierCost",
+            items: "$storefrontData.items",
+            storefrontId: "$storefrontData.storefrontId",
+          },
+          metadata: {
+            paystack: {
+              paystackCollectionFee: "$metadata.paystack.paystackCollectionFee",
+            },
+          },
           storefrontId: "$storefrontData.storefrontId",
           createdAt: 1,
         },
@@ -1259,15 +1267,28 @@ class PayoutService {
       { $limit: Math.max(1, Number(limit) || 50) },
     ]);
 
-    const totalMissingAmount = missingOrders.reduce(
-      (sum, order) => sum + (Number(order.totalMarkup) || 0),
+    const ordersWithProfit = missingOrders
+      .map((order) => {
+        const profitData = computeStorefrontProfit(order);
+        return {
+          ...order,
+          totalMarkup: profitData.totalMarkup,
+          totalTierCost: profitData.tierCost,
+          paystackFee: profitData.paystackFee,
+          computedProfit: profitData.profit,
+        };
+      })
+      .filter((order) => Number(order.computedProfit) > 0);
+
+    const totalMissingAmount = ordersWithProfit.reduce(
+      (sum, order) => sum + (Number(order.computedProfit) || 0),
       0,
     );
 
     return {
-      missingCount: missingOrders.length,
+      missingCount: ordersWithProfit.length,
       totalMissingAmount,
-      orders: missingOrders,
+      orders: ordersWithProfit,
     };
   }
 
@@ -1295,7 +1316,7 @@ class PayoutService {
         );
         if (existingTxn) continue;
 
-        const markup = Number(order.totalMarkup) || 0;
+        const markup = Number(order.computedProfit) || 0;
         if (markup <= 0) continue;
 
         const updatedAgent = await User.findByIdAndUpdate(
@@ -1326,6 +1347,8 @@ class PayoutService {
             orderNumber: order.orderNumber,
             storefrontId: order.storefrontId?.toString(),
             markup,
+            tierCost: order.totalTierCost,
+            paystackFee: order.paystackFee,
           },
         };
 

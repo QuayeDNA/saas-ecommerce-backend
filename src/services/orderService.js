@@ -13,6 +13,7 @@ import storefrontService from "./storefrontService.js";
 import EarningsTransaction from "../models/EarningsTransaction.js";
 import mongoose from "mongoose";
 import logger from "../utils/logger.js";
+import { computeStorefrontProfit } from "../utils/storefrontProfit.js";
 import { parseBulkOrderRow } from "../utils/parseBulkOrderRow.js";
 import { saveOrderWithRetry } from "../utils/orderSaveHelper.js";
 import { isBusinessUser } from "../utils/userTypeHelpers.js";
@@ -134,10 +135,11 @@ class OrderService {
     // Fast-path: already marked on in-memory document
     if (order.metadata?.profitCredited) return;
 
-    const totalMarkup = Number(order.storefrontData?.totalMarkup) || 0;
-    if (totalMarkup <= 0) {
+    const profitData = computeStorefrontProfit(order);
+    const creditAmount = Number(profitData.profit) || 0;
+    if (creditAmount <= 0) {
       logger.info(
-        `[OrderService] _creditStorefrontProfit — zero markup, skipping`,
+        `[OrderService] _creditStorefrontProfit — zero profit, skipping`,
         {
           orderId: order._id,
           orderNumber: order.orderNumber,
@@ -185,7 +187,7 @@ class OrderService {
       // Atomic balance increment
       const updatedAgent = await User.findByIdAndUpdate(
         agentId,
-        { $inc: { earningsBalance: totalMarkup } },
+        { $inc: { earningsBalance: creditAmount } },
         { new: true, runValidators: false },
       );
       if (!updatedAgent) {
@@ -203,16 +205,18 @@ class OrderService {
       await EarningsTransaction.create({
         user: agentId,
         type: "credit",
-        amount: totalMarkup,
+        amount: creditAmount,
         balanceAfter: updatedAgent.earningsBalance,
         description: `Storefront profit — Order ${order.orderNumber}`,
         relatedOrder: order._id,
         metadata: {
           orderNumber: order.orderNumber,
           storefrontId: order.storefrontData.storefrontId?.toString(),
-          customerTotal: Number(order.total) || 0,
-          tierCost: Number(order.storefrontData?.totalTierCost) || 0,
-          markup: totalMarkup,
+          customerTotal: profitData.customerTotal,
+          tierCost: profitData.tierCost,
+          markup: profitData.totalMarkup,
+          paystackFee: profitData.paystackFee,
+          profit: creditAmount,
           itemCount: (order.storefrontData?.items || []).length,
           source: "storefront_order_completed",
         },
@@ -224,7 +228,7 @@ class OrderService {
       }).catch(() => {});
 
       logger.info(
-        `[OrderService] Credited GH₵${totalMarkup.toFixed(2)} to agent ${agentId} ` +
+        `[OrderService] Credited GH₵${creditAmount.toFixed(2)} to agent ${agentId} ` +
           `for order ${order.orderNumber}. New balance: GH₵${updatedAgent.earningsBalance.toFixed(2)}`,
       );
     } catch (err) {
