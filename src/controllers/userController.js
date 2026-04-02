@@ -7,6 +7,9 @@ import {
   isBusinessUser,
   getBusinessUserTypes,
 } from "../utils/userTypeHelpers.js";
+import notificationService from "../services/notificationService.js";
+import websocketService from "../services/websocketService.js";
+import pushNotificationService from "../services/pushNotificationService.js";
 
 class UserController {
   // Get current user profile
@@ -1079,6 +1082,100 @@ class UserController {
       });
 
       await order.save();
+
+      // Send notifications
+      try {
+        console.log(
+          "Notification code reached for AFA order " + order.orderNumber,
+        );
+        const superAdmins = await User.find(
+          { userType: { $in: ["super_admin", "admin"] } },
+          "userType",
+        );
+        console.log("Found " + superAdmins.length + " admins");
+        const superAdminIds = superAdmins.map((a) => a._id.toString());
+
+        const creatorName = user.fullName || user.name || user.email;
+        const creatorLabel = user.agentCode
+          ? `${creatorName} (${user.agentCode})`
+          : creatorName;
+
+        for (const admin of superAdmins) {
+          await notificationService.createInAppNotification(
+            admin._id.toString(),
+            "New AFA Order Created",
+            `AFA order ${order.orderNumber} created by ${creatorLabel}. Amount: GH₵${order.total.toFixed(2)}`,
+            "info",
+            {
+              orderId: order._id.toString(),
+              orderNumber: order.orderNumber,
+              amount: order.total,
+              creatorName,
+              creatorAgentCode: user.agentCode || null,
+              type: "new_order_created",
+              navigationLink: "/superadmin/orders",
+            },
+          );
+        }
+
+        if (superAdminIds.length > 0) {
+          console.log(
+            "Broadcasting to " +
+              superAdminIds.length +
+              " admin WebSocket clients",
+          );
+          websocketService.broadcastOrderCreatedToAdmins(
+            {
+              orderId: order._id.toString(),
+              orderNumber: order.orderNumber,
+              status: order.status,
+              paymentStatus: order.paymentStatus,
+              total: order.total,
+              orderType: order.orderType,
+              createdBy: {
+                id: user._id,
+                name: creatorName,
+                email: user.email,
+                agentCode: user.agentCode,
+              },
+              items: order.items,
+              createdAt: order.createdAt,
+            },
+            superAdminIds,
+          );
+        } else {
+          console.log("No admin IDs found for broadcasting");
+        }
+
+        await notificationService.createInAppNotification(
+          userId.toString(),
+          "AFA Order Created Successfully",
+          `AFA order ${order.orderNumber} ${order.paymentStatus === "paid" ? "created and paid" : "created as draft"}. GH₵${order.total.toFixed(2)} ${order.paymentStatus === "paid" ? "deducted" : "required"}.`,
+          "info",
+          {
+            orderId: order._id.toString(),
+            orderNumber: order.orderNumber,
+            amount: order.total,
+            paymentStatus: order.paymentStatus,
+            type: "order_created",
+            navigationLink: "/agent/dashboard/orders",
+          },
+        );
+
+        try {
+          await pushNotificationService.sendOrderStatusUpdate(
+            userId.toString(),
+            order,
+            order.status,
+          );
+        } catch (pushErr) {
+          console.error(`Push notification failed: ${pushErr.message}`);
+        }
+      } catch (notifyErr) {
+        console.error(`AFA order notification failed: ${notifyErr.message}`);
+        console.error("Error stack:", notifyErr.stack);
+        logger.error(`AFA order notification failed: ${notifyErr.message}`);
+      }
 
       logger.info(
         `AFA registration order created: ${order.orderNumber} for user: ${userId} using bundle: ${bundle.name}`,

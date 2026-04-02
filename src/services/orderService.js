@@ -459,23 +459,34 @@ class OrderService {
 
     // Notifications outside transaction
     try {
+      console.log(
+        "Notification code reached for order " + result.order.orderNumber,
+      );
       const { order, user, orderTotal, paymentStatus } = result;
       const superAdmins = await User.find(
-        { userType: "super_admin" },
+        { userType: { $in: ["super_admin", "admin"] } },
         "userType",
       );
+      console.log("Found " + superAdmins.length + " admins");
       const superAdminIds = superAdmins.map((a) => a._id.toString());
+
+      const creatorName = user.fullName || user.name || user.email;
+      const creatorLabel = user.agentCode
+        ? `${creatorName} (${user.agentCode})`
+        : creatorName;
 
       for (const admin of superAdmins) {
         await notificationService.createInAppNotification(
           admin._id.toString(),
           "New Order Created",
-          `Order ${order.orderNumber} created by ${user.agentCode || user.email}. Amount: GH₵${orderTotal.toFixed(2)}`,
+          `Order ${order.orderNumber} created by ${creatorLabel}. Amount: GH₵${orderTotal.toFixed(2)}`,
           "info",
           {
             orderId: order._id.toString(),
             orderNumber: order.orderNumber,
             amount: orderTotal,
+            creatorName,
+            creatorAgentCode: user.agentCode || null,
             type: "new_order_created",
             navigationLink: this.getNavigationLink(admin.userType, "orders"),
           },
@@ -483,6 +494,11 @@ class OrderService {
       }
 
       if (superAdminIds.length > 0) {
+        console.log(
+          "Broadcasting to " +
+            superAdminIds.length +
+            " admin WebSocket clients",
+        );
         websocketService.broadcastOrderCreatedToAdmins(
           {
             orderId: order._id.toString(),
@@ -493,7 +509,7 @@ class OrderService {
             orderType: order.orderType,
             createdBy: {
               id: user._id,
-              name: user.fullName || user.name,
+              name: creatorName,
               email: user.email,
               agentCode: user.agentCode,
             },
@@ -502,6 +518,8 @@ class OrderService {
           },
           superAdminIds,
         );
+      } else {
+        console.log("No admin IDs found for broadcasting");
       }
 
       await notificationService.createInAppNotification(
@@ -529,6 +547,7 @@ class OrderService {
         logger.error(`Push notification failed: ${pushErr.message}`);
       }
     } catch (err) {
+      console.error(`Order creation notification failed: ${err.message}`);
       logger.error(`Order creation notification failed: ${err.message}`);
     }
 
@@ -707,18 +726,25 @@ class OrderService {
     try {
       const { user, orderCount, totalAmount } = result;
       const superAdmins = await User.find(
-        { userType: "super_admin" },
+        { userType: { $in: ["super_admin", "admin"] } },
         "userType",
       );
+      const creatorName = user.fullName || user.name || user.email;
+      const creatorLabel = user.agentCode
+        ? `${creatorName} (${user.agentCode})`
+        : creatorName;
+
       for (const admin of superAdmins) {
         await notificationService.createInAppNotification(
           admin._id.toString(),
           "Bulk Order Created",
-          `Bulk order with ${orderCount} items created by ${user.agentCode || user.email}. Total: GH₵${totalAmount.toFixed(2)}`,
+          `Bulk order with ${orderCount} items created by ${creatorLabel}. Total: GH₵${totalAmount.toFixed(2)}`,
           "info",
           {
             orderCount,
             totalAmount,
+            creatorName,
+            creatorAgentCode: user.agentCode || null,
             type: "bulk_order_created",
             navigationLink: this.getNavigationLink(admin.userType, "orders"),
           },
