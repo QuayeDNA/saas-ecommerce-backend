@@ -13,7 +13,7 @@ class UserController {
   async getProfile(req, res) {
     try {
       const user = await User.findById(req.user.userId).select(
-        "-password -refreshToken"
+        "-password -refreshToken",
       );
 
       if (!user) {
@@ -155,12 +155,13 @@ class UserController {
           { fullName: { $regex: search, $options: "i" } },
           { email: { $regex: search, $options: "i" } },
           { phone: { $regex: search, $options: "i" } },
+          { agentCode: { $regex: search, $options: "i" } },
         ];
       }
 
       const users = await User.find(query)
         .select(
-          "-password -refreshToken -verificationToken -resetPasswordToken"
+          "-password -refreshToken -verificationToken -resetPasswordToken",
         )
         .sort({ createdAt: -1 })
         .limit(limit * 1)
@@ -232,6 +233,7 @@ class UserController {
           { fullName: { $regex: search, $options: "i" } },
           { email: { $regex: search, $options: "i" } },
           { phone: { $regex: search, $options: "i" } },
+          { agentCode: { $regex: search, $options: "i" } },
         ];
       }
 
@@ -283,11 +285,11 @@ class UserController {
           _id: id,
           $or: [{ tenantId: requestUserId }, { _id: requestUserId }],
         }).select(
-          "-password -refreshToken -verificationToken -resetPasswordToken"
+          "-password -refreshToken -verificationToken -resetPasswordToken",
         );
       } else if (requestUserType === "super_admin") {
         user = await User.findById(id).select(
-          "-password -refreshToken -verificationToken -resetPasswordToken"
+          "-password -refreshToken -verificationToken -resetPasswordToken",
         );
       } else {
         // Regular users can only view their own profile
@@ -298,7 +300,7 @@ class UserController {
           });
         }
         user = await User.findById(id).select(
-          "-password -refreshToken -verificationToken -resetPasswordToken"
+          "-password -refreshToken -verificationToken -resetPasswordToken",
         );
       }
 
@@ -352,7 +354,7 @@ class UserController {
       if (
         subscriptionStatus &&
         ["agent", "super_agent", "dealer", "super_dealer"].includes(
-          user.userType
+          user.userType,
         )
       ) {
         user.subscriptionStatus = subscriptionStatus;
@@ -487,26 +489,32 @@ class UserController {
         const Order = (await import("../models/Order.js")).default;
         const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
         const activeUserIds = await Order.distinct("createdBy", {
-          createdAt: { $gte: oneWeekAgo }
+          createdAt: { $gte: oneWeekAgo },
         });
         const activeUsers = activeUserIds.length;
 
         // Get active agents (agents who have created orders in the last week)
         const activeAgentIds = await Order.distinct("createdBy", {
           createdAt: { $gte: oneWeekAgo },
-          userType: "agent"
+          userType: "agent",
         });
         const activeAgents = activeAgentIds.length;
 
         // Count users by status
         const pendingUsers = await User.countDocuments({ status: "pending" });
         const rejectedUsers = await User.countDocuments({ status: "rejected" });
-        const superAdmins = await User.countDocuments({ userType: "super_admin" });
+        const superAdmins = await User.countDocuments({
+          userType: "super_admin",
+        });
 
         // Count users by type
-        const superAgents = await User.countDocuments({ userType: "super_agent" });
+        const superAgents = await User.countDocuments({
+          userType: "super_agent",
+        });
         const dealers = await User.countDocuments({ userType: "dealer" });
-        const superDealers = await User.countDocuments({ userType: "super_dealer" });
+        const superDealers = await User.countDocuments({
+          userType: "super_dealer",
+        });
 
         stats = {
           totalUsers,
@@ -814,7 +822,7 @@ class UserController {
         const date = new Date();
         date.setDate(date.getDate() - i);
         chartData.labels.push(
-          date.toLocaleDateString("en-GB", { month: "short", day: "numeric" })
+          date.toLocaleDateString("en-GB", { month: "short", day: "numeric" }),
         );
       }
 
@@ -941,7 +949,7 @@ class UserController {
 
       // Get the selected bundle
       const bundle = await Bundle.findById(bundleId).populate(
-        "packageId providerId"
+        "packageId providerId",
       );
       if (!bundle || !bundle.isActive || bundle.isDeleted) {
         return res.status(400).json({
@@ -1073,7 +1081,7 @@ class UserController {
       await order.save();
 
       logger.info(
-        `AFA registration order created: ${order.orderNumber} for user: ${userId} using bundle: ${bundle.name}`
+        `AFA registration order created: ${order.orderNumber} for user: ${userId} using bundle: ${bundle.name}`,
       );
 
       res.json({
