@@ -1434,9 +1434,13 @@ class StorefrontService {
    * authoritative EarningsTransaction ledger) alongside recent transaction history.
    * Source of truth for "how much have I made from my store?"
    */
-  async getStorefrontEarnings(userId) {
+  async getStorefrontEarnings(userId, options = {}) {
     const user = await User.findById(userId).select("earningsBalance");
     if (!user) throw new Error("User not found");
+
+    const pageNum = Math.max(1, Number(options.page) || 1);
+    const limitNum = Math.min(100, Math.max(1, Number(options.limit) || 20));
+    const usePagination = options.page || options.limit;
 
     const [agg] = await EarningsTransaction.aggregate([
       {
@@ -1474,11 +1478,30 @@ class StorefrontService {
       .limit(20)
       .lean();
 
+    let transactions = null;
+    let pagination = null;
+
+    if (usePagination) {
+      const total = await EarningsTransaction.countDocuments({ user: userId });
+      transactions = await EarningsTransaction.find({ user: userId })
+        .sort({ createdAt: -1 })
+        .skip((pageNum - 1) * limitNum)
+        .limit(limitNum)
+        .lean();
+      pagination = {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limitNum)),
+      };
+    }
+
     return {
       availableBalance: Number(user.earningsBalance) || 0,
       totalEarned: agg?.totalEarned || 0,
       totalWithdrawn: Math.abs(completedWithdrawn?.total || 0),
       recentTransactions: recent,
+      ...(usePagination ? { transactions, pagination } : {}),
     };
   }
 

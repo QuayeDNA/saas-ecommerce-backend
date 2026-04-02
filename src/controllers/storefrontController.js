@@ -111,13 +111,11 @@ class StorefrontController {
           );
         }
 
-        await paystackService
-          .ensureKeys()
-          .catch((e) =>
-            logger.warn("[createStorefrontOrder] ensureKeys failed", {
-              message: e.message,
-            }),
-          );
+        await paystackService.ensureKeys().catch((e) =>
+          logger.warn("[createStorefrontOrder] ensureKeys failed", {
+            message: e.message,
+          }),
+        );
 
         // Reference encodes the order ID so we can look it up without needing metadata
         const reference = `storefront_${order._id}`;
@@ -233,13 +231,11 @@ class StorefrontController {
         );
       }
 
-      await paystackService
-        .ensureKeys()
-        .catch((e) =>
-          logger.warn("[SF verifyPaystackTransaction] ensureKeys failed", {
-            message: e.message,
-          }),
-        );
+      await paystackService.ensureKeys().catch((e) =>
+        logger.warn("[SF verifyPaystackTransaction] ensureKeys failed", {
+          message: e.message,
+        }),
+      );
 
       // ── Step 1: Confirm with Paystack that payment succeeded ─────────────────
       let paystackData;
@@ -249,12 +245,10 @@ class StorefrontController {
         logger.error(
           `[SF verifyPaystackTransaction] Paystack API error: ${err.message}`,
         );
-        return res
-          .status(502)
-          .json({
-            success: false,
-            message: "Could not verify payment with Paystack. Try again.",
-          });
+        return res.status(502).json({
+          success: false,
+          message: "Could not verify payment with Paystack. Try again.",
+        });
       }
 
       if (!paystackData || paystackData.status !== "success") {
@@ -645,8 +639,10 @@ class StorefrontController {
 
   async getEarnings(req, res) {
     try {
+      const { page, limit } = req.query;
       const earnings = await storefrontService.getStorefrontEarnings(
         req.user.userId,
+        { page, limit },
       );
       res.json({ success: true, data: earnings });
     } catch (err) {
