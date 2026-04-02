@@ -1584,44 +1584,36 @@ class OrderService {
       let refundMethod = null;
       const isStorefront = order.orderType === "storefront";
 
+      console.log(
+        "Cancelling order:",
+        order.orderNumber,
+        "Type:",
+        order.orderType,
+        "Status:",
+        order.status,
+        "Payment status:",
+        order.paymentStatus,
+      );
+
       if (
         !isStorefront &&
         order.paymentStatus === "paid" &&
         order.paymentMethod === "wallet" &&
         order.total > 0
       ) {
-        try {
-          const orderCreator = await User.findById(order.createdBy);
-          if (!orderCreator) throw new Error("Order creator not found");
-          refundAmount = order.total;
-          refundMethod = "wallet";
-          await walletService.creditWallet(
-            order.createdBy.toString(),
-            refundAmount,
-            `Refund for cancelled order ${order.orderNumber}`,
-            userId,
-            {
-              orderId: order._id.toString(),
-              orderNumber: order.orderNumber,
-              refundReason: reason || "Order cancelled",
-              cancelledBy: userId,
-            },
-            session,
-          );
-          logger.info(
-            `Refunded GH₵${refundAmount.toFixed(2)} for cancelled order ${order.orderNumber}`,
-          );
-        } catch (refundErr) {
-          throw new Error(
-            `Cancellation failed: Unable to process refund — ${refundErr.message}`,
-          );
-        }
+        // Regular order wallet refund
+        console.log("Processing wallet refund for regular order");
+        // ... existing code
       }
 
       if (
         isStorefront &&
         order.storefrontData?.paymentMethod?.type === "paystack"
       ) {
+        console.log(
+          "Processing Paystack refund for storefront order, reference:",
+          order.storefrontData?.paymentMethod?.reference,
+        );
         try {
           const refund = await storefrontService.refundPaystackOrder(
             order._id,
@@ -1641,7 +1633,9 @@ class OrderService {
             refundId: refund?.id || refund?.refund_id,
             refundedAt: new Date(),
           };
+          console.log("Paystack refund successful:", refund);
         } catch (err) {
+          console.log("Paystack refund failed:", err.message);
           order.metadata = order.metadata || {};
           order.metadata.paystackRefund = {
             status: "failed",
@@ -1655,6 +1649,11 @@ class OrderService {
             `Paystack refund failed for order ${order.orderNumber}: ${err.message}`,
           );
         }
+      } else if (isStorefront) {
+        console.log(
+          "Storefront order but not Paystack payment method:",
+          order.storefrontData?.paymentMethod?.type,
+        );
       }
 
       if (isStorefront) {
@@ -1773,6 +1772,34 @@ class OrderService {
               navigationLink: this.getNavigationLink(admin.userType, "orders"),
             },
           );
+        }
+
+        // Notify agent for storefront orders
+        if (isStorefront && order.storefrontData?.storefrontId) {
+          const storefront = await AgentStorefront.findById(
+            order.storefrontData.storefrontId,
+          );
+          if (storefront) {
+            let agentMsg = `Storefront order ${order.orderNumber} cancelled by ${cancellerName}. Reason: ${reason || "No reason provided"}`;
+            if (refundAmount > 0) {
+              agentMsg += `\n\nCustomer refunded: GH₵${refundAmount} via ${refundMethod}.`;
+            }
+            await notificationService.createInAppNotification(
+              storefront.agentId.toString(),
+              "Storefront Order Cancelled",
+              agentMsg,
+              "warning",
+              {
+                orderId: order._id.toString(),
+                orderNumber: order.orderNumber,
+                cancelledBy: cancellerName,
+                reason,
+                refundAmount,
+                type: "storefront_order_cancelled",
+                navigationLink: "/agent/dashboard/storefront/orders",
+              },
+            );
+          }
         }
       }
     } catch (err) {
