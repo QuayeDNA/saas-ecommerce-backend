@@ -22,6 +22,15 @@ const settingsSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    storefrontsOpen: {
+      type: Boolean,
+      default: true,
+    },
+    storefrontsClosedMessage: {
+      type: String,
+      default:
+        "Storefronts are temporarily closed by the admin. Please check back later.",
+    },
 
     // Commission Rates by User Type
     agentCommission: {
@@ -206,8 +215,8 @@ const settingsSchema = new mongoose.Schema(
     // Who pays the payout transfer fee: 'platform' or 'agent'
     payoutFeeBearer: {
       type: String,
-      enum: ['platform', 'agent'],
-      default: 'agent',
+      enum: ["platform", "agent"],
+      default: "agent",
     },
     // Percentage the platform earns on every payout withdrawal (on top of Paystack's fixed fee)
     platformPayoutFeePercent: {
@@ -224,7 +233,7 @@ const settingsSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Ensure only one settings document exists

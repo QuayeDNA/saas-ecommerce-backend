@@ -54,11 +54,15 @@ class SettingsController {
   async updateSignupApprovalSetting(req, res) {
     try {
       const { requireApprovalForSignup } = req.body;
-      const result = await settingsService.updateSignupApprovalSetting(requireApprovalForSignup);
+      const result = await settingsService.updateSignupApprovalSetting(
+        requireApprovalForSignup,
+      );
       res.json(result);
     } catch (error) {
       logger.error("Error updating signup approval setting:", error);
-      res.status(500).json({ error: "Failed to update signup approval setting" });
+      res
+        .status(500)
+        .json({ error: "Failed to update signup approval setting" });
     }
   }
 
@@ -69,18 +73,36 @@ class SettingsController {
       res.json({ autoApproveStorefronts: autoApprove });
     } catch (error) {
       logger.error("Error getting auto-approve storefronts setting:", error);
-      res.status(500).json({ error: "Failed to get auto-approve storefronts setting" });
+      res
+        .status(500)
+        .json({ error: "Failed to get auto-approve storefronts setting" });
     }
   }
 
   async updateAutoApproveStorefronts(req, res) {
     try {
       const { autoApproveStorefronts } = req.body;
-      const result = await settingsService.updateAutoApproveStorefronts(autoApproveStorefronts);
+      const result = await settingsService.updateAutoApproveStorefronts(
+        autoApproveStorefronts,
+      );
       res.json(result);
     } catch (error) {
       logger.error("Error updating auto-approve storefronts setting:", error);
-      res.status(500).json({ error: "Failed to update auto-approve storefronts setting" });
+      res
+        .status(500)
+        .json({ error: "Failed to update auto-approve storefronts setting" });
+    }
+  }
+
+  async toggleStorefrontsAvailability(req, res) {
+    try {
+      const result = await settingsService.toggleStorefrontsAvailability();
+      res.json(result);
+    } catch (error) {
+      logger.error("Error toggling storefront availability:", error);
+      res
+        .status(500)
+        .json({ error: "Failed to toggle storefront availability" });
     }
   }
 
@@ -167,7 +189,7 @@ class SettingsController {
       const { userId, newPassword } = req.body;
       const result = await settingsService.resetUserPassword(
         userId,
-        newPassword
+        newPassword,
       );
       res.json(result);
     } catch (error) {
@@ -205,6 +227,8 @@ class SettingsController {
       res.json({
         isSiteOpen: siteSettings.isSiteOpen,
         customMessage: siteSettings.customMessage,
+        storefrontsOpen: siteSettings.storefrontsOpen,
+        storefrontsClosedMessage: siteSettings.storefrontsClosedMessage,
       });
     } catch (error) {
       logger.error("Error getting site status:", error);
@@ -220,7 +244,7 @@ class SettingsController {
       const result = await settingsService.changeAdminPassword(
         userId,
         currentPassword,
-        newPassword
+        newPassword,
       );
       res.json(result);
     } catch (error) {
@@ -289,7 +313,9 @@ class SettingsController {
       res.json({ success: true, data: settings });
     } catch (error) {
       logger.error("Error getting fee settings:", error);
-      res.status(500).json({ success: false, error: "Failed to get fee settings" });
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to get fee settings" });
     }
   }
 
@@ -299,7 +325,9 @@ class SettingsController {
       res.json({ success: true, data: settings });
     } catch (error) {
       logger.error("Error updating fee settings:", error);
-      res.status(500).json({ success: false, error: "Failed to update fee settings" });
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to update fee settings" });
     }
   }
 }

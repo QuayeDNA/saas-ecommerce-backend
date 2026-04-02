@@ -16,6 +16,8 @@ class SettingsService {
       const result = {
         isSiteOpen: settings.isSiteOpen,
         customMessage: settings.customMessage,
+        storefrontsOpen: settings.storefrontsOpen ?? true,
+        storefrontsClosedMessage: settings.storefrontsClosedMessage || "",
       };
 
       return result;
@@ -29,6 +31,12 @@ class SettingsService {
     const settingsDoc = await Settings.getInstance();
     settingsDoc.isSiteOpen = settings.isSiteOpen;
     settingsDoc.customMessage = settings.customMessage;
+    if (settings.storefrontsOpen !== undefined) {
+      settingsDoc.storefrontsOpen = settings.storefrontsOpen;
+    }
+    if (settings.storefrontsClosedMessage !== undefined) {
+      settingsDoc.storefrontsClosedMessage = settings.storefrontsClosedMessage;
+    }
     await settingsDoc.save();
 
     logger.info("Site settings updated:", settings);
@@ -43,10 +51,12 @@ class SettingsService {
     const siteStatus = {
       isSiteOpen: settings.isSiteOpen,
       customMessage: settings.customMessage,
+      storefrontsOpen: settings.storefrontsOpen ?? true,
+      storefrontsClosedMessage: settings.storefrontsClosedMessage || "",
     };
 
     logger.info(
-      `Site status toggled to: ${settings.isSiteOpen ? "open" : "closed"}`
+      `Site status toggled to: ${settings.isSiteOpen ? "open" : "closed"}`,
     );
 
     // Broadcast the site status update to all connected clients
@@ -72,14 +82,16 @@ class SettingsService {
       await settings.save();
 
       logger.info(`Signup approval setting updated to: ${requireApproval}`);
-      
+
       // Broadcast site status update to refresh frontend settings
       const siteStatus = {
         isSiteOpen: settings.isSiteOpen,
         customMessage: settings.customMessage,
+        storefrontsOpen: settings.storefrontsOpen ?? true,
+        storefrontsClosedMessage: settings.storefrontsClosedMessage || "",
       };
       websocketService.broadcastSiteStatusUpdate(siteStatus);
-      
+
       return { requireApprovalForSignup: settings.requireApprovalForSignup };
     } catch (error) {
       logger.error(`Error updating signup approval setting: ${error.message}`);
@@ -93,7 +105,9 @@ class SettingsService {
       const settings = await Settings.getInstance();
       return settings.autoApproveStorefronts;
     } catch (error) {
-      logger.error(`Error getting auto-approve storefronts setting: ${error.message}`);
+      logger.error(
+        `Error getting auto-approve storefronts setting: ${error.message}`,
+      );
       throw error;
     }
   }
@@ -104,12 +118,38 @@ class SettingsService {
       settings.autoApproveStorefronts = autoApprove;
       await settings.save();
 
-      logger.info(`Auto-approve storefronts setting updated to: ${autoApprove}`);
+      logger.info(
+        `Auto-approve storefronts setting updated to: ${autoApprove}`,
+      );
       return { autoApproveStorefronts: settings.autoApproveStorefronts };
     } catch (error) {
-      logger.error(`Error updating auto-approve storefronts setting: ${error.message}`);
+      logger.error(
+        `Error updating auto-approve storefronts setting: ${error.message}`,
+      );
       throw error;
     }
+  }
+
+  async toggleStorefrontsAvailability() {
+    const settings = await Settings.getInstance();
+    const current = settings.storefrontsOpen ?? true;
+    settings.storefrontsOpen = !current;
+    await settings.save();
+
+    const siteStatus = {
+      isSiteOpen: settings.isSiteOpen,
+      customMessage: settings.customMessage,
+      storefrontsOpen: settings.storefrontsOpen ?? true,
+      storefrontsClosedMessage: settings.storefrontsClosedMessage || "",
+    };
+
+    logger.info(
+      `Storefront availability toggled to: ${settings.storefrontsOpen ? "open" : "closed"}`,
+    );
+
+    websocketService.broadcastSiteStatusUpdate(siteStatus);
+
+    return { storefrontsOpen: settings.storefrontsOpen };
   }
 
   // Get site status for middleware checks
@@ -167,11 +207,15 @@ class SettingsService {
 
       // Detect whether secret keys exist on the server (useful for admin UI)
       // We no longer store Paystack keys in the database; keys must be provided via env vars.
-      const paystackTestSecretExists = Boolean(process.env.PAYSTACK_TEST_SECRET_KEY);
-      const paystackLiveSecretExists = Boolean(process.env.PAYSTACK_LIVE_SECRET_KEY);
+      const paystackTestSecretExists = Boolean(
+        process.env.PAYSTACK_TEST_SECRET_KEY,
+      );
+      const paystackLiveSecretExists = Boolean(
+        process.env.PAYSTACK_LIVE_SECRET_KEY,
+      );
 
       // In production we must NOT return secret keys to the browser. Instead expose existence flags.
-      const isProd = process.env.NODE_ENV === 'production';
+      const isProd = process.env.NODE_ENV === "production";
 
       const result = {
         mtnApiKey: settings.mtnApiKey || process.env.MTN_API_KEY || "",
@@ -184,15 +228,23 @@ class SettingsService {
           process.env.API_ENDPOINT ||
           "https://api.telecomsaas.com",
         // Paystack
-        paystackEnabled: settings.paystackEnabled || (process.env.PAYSTACK_ENABLED === 'true') || false,
-        paystackWalletTopUpEnabled: settings.paystackWalletTopUpEnabled ?? false,
+        paystackEnabled:
+          settings.paystackEnabled ||
+          process.env.PAYSTACK_ENABLED === "true" ||
+          false,
+        paystackWalletTopUpEnabled:
+          settings.paystackWalletTopUpEnabled ?? false,
         paystackStorefrontEnabled: settings.paystackStorefrontEnabled ?? false,
         paystackTestPublicKey: process.env.PAYSTACK_TEST_PUBLIC_KEY || "",
         paystackLivePublicKey: process.env.PAYSTACK_LIVE_PUBLIC_KEY || "",
 
         // SECRET KEYS: only include actual secret values when NOT in production.
-        paystackTestSecretKey: isProd ? undefined : (process.env.PAYSTACK_TEST_SECRET_KEY || ""),
-        paystackLiveSecretKey: isProd ? undefined : (process.env.PAYSTACK_LIVE_SECRET_KEY || ""),
+        paystackTestSecretKey: isProd
+          ? undefined
+          : process.env.PAYSTACK_TEST_SECRET_KEY || "",
+        paystackLiveSecretKey: isProd
+          ? undefined
+          : process.env.PAYSTACK_LIVE_SECRET_KEY || "",
 
         // provide boolean flags so the UI can indicate whether a secret exists without exposing it
         paystackTestSecretExists,
@@ -214,9 +266,14 @@ class SettingsService {
     settingsDoc.apiEndpoint = settings.apiEndpoint;
 
     // Paystack settings (optional)
-    if (settings.paystackEnabled !== undefined) settingsDoc.paystackEnabled = settings.paystackEnabled;
-    if (settings.paystackWalletTopUpEnabled !== undefined) settingsDoc.paystackWalletTopUpEnabled = settings.paystackWalletTopUpEnabled;
-    if (settings.paystackStorefrontEnabled !== undefined) settingsDoc.paystackStorefrontEnabled = settings.paystackStorefrontEnabled;
+    if (settings.paystackEnabled !== undefined)
+      settingsDoc.paystackEnabled = settings.paystackEnabled;
+    if (settings.paystackWalletTopUpEnabled !== undefined)
+      settingsDoc.paystackWalletTopUpEnabled =
+        settings.paystackWalletTopUpEnabled;
+    if (settings.paystackStorefrontEnabled !== undefined)
+      settingsDoc.paystackStorefrontEnabled =
+        settings.paystackStorefrontEnabled;
     // Paystack key configuration is managed via environment variables for security.
     // We no longer persist Paystack keys in the database.
 
@@ -320,7 +377,7 @@ class SettingsService {
       // Verify current password
       const isCurrentPasswordValid = await bcrypt.compare(
         currentPassword,
-        user.password
+        user.password,
       );
       if (!isCurrentPasswordValid) {
         throw new Error("Current password is incorrect");
@@ -459,17 +516,21 @@ class SettingsService {
     try {
       const settings = await Settings.getInstance();
       return {
-        paystackCollectionFeePercent: settings.paystackCollectionFeePercent ?? 1.95,
+        paystackCollectionFeePercent:
+          settings.paystackCollectionFeePercent ?? 1.95,
         platformFeePercent: settings.platformFeePercent ?? 0,
         delegateFeesToCustomer: settings.delegateFeesToCustomer ?? true,
-        walletTopUpCollectionFeePercent: settings.walletTopUpCollectionFeePercent ?? 1.95,
-        walletTopUpPlatformFeePercent: settings.walletTopUpPlatformFeePercent ?? 0,
-        walletTopUpDelegateFeesToCustomer: settings.walletTopUpDelegateFeesToCustomer ?? true,
+        walletTopUpCollectionFeePercent:
+          settings.walletTopUpCollectionFeePercent ?? 1.95,
+        walletTopUpPlatformFeePercent:
+          settings.walletTopUpPlatformFeePercent ?? 0,
+        walletTopUpDelegateFeesToCustomer:
+          settings.walletTopUpDelegateFeesToCustomer ?? true,
         paystackTransferFees: {
           mobile_money: settings.paystackTransferFees?.mobile_money ?? 1.0,
           bank_account: settings.paystackTransferFees?.bank_account ?? 8.0,
         },
-        payoutFeeBearer: settings.payoutFeeBearer ?? 'agent',
+        payoutFeeBearer: settings.payoutFeeBearer ?? "agent",
         platformPayoutFeePercent: settings.platformPayoutFeePercent ?? 0,
         autoPayoutEnabled: settings.autoPayoutEnabled ?? false,
         minimumPayoutAmounts: {
@@ -487,51 +548,71 @@ class SettingsService {
     const settings = await Settings.getInstance();
 
     if (feeSettings.paystackCollectionFeePercent !== undefined) {
-      settings.paystackCollectionFeePercent = Number(feeSettings.paystackCollectionFeePercent);
+      settings.paystackCollectionFeePercent = Number(
+        feeSettings.paystackCollectionFeePercent,
+      );
     }
     if (feeSettings.platformFeePercent !== undefined) {
       settings.platformFeePercent = Number(feeSettings.platformFeePercent);
     }
     if (feeSettings.delegateFeesToCustomer !== undefined) {
-      settings.delegateFeesToCustomer = Boolean(feeSettings.delegateFeesToCustomer);
+      settings.delegateFeesToCustomer = Boolean(
+        feeSettings.delegateFeesToCustomer,
+      );
     }
     if (feeSettings.walletTopUpCollectionFeePercent !== undefined) {
-      settings.walletTopUpCollectionFeePercent = Number(feeSettings.walletTopUpCollectionFeePercent);
+      settings.walletTopUpCollectionFeePercent = Number(
+        feeSettings.walletTopUpCollectionFeePercent,
+      );
     }
     if (feeSettings.walletTopUpPlatformFeePercent !== undefined) {
-      settings.walletTopUpPlatformFeePercent = Number(feeSettings.walletTopUpPlatformFeePercent);
+      settings.walletTopUpPlatformFeePercent = Number(
+        feeSettings.walletTopUpPlatformFeePercent,
+      );
     }
     if (feeSettings.walletTopUpDelegateFeesToCustomer !== undefined) {
-      settings.walletTopUpDelegateFeesToCustomer = Boolean(feeSettings.walletTopUpDelegateFeesToCustomer);
+      settings.walletTopUpDelegateFeesToCustomer = Boolean(
+        feeSettings.walletTopUpDelegateFeesToCustomer,
+      );
     }
     if (feeSettings.paystackTransferFees) {
       settings.paystackTransferFees = {
-        mobile_money: feeSettings.paystackTransferFees.mobile_money ?? settings.paystackTransferFees?.mobile_money ?? 1.0,
-        bank_account: feeSettings.paystackTransferFees.bank_account ?? settings.paystackTransferFees?.bank_account ?? 8.0,
+        mobile_money:
+          feeSettings.paystackTransferFees.mobile_money ??
+          settings.paystackTransferFees?.mobile_money ??
+          1.0,
+        bank_account:
+          feeSettings.paystackTransferFees.bank_account ??
+          settings.paystackTransferFees?.bank_account ??
+          8.0,
       };
     }
     if (feeSettings.payoutFeeBearer !== undefined) {
       settings.payoutFeeBearer = feeSettings.payoutFeeBearer;
     }
     if (feeSettings.platformPayoutFeePercent !== undefined) {
-      settings.platformPayoutFeePercent = Number(feeSettings.platformPayoutFeePercent);
+      settings.platformPayoutFeePercent = Number(
+        feeSettings.platformPayoutFeePercent,
+      );
     }
     if (feeSettings.autoPayoutEnabled !== undefined) {
       settings.autoPayoutEnabled = Boolean(feeSettings.autoPayoutEnabled);
     }
     if (feeSettings.minimumPayoutAmounts) {
       settings.minimumPayoutAmounts = {
-        mobile_money: feeSettings.minimumPayoutAmounts.mobile_money != null
-          ? Number(feeSettings.minimumPayoutAmounts.mobile_money)
-          : (settings.minimumPayoutAmounts?.mobile_money ?? 1.0),
-        bank_account: feeSettings.minimumPayoutAmounts.bank_account != null
-          ? Number(feeSettings.minimumPayoutAmounts.bank_account)
-          : (settings.minimumPayoutAmounts?.bank_account ?? 50.0),
+        mobile_money:
+          feeSettings.minimumPayoutAmounts.mobile_money != null
+            ? Number(feeSettings.minimumPayoutAmounts.mobile_money)
+            : (settings.minimumPayoutAmounts?.mobile_money ?? 1.0),
+        bank_account:
+          feeSettings.minimumPayoutAmounts.bank_account != null
+            ? Number(feeSettings.minimumPayoutAmounts.bank_account)
+            : (settings.minimumPayoutAmounts?.bank_account ?? 50.0),
       };
     }
 
     await settings.save();
-    logger.info('Fee settings updated:', feeSettings);
+    logger.info("Fee settings updated:", feeSettings);
     return this.getFeeSettings();
   }
 }

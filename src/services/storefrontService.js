@@ -566,6 +566,14 @@ class StorefrontService {
     const storefront = await AgentStorefront.findPublicStore(businessName);
     if (!storefront) throw new Error("Storefront not found or not available");
 
+    const settings = await Settings.getInstance();
+    if (settings.storefrontsOpen === false) {
+      throw new Error(
+        settings.storefrontsClosedMessage ||
+          "Storefronts are temporarily closed by the admin. Please check back later.",
+      );
+    }
+
     const { items, customerInfo, paymentMethod } = orderData;
 
     let totalAmount = 0,

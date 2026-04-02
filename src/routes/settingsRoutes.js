@@ -37,7 +37,6 @@ router.put("/wallet", settingsController.updateWalletSettings);
 router.put("/payout", settingsController.updatePayoutSettings);
 router.put("/fees", settingsController.updateFeeSettings);
 
-
 // Site Management
 router.get("/site", settingsController.getSiteSettings);
 router.put("/site", settingsController.updateSiteSettings);
@@ -47,8 +46,20 @@ router.post("/site/toggle", settingsController.toggleSiteStatus);
 router.put("/signup-approval", settingsController.updateSignupApprovalSetting);
 
 // Storefront Auto-Approval
-router.get("/storefront-auto-approve", settingsController.getAutoApproveStorefronts);
-router.put("/storefront-auto-approve", settingsController.updateAutoApproveStorefronts);
+router.get(
+  "/storefront-auto-approve",
+  settingsController.getAutoApproveStorefronts,
+);
+router.put(
+  "/storefront-auto-approve",
+  settingsController.updateAutoApproveStorefronts,
+);
+
+// Storefront Availability (global)
+router.post(
+  "/storefronts/toggle",
+  settingsController.toggleStorefrontsAvailability,
+);
 
 // Commission Rates
 router.get("/commission", settingsController.getCommissionRates);
