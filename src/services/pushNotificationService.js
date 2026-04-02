@@ -76,13 +76,13 @@ class PushNotificationService {
       logger.info(`Push notification sent to user ${userId}`);
       return true;
     } catch (error) {
-      logger.error(
-        `Failed to send push notification to user ${userId}:`,
-        error,
-      );
+      const statusCode = error?.statusCode;
 
-      // If subscription is invalid, remove it
-      if (error.statusCode === 410 || error.statusCode === 400) {
+      // If subscription is invalid, remove it (treat as expected cleanup)
+      if (statusCode === 410 || statusCode === 404 || statusCode === 400) {
+        logger.warn(
+          `Invalid/expired push subscription for user ${userId} (status ${statusCode}). Removing subscription.`,
+        );
         try {
           await User.findByIdAndUpdate(userId, {
             $unset: { pushSubscription: 1 },
@@ -94,7 +94,13 @@ class PushNotificationService {
             updateError,
           );
         }
+        return false;
       }
+
+      logger.error(
+        `Failed to send push notification to user ${userId}:`,
+        error,
+      );
 
       return false;
     }

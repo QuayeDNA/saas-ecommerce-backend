@@ -291,33 +291,26 @@ class StorefrontService {
         );
       }
 
-      const existing = await StorefrontPricing.findOne({
-        storefrontId,
-        bundleId,
-      });
-      if (existing) {
-        existing.tierPrice = tierPrice;
-        existing.customPrice = finalPrice;
-        existing.markup = finalPrice - tierPrice;
-        existing.markupPercentage =
-          tierPrice > 0 ? ((finalPrice - tierPrice) / tierPrice) * 100 : 0;
-        existing.hasCustomPrice = hasCustomPrice;
-        existing.isActive = true;
-        await existing.save();
-        results.updated++;
-      } else {
-        await StorefrontPricing.create({
-          storefrontId,
-          bundleId,
-          tierPrice,
-          customPrice: finalPrice,
-          markup: finalPrice - tierPrice,
-          markupPercentage:
-            tierPrice > 0 ? ((finalPrice - tierPrice) / tierPrice) * 100 : 0,
-          hasCustomPrice,
-          isActive: true,
-        });
+      const update = {
+        tierPrice,
+        customPrice: finalPrice,
+        markup: finalPrice - tierPrice,
+        markupPercentage:
+          tierPrice > 0 ? ((finalPrice - tierPrice) / tierPrice) * 100 : 0,
+        hasCustomPrice,
+        isActive: true,
+      };
+
+      const res = await StorefrontPricing.updateOne(
+        { storefrontId, bundleId },
+        { $set: update },
+        { upsert: true },
+      );
+
+      if (res.upsertedCount) {
         results.created++;
+      } else {
+        results.updated++;
       }
     }
 

@@ -166,10 +166,25 @@ class PaystackService {
         throw new Error(resp?.data?.message || "Paystack verification failed");
       return resp.data.data;
     } catch (err) {
+      const status = err.response?.status;
+      const data = err.response?.data;
       logger.error("[Paystack] verifyTransaction error", {
         reference,
         message: err.message,
+        status,
+        data,
       });
+
+      const paystackMessage = data?.message || data?.data?.message;
+      if (paystackMessage) {
+        const enriched = new Error(
+          `${err.message} | Paystack: ${paystackMessage}`,
+        );
+        enriched.status = status;
+        enriched.paystackResponse = data;
+        throw enriched;
+      }
+
       throw err;
     }
   }

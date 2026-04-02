@@ -90,18 +90,15 @@ app.use(
 // ─── Body Parsing ─────────────────────────────────────────────────────────────
 
 // Paystack webhook needs the raw body for HMAC signature verification.
-// We capture it BEFORE express.json() consumes the stream.
-app.use("/api/webhooks/paystack", (req, _res, next) => {
-  let raw = "";
-  req.setEncoding("utf8");
-  req.on("data", (chunk) => {
-    raw += chunk;
-  });
-  req.on("end", () => {
-    req.rawBody = raw;
-    next();
-  });
-});
+// Capture it via express.json verify so req.body is still parsed.
+app.use(
+  "/api/webhooks/paystack",
+  express.json({
+    verify: (req, _res, buf) => {
+      req.rawBody = buf.toString("utf8");
+    },
+  }),
+);
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
