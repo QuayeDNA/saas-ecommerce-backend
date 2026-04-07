@@ -618,25 +618,6 @@ class StorefrontController {
     }
   }
 
-  async getAnalytics(req, res) {
-    try {
-      const { startDate, endDate } = req.query;
-      const sf = await storefrontService.getAgentStorefront(req.user.userId);
-      if (!sf)
-        return res
-          .status(404)
-          .json({ success: false, message: "Storefront not found" });
-      const analytics = await storefrontService.getStorefrontAnalytics(sf._id, {
-        startDate,
-        endDate,
-      });
-      res.json({ success: true, data: analytics });
-    } catch (err) {
-      logger.error(`[getAnalytics] ${err.message}`);
-      serverError(res, "Internal server error");
-    }
-  }
-
   async getEarnings(req, res) {
     try {
       const { page, limit } = req.query;
@@ -647,6 +628,18 @@ class StorefrontController {
       res.json({ success: true, data: earnings });
     } catch (err) {
       logger.error(`[getEarnings] ${err.message}`);
+      serverError(res, "Internal server error");
+    }
+  }
+
+  async getDashboardData(req, res) {
+    try {
+      const dashboardData = await storefrontService.getStorefrontDashboardData(
+        req.user.userId,
+      );
+      res.json({ success: true, data: dashboardData });
+    } catch (err) {
+      logger.error(`[getDashboardData] ${err.message}`);
       serverError(res, "Internal server error");
     }
   }

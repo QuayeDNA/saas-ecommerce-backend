@@ -312,17 +312,6 @@ router.put(
   storefrontController.rejectOrder,
 );
 
-// Analytics
-router.get(
-  "/agent/storefront/analytics",
-  authenticate,
-  [
-    query("startDate").optional().isISO8601().withMessage("Invalid start date"),
-    query("endDate").optional().isISO8601().withMessage("Invalid end date"),
-  ],
-  storefrontController.getAnalytics,
-);
-
 // Earnings — authoritative ledger (EarningsTransaction records)
 router.get(
   "/agent/storefront/earnings",
@@ -335,6 +324,13 @@ router.get(
       .withMessage("Limit must be 1-100"),
   ],
   storefrontController.getEarnings,
+);
+
+// Dashboard Data — centralized endpoint for storefront dashboard
+router.get(
+  "/agent/storefront/dashboard",
+  authenticate,
+  storefrontController.getDashboardData,
 );
 
 // =============================================================================

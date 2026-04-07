@@ -1285,7 +1285,7 @@ class StorefrontService {
             },
           },
           // Cost to fulfil = tier cost of completed orders (already paid from wallet)
-          totalCost: {
+          totalFulfilmentCost: {
             $sum: {
               $cond: [
                 { $eq: ["$status", "completed"] },
@@ -1294,12 +1294,43 @@ class StorefrontService {
               ],
             },
           },
-          // Net profit = markup of completed orders only (the earned amount)
+          // Net profit = markup of completed orders only (the earned amount after fees)
           totalProfit: {
             $sum: {
               $cond: [
                 { $eq: ["$status", "completed"] },
-                "$storefrontData.totalMarkup",
+                {
+                  $subtract: [
+                    "$storefrontData.totalMarkup",
+                    {
+                      $ifNull: [
+                        {
+                          $cond: [
+                            {
+                              $gt: [
+                                {
+                                  $ifNull: [
+                                    "$metadata.paystack.paystackCollectionFee",
+                                    0,
+                                  ],
+                                },
+                                0,
+                              ],
+                            },
+                            "$metadata.paystack.paystackCollectionFee",
+                            {
+                              $ifNull: [
+                                "$storefrontData.feeBreakdown.paystackFee",
+                                0,
+                              ],
+                            },
+                          ],
+                        },
+                        0,
+                      ],
+                    },
+                  ],
+                },
                 0,
               ],
             },
@@ -1325,7 +1356,38 @@ class StorefrontService {
                     },
                   ],
                 },
-                "$storefrontData.totalMarkup",
+                {
+                  $subtract: [
+                    "$storefrontData.totalMarkup",
+                    {
+                      $ifNull: [
+                        {
+                          $cond: [
+                            {
+                              $gt: [
+                                {
+                                  $ifNull: [
+                                    "$metadata.paystack.paystackCollectionFee",
+                                    0,
+                                  ],
+                                },
+                                0,
+                              ],
+                            },
+                            "$metadata.paystack.paystackCollectionFee",
+                            {
+                              $ifNull: [
+                                "$storefrontData.feeBreakdown.paystackFee",
+                                0,
+                              ],
+                            },
+                          ],
+                        },
+                        0,
+                      ],
+                    },
+                  ],
+                },
                 0,
               ],
             },
@@ -1411,7 +1473,7 @@ class StorefrontService {
       result || {
         totalOrders: 0,
         totalRevenue: 0,
-        totalCost: 0,
+        totalFulfilmentCost: 0,
         totalProfit: 0,
         todayNetProfit: 0,
         todayCompletedOrders: 0,
@@ -1470,7 +1532,7 @@ class StorefrontService {
 
     const [completedWithdrawn] = await PayoutRequest.aggregate([
       { $match: { user: user._id, status: "completed" } },
-      { $group: { _id: null, total: { $sum: "$amount" } } },
+      { $group: { _id: null, total: { $sum: "$netAmount" } } },
     ]);
 
     const recent = await EarningsTransaction.find({ user: userId })
@@ -1502,6 +1564,54 @@ class StorefrontService {
       totalWithdrawn: Math.abs(completedWithdrawn?.total || 0),
       recentTransactions: recent,
       ...(usePagination ? { transactions, pagination } : {}),
+    };
+  }
+
+  /**
+   * Centralized method for storefront dashboard data.
+   * Combines analytics, earnings, orders, bundles, and payout information in a single call.
+   */
+  async getStorefrontDashboardData(userId) {
+    const user = await User.findById(userId).select("earningsBalance");
+    if (!user) throw new Error("User not found");
+
+    // Get the user's storefront
+    const storefront = await this.getAgentStorefront(userId);
+    if (!storefront) throw new Error("Storefront not found");
+
+    // Get analytics data
+    const analytics = await this.getStorefrontAnalytics(storefront._id);
+
+    // Get earnings data (without pagination for dashboard)
+    const earnings = await this.getStorefrontEarnings(userId, {});
+
+    // Get recent orders
+    const orders = await this.getStorefrontOrders(
+      userId,
+      {},
+      { limit: 5, offset: 0 },
+    );
+
+    // Get available bundles
+    const bundles = await this.getAgentBundlesForPricing(userId);
+
+    // Get recent payouts for dashboard
+    const recentPayouts = await PayoutRequest.find({ user: userId })
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .lean();
+
+    return {
+      analytics,
+      earnings: {
+        availableBalance: earnings.availableBalance,
+        totalEarned: earnings.totalEarned,
+        totalWithdrawn: earnings.totalWithdrawn,
+        recentTransactions: earnings.recentTransactions.slice(0, 5), // Limit for dashboard
+      },
+      orders: orders.orders,
+      bundles,
+      recentPayouts,
     };
   }
 

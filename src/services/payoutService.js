@@ -1031,7 +1031,6 @@ class PayoutService {
           type: "credit",
           $or: [
             { "metadata.source": "storefront_order_completed" },
-            { "metadata.source": "admin_reconciliation" },
             {
               $and: [
                 { relatedOrder: { $exists: true, $ne: null } },
@@ -1053,7 +1052,7 @@ class PayoutService {
 
     const [completedWithdrawn] = await PayoutRequest.aggregate([
       { $match: { user: user._id, status: "completed" } },
-      { $group: { _id: null, total: { $sum: "$amount" } } },
+      { $group: { _id: null, total: { $sum: "$netAmount" } } },
     ]);
 
     const recentPayouts = await PayoutRequest.find({ user: userId })
