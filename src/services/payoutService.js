@@ -9,16 +9,13 @@
 
 import mongoose from "mongoose";
 import PayoutRequest from "../models/PayoutRequest.js";
-import EarningsTransaction from "../models/EarningsTransaction.js";
 import User from "../models/User.js";
-import AgentStorefront from "../models/AgentStorefront.js";
-import Order from "../models/Order.js";
+import earningsService from "./earningsService.js";
 import paystackService from "./paystackService.js";
 import notificationService from "./notificationService.js";
 import settingsService from "./settingsService.js";
 import logger from "../utils/logger.js";
 import { getFeeConfig } from "../utils/paystackHelpers.js";
-import { computeStorefrontProfit } from "../utils/storefrontProfit.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -117,38 +114,22 @@ function isTopologyError(err) {
  * Deduct `amount` from the agent's earningsBalance and write an EarningsTransaction.
  * Works with or without a Mongoose session.
  */
-async function deductEarnings(userId, amount, payoutId, description, session) {
-  const opts = session ? { session, new: true } : { new: true };
-  const user = await User.findByIdAndUpdate(
+async function deductEarnings(
+  userId,
+  amount,
+  payoutId,
+  description,
+  session,
+  metadata = {},
+) {
+  const { user } = await earningsService.debitForPayout({
     userId,
-    { $inc: { earningsBalance: -amount } },
-    opts,
-  );
-  if (!user) throw new Error("User not found");
-  if (user.earningsBalance < 0) {
-    // Roll back — we over-deducted. Restore and throw.
-    await User.findByIdAndUpdate(
-      userId,
-      { $inc: { earningsBalance: amount } },
-      opts,
-    );
-    throw new Error("Insufficient earnings balance");
-  }
-
-  const txData = {
-    user: userId,
-    type: "payout",
-    amount: -amount,
-    balanceAfter: user.earningsBalance,
+    amount,
+    payoutId,
     description,
-    relatedPayout: payoutId,
-    metadata: { auto: true },
-  };
-  if (session) {
-    await EarningsTransaction.create([txData], { session });
-  } else {
-    await EarningsTransaction.create(txData);
-  }
+    session,
+    metadata,
+  });
   return user;
 }
 
@@ -161,30 +142,30 @@ async function refundEarnings(
   amount,
   payoutId,
   reason = "transfer_failed",
+  session = null,
 ) {
-  const user = await User.findByIdAndUpdate(
-    userId,
-    { $inc: { earningsBalance: amount } },
-    { new: true },
-  );
-  if (!user) {
-    logger.error("[Payout] refundEarnings — user not found", {
+  try {
+    await earningsService.refundPayout({
       userId,
       amount,
       payoutId,
+      description: `Refund for failed payout #${payoutId}`,
+      session,
+      metadata: {
+        reason,
+      },
     });
-    return;
+
+    logger.info("[Payout] Earnings refunded", { userId, amount, payoutId });
+  } catch (err) {
+    logger.error("[Payout] refundEarnings failed", {
+      userId,
+      amount,
+      payoutId,
+      reason,
+      message: err.message,
+    });
   }
-  await EarningsTransaction.create({
-    user: userId,
-    type: "credit",
-    amount,
-    balanceAfter: user.earningsBalance,
-    description: `Refund for failed payout #${payoutId}`,
-    relatedPayout: payoutId,
-    metadata: { reason },
-  });
-  logger.info("[Payout] Earnings refunded", { userId, amount, payoutId });
 }
 
 /**
@@ -595,27 +576,17 @@ class PayoutService {
     // ── Step 1: Deduct earnings atomically ────────────────────────────────────
     await withTransaction(async (session) => {
       const user = payout.user;
-      const balance = Number(user.earningsBalance) || 0;
-      if (balance < payout.amount)
-        throw new Error("Insufficient earnings balance");
-
-      const updated = await User.findByIdAndUpdate(
+      await deductEarnings(
         user._id,
-        { $inc: { earningsBalance: -payout.amount } },
-        session ? { session, new: true } : { new: true },
+        payout.amount,
+        payout._id,
+        `Auto-payout request #${payout._id}`,
+        session,
+        {
+          auto: true,
+          destination: payout.destination,
+        },
       );
-
-      const txData = {
-        user: user._id,
-        type: "payout",
-        amount: -payout.amount,
-        balanceAfter: updated.earningsBalance,
-        description: `Auto-payout request #${payout._id}`,
-        relatedPayout: payout._id,
-        metadata: { auto: true },
-      };
-      if (session) await EarningsTransaction.create([txData], { session });
-      else await EarningsTransaction.create(txData);
 
       payout.status = "approved";
       payout.reviewedAt = new Date();
@@ -706,28 +677,17 @@ class PayoutService {
       }
 
       const user = payout.user;
-      const balance = Number(user.earningsBalance) || 0;
-      if (balance < payout.amount)
-        throw new Error("Insufficient earnings balance");
-
-      // Atomic deduction
-      const updated = await User.findByIdAndUpdate(
+      await deductEarnings(
         user._id,
-        { $inc: { earningsBalance: -payout.amount } },
-        session ? { session, new: true } : { new: true },
+        payout.amount,
+        payout._id,
+        `Payout approved #${payout._id}`,
+        session,
+        {
+          destination: payout.destination,
+          approvedBy: adminId,
+        },
       );
-
-      const txData = {
-        user: user._id,
-        type: "payout",
-        amount: -payout.amount,
-        balanceAfter: updated.earningsBalance,
-        description: `Payout approved #${payout._id}`,
-        relatedPayout: payout._id,
-        metadata: { destination: payout.destination },
-      };
-      if (session) await EarningsTransaction.create([txData], { session });
-      else await EarningsTransaction.create(txData);
 
       payout.status = transferReference ? "completed" : "approved";
       payout.reviewedBy = adminId;
@@ -828,6 +788,10 @@ class PayoutService {
         payoutId,
         `Manual completion re-deduction for payout #${payoutId}`,
         null,
+        {
+          manuallyCompleted: true,
+          sourceStatus: "failed",
+        },
       );
     }
 
@@ -846,6 +810,10 @@ class PayoutService {
         payoutId,
         `Manual completion for pending payout #${payoutId}`,
         null,
+        {
+          manuallyCompleted: true,
+          sourceStatus: "pending",
+        },
       );
     }
 
@@ -1020,40 +988,14 @@ class PayoutService {
 
   async getEarningsDashboard(userId) {
     const user = await User.findById(userId).select(
-      "earningsBalance walletBalance payoutAccount",
+      "walletBalance payoutAccount",
     );
     if (!user) throw new Error("User not found");
 
-    const [agg] = await EarningsTransaction.aggregate([
-      {
-        $match: {
-          user: user._id,
-          type: "credit",
-          $or: [
-            { "metadata.source": "storefront_order_completed" },
-            {
-              $and: [
-                { relatedOrder: { $exists: true, $ne: null } },
-                {
-                  description: { $regex: "^Storefront profit", $options: "i" },
-                },
-              ],
-            },
-          ],
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          totalEarned: { $sum: "$amount" },
-        },
-      },
-    ]);
-
-    const [completedWithdrawn] = await PayoutRequest.aggregate([
-      { $match: { user: user._id, status: "completed" } },
-      { $group: { _id: null, total: { $sum: "$netAmount" } } },
-    ]);
+    const earningsSummary = await earningsService.getSummary(user._id, {
+      includeRecentTransactions: false,
+      includePagination: false,
+    });
 
     const recentPayouts = await PayoutRequest.find({ user: userId })
       .sort({ createdAt: -1 })
@@ -1073,10 +1015,10 @@ class PayoutService {
     const minMoMo = payoutSettings.minimumPayoutAmounts.mobile_money;
 
     return {
-      availableBalance: Number(user.earningsBalance) || 0,
+      availableBalance: earningsSummary.availableBalance,
       walletBalance: Number(user.walletBalance) || 0,
-      totalEarned: agg?.totalEarned || 0,
-      totalWithdrawn: Math.abs(completedWithdrawn?.total || 0),
+      totalEarned: earningsSummary.totalEarned,
+      totalWithdrawn: earningsSummary.totalWithdrawn,
       recentPayouts,
       transferFees: {
         mobile_money: feeConfig.paystackTransferFees?.mobile_money ?? 1.0,
@@ -1089,300 +1031,7 @@ class PayoutService {
       paystackConfigured,
       savedPayoutAccount: user.payoutAccount || null,
       minimumPayoutAmounts: payoutSettings.minimumPayoutAmounts,
-      canRequestPayout: (Number(user.earningsBalance) || 0) >= minMoMo,
-    };
-  }
-
-  async getEarningsReconciliation(userId) {
-    const user = await User.findById(userId).select("earningsBalance");
-    if (!user) throw new Error("User not found");
-
-    const storefronts = await AgentStorefront.find({ agentId: userId })
-      .select("_id")
-      .lean();
-    const storefrontIds = storefronts.map((sf) => sf._id);
-
-    let totalEarned = 0;
-    if (storefrontIds.length > 0) {
-      const cursor = Order.find({
-        orderType: "storefront",
-        status: "completed",
-        "storefrontData.storefrontId": { $in: storefrontIds },
-      })
-        .select(
-          "total storefrontData.totalTierCost storefrontData.totalMarkup storefrontData.items metadata.paystack.paystackCollectionFee",
-        )
-        .lean()
-        .cursor();
-
-      for await (const order of cursor) {
-        const profitData = computeStorefrontProfit(order);
-        totalEarned += Number(profitData.profit) || 0;
-      }
-    }
-
-    const [completedWithdrawn] = await PayoutRequest.aggregate([
-      { $match: { user: user._id, status: "completed" } },
-      { $group: { _id: null, total: { $sum: "$amount" } } },
-    ]);
-
-    const totalWithdrawn = Math.abs(completedWithdrawn?.total || 0);
-    const expectedAvailable = totalEarned - totalWithdrawn;
-    const availableBalance = Number(user.earningsBalance) || 0;
-    const delta = availableBalance - expectedAvailable;
-
-    return {
-      userId: user._id,
-      availableBalance,
-      totalEarned,
-      totalWithdrawn,
-      expectedAvailable,
-      delta,
-      isBalanced: Math.abs(delta) <= 0.01,
-      reconciledAt: new Date(),
-    };
-  }
-
-  async applyEarningsReconciliation(userId, adminId, reason) {
-    const reconciliation = await this.getEarningsReconciliation(userId);
-
-    if (reconciliation.isBalanced) {
-      return { ...reconciliation, adjusted: false };
-    }
-
-    const adjustmentAmount = Math.abs(reconciliation.delta);
-    const adjustmentType = reconciliation.delta < 0 ? "credit" : "debit";
-
-    const updated = await User.findByIdAndUpdate(
-      userId,
-      {
-        $inc: {
-          earningsBalance:
-            adjustmentType === "credit" ? adjustmentAmount : -adjustmentAmount,
-        },
-      },
-      { new: true },
-    );
-
-    if (!updated) throw new Error("User not found");
-
-    const description = reason?.trim()
-      ? `Admin reconciliation adjustment: ${reason.trim()}`
-      : "Admin reconciliation adjustment";
-
-    const transaction = await EarningsTransaction.create({
-      user: userId,
-      type: adjustmentType,
-      amount: adjustmentAmount,
-      balanceAfter: updated.earningsBalance,
-      description,
-      metadata: {
-        source: "admin_reconciliation",
-        adminId,
-        reason: reason?.trim() || null,
-        expectedAvailable: reconciliation.expectedAvailable,
-        previousAvailable: reconciliation.availableBalance,
-        delta: reconciliation.delta,
-      },
-    });
-
-    const deltaAfter =
-      (Number(updated.earningsBalance) || 0) - reconciliation.expectedAvailable;
-
-    return {
-      ...reconciliation,
-      availableBalance: Number(updated.earningsBalance) || 0,
-      delta: deltaAfter,
-      isBalanced: Math.abs(deltaAfter) <= 0.01,
-      adjusted: true,
-      adjustedAt: new Date(),
-      adjustment: {
-        type: adjustmentType,
-        amount: adjustmentAmount,
-        transactionId: transaction._id,
-      },
-    };
-  }
-
-  async getEarningsBackfillPreview(userId, limit = 50) {
-    const storefronts = await AgentStorefront.find({ agentId: userId })
-      .select("_id")
-      .lean();
-    const storefrontIds = storefronts.map((sf) => sf._id);
-
-    if (storefrontIds.length === 0) {
-      return { missingCount: 0, totalMissingAmount: 0, orders: [] };
-    }
-
-    const missingOrders = await Order.aggregate([
-      {
-        $match: {
-          orderType: "storefront",
-          status: "completed",
-          "storefrontData.storefrontId": { $in: storefrontIds },
-        },
-      },
-      {
-        $lookup: {
-          from: "earningstransactions",
-          let: { orderId: "$_id" },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    { $eq: ["$relatedOrder", "$$orderId"] },
-                    { $eq: ["$type", "credit"] },
-                  ],
-                },
-              },
-            },
-            { $project: { _id: 1 } },
-          ],
-          as: "earningsTxns",
-        },
-      },
-      { $match: { "earningsTxns.0": { $exists: false } } },
-      {
-        $project: {
-          _id: 1,
-          orderNumber: 1,
-          total: 1,
-          storefrontData: {
-            totalMarkup: "$storefrontData.totalMarkup",
-            totalTierCost: "$storefrontData.totalTierCost",
-            items: "$storefrontData.items",
-            storefrontId: "$storefrontData.storefrontId",
-          },
-          metadata: {
-            paystack: {
-              paystackCollectionFee: "$metadata.paystack.paystackCollectionFee",
-            },
-          },
-          storefrontId: "$storefrontData.storefrontId",
-          createdAt: 1,
-        },
-      },
-      { $sort: { createdAt: -1 } },
-      { $limit: Math.max(1, Number(limit) || 50) },
-    ]);
-
-    const ordersWithProfit = missingOrders
-      .map((order) => {
-        const profitData = computeStorefrontProfit(order);
-        return {
-          ...order,
-          totalMarkup: profitData.totalMarkup,
-          totalTierCost: profitData.tierCost,
-          paystackFee: profitData.paystackFee,
-          computedProfit: profitData.profit,
-        };
-      })
-      .filter((order) => Number(order.computedProfit) > 0);
-
-    const totalMissingAmount = ordersWithProfit.reduce(
-      (sum, order) => sum + (Number(order.computedProfit) || 0),
-      0,
-    );
-
-    return {
-      missingCount: ordersWithProfit.length,
-      totalMissingAmount,
-      orders: ordersWithProfit,
-    };
-  }
-
-  async applyEarningsBackfill(userId, adminId, reason, limit = 50) {
-    const preview = await this.getEarningsBackfillPreview(userId, limit);
-
-    if (preview.missingCount === 0) {
-      const user = await User.findById(userId).select("earningsBalance");
-      return {
-        appliedCount: 0,
-        totalAppliedAmount: 0,
-        availableBalance: Number(user?.earningsBalance) || 0,
-        ordersApplied: [],
-      };
-    }
-
-    const ordersApplied = [];
-    const totalAppliedAmount = await withTransaction(async (session) => {
-      let total = 0;
-      for (const order of preview.orders) {
-        const existingTxn = await EarningsTransaction.findOne(
-          { relatedOrder: order._id, type: "credit" },
-          null,
-          session ? { session } : {},
-        );
-        if (existingTxn) continue;
-
-        const markup = Number(order.computedProfit) || 0;
-        if (markup <= 0) continue;
-
-        const updatedAgent = await User.findByIdAndUpdate(
-          userId,
-          { $inc: { earningsBalance: markup } },
-          session
-            ? { session, new: true, runValidators: false }
-            : { new: true, runValidators: false },
-        );
-
-        if (!updatedAgent) throw new Error("User not found");
-
-        const description = reason?.trim()
-          ? `Admin backfill: ${reason.trim()}`
-          : "Admin backfill for missing storefront profit";
-
-        const txData = {
-          user: userId,
-          type: "credit",
-          amount: markup,
-          balanceAfter: updatedAgent.earningsBalance,
-          description,
-          relatedOrder: order._id,
-          metadata: {
-            source: "admin_backfill",
-            adminId,
-            reason: reason?.trim() || null,
-            orderNumber: order.orderNumber,
-            storefrontId: order.storefrontId?.toString(),
-            markup,
-            tierCost: order.totalTierCost,
-            paystackFee: order.paystackFee,
-          },
-        };
-
-        if (session) {
-          await EarningsTransaction.create([txData], { session });
-          await Order.findByIdAndUpdate(
-            order._id,
-            { "metadata.profitCredited": true },
-            { session },
-          );
-        } else {
-          await EarningsTransaction.create(txData);
-          await Order.findByIdAndUpdate(order._id, {
-            "metadata.profitCredited": true,
-          });
-        }
-
-        ordersApplied.push({
-          orderId: order._id,
-          orderNumber: order.orderNumber,
-          amount: markup,
-        });
-        total += markup;
-      }
-      return total;
-    });
-
-    const user = await User.findById(userId).select("earningsBalance");
-
-    return {
-      appliedCount: ordersApplied.length,
-      totalAppliedAmount,
-      availableBalance: Number(user?.earningsBalance) || 0,
-      ordersApplied,
+      canRequestPayout: earningsSummary.availableBalance >= minMoMo,
     };
   }
 

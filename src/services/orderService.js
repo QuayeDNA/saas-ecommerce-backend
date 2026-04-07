@@ -11,6 +11,7 @@ import websocketService from "./websocketService.js";
 import AgentStorefront from "../models/AgentStorefront.js";
 import storefrontService from "./storefrontService.js";
 import EarningsTransaction from "../models/EarningsTransaction.js";
+import earningsService from "./earningsService.js";
 import mongoose from "mongoose";
 import logger from "../utils/logger.js";
 import { computeStorefrontProfit } from "../utils/storefrontProfit.js";
@@ -184,43 +185,24 @@ class OrderService {
         return;
       }
 
-      // Atomic balance increment
-      const updatedAgent = await User.findByIdAndUpdate(
-        agentId,
-        { $inc: { earningsBalance: creditAmount } },
-        { new: true, runValidators: false },
-      );
-      if (!updatedAgent) {
-        logger.error(
-          `[OrderService] _creditStorefrontProfit — agent not found`,
-          {
-            agentId,
-            orderId: order._id,
+      const { user: updatedAgent } =
+        await earningsService.creditStorefrontProfit({
+          userId: agentId,
+          amount: creditAmount,
+          orderId: order._id,
+          description: `Storefront profit — Order ${order.orderNumber}`,
+          metadata: {
+            source: "storefront_profit",
+            orderNumber: order.orderNumber,
+            storefrontId: order.storefrontData.storefrontId?.toString(),
+            customerTotal: profitData.customerTotal,
+            tierCost: profitData.tierCost,
+            markup: profitData.totalMarkup,
+            paystackFee: profitData.paystackFee,
+            profit: creditAmount,
+            itemCount: (order.storefrontData?.items || []).length,
           },
-        );
-        return;
-      }
-
-      // Immutable earnings record
-      await EarningsTransaction.create({
-        user: agentId,
-        type: "credit",
-        amount: creditAmount,
-        balanceAfter: updatedAgent.earningsBalance,
-        description: `Storefront profit — Order ${order.orderNumber}`,
-        relatedOrder: order._id,
-        metadata: {
-          orderNumber: order.orderNumber,
-          storefrontId: order.storefrontData.storefrontId?.toString(),
-          customerTotal: profitData.customerTotal,
-          tierCost: profitData.tierCost,
-          markup: profitData.totalMarkup,
-          paystackFee: profitData.paystackFee,
-          profit: creditAmount,
-          itemCount: (order.storefrontData?.items || []).length,
-          source: "storefront_order_completed",
-        },
-      });
+        });
 
       // Mark order to short-circuit future calls
       await Order.findByIdAndUpdate(order._id, {
@@ -249,26 +231,6 @@ class OrderService {
     if (!order || order.orderType !== "storefront")
       return { removed: false, amount: 0 };
 
-    const opts = session ? { session } : {};
-    const txns = await EarningsTransaction.find(
-      { relatedOrder: order._id, type: "credit" },
-      null,
-      opts,
-    );
-
-    if (!txns.length) {
-      if (order.metadata?.profitCredited) {
-        order.metadata.profitCredited = false;
-        order.metadata.profitReversedAt = new Date();
-        order.metadata.profitReversedReason = reason;
-        session ? await order.save({ session }) : await order.save();
-      }
-      return { removed: false, amount: 0 };
-    }
-
-    const total = txns.reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
-    if (total <= 0) return { removed: false, amount: 0 };
-
     let agentId = order.createdBy;
     if (order.storefrontData?.storefrontId) {
       const sf = await AgentStorefront.findById(
@@ -289,25 +251,22 @@ class OrderService {
       return { removed: false, amount: 0 };
     }
 
-    const userUpdateOpts = session ? { session, new: true } : { new: true };
-    const updated = await User.findByIdAndUpdate(
-      agentId,
-      { $inc: { earningsBalance: -total } },
-      userUpdateOpts,
-    );
-
-    if (!updated) {
-      logger.error("[OrderService] _removeStorefrontProfit — agent not found", {
-        agentId,
+    const reversal =
+      await earningsService.removeStorefrontProfitCreditsForOrder({
+        userId: agentId,
         orderId: order._id,
+        session,
       });
+
+    if (!reversal.removed) {
+      if (order.metadata?.profitCredited) {
+        order.metadata.profitCredited = false;
+        order.metadata.profitReversedAt = new Date();
+        order.metadata.profitReversedReason = reason;
+        session ? await order.save({ session }) : await order.save();
+      }
       return { removed: false, amount: 0 };
     }
-
-    await EarningsTransaction.deleteMany(
-      { _id: { $in: txns.map((tx) => tx._id) } },
-      opts,
-    );
 
     order.metadata = order.metadata || {};
     order.metadata.profitCredited = false;
@@ -317,11 +276,11 @@ class OrderService {
 
     logger.info("[OrderService] Storefront profit removed", {
       orderId: order._id,
-      amount: total,
+      amount: reversal.amount,
       reason,
     });
 
-    return { removed: true, amount: total };
+    return { removed: true, amount: reversal.amount };
   }
 
   // ─── Create Single Order ──────────────────────────────────────────────────────
@@ -1627,7 +1586,7 @@ class OrderService {
             `Cancellation failed: Unable to process refund — ${refundErr.message}`,
           );
         }
-      } 
+      }
 
       if (
         isStorefront &&

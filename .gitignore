@@ -57,4 +57,5 @@ build/
 dist/
 
 #scripts
-scripts/
+scripts/*
+!scripts/migrate-storefront-earnings-ledger.js

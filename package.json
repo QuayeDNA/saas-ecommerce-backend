@@ -11,7 +11,8 @@
     "build": "npm install && npm install --only=dev && npm install --only=production",
     "create-order": "node src/scripts/createOrderDocument.js",
     "clear-pending-topups": "node src/scripts/clearPendingTopups.js",
-    "migrate:storefront-payments": "node src/scripts/migrateStorefrontPaymentMethodsToPaystack.js"
+    "migrate:storefront-payments": "node src/scripts/migrateStorefrontPaymentMethodsToPaystack.js",
+    "migrate:storefront-earnings-ledger": "node scripts/migrate-storefront-earnings-ledger.js"
   },
   "keywords": [],
   "author": "",

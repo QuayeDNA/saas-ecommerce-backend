@@ -5,11 +5,11 @@ import Bundle from "../models/Bundle.js";
 import User from "../models/User.js";
 import Order from "../models/Order.js";
 import PayoutRequest from "../models/PayoutRequest.js";
-import EarningsTransaction from "../models/EarningsTransaction.js";
 import Settings from "../models/Settings.js";
 import walletService from "./walletService.js";
 import notificationService from "./notificationService.js";
 import paystackService from "./paystackService.js";
+import earningsService from "./earningsService.js";
 import {
   calculateStorefrontSplit,
   getFeeConfig,
@@ -1242,7 +1242,11 @@ class StorefrontService {
   // Analytics
   // =========================================================================
 
-  async getStorefrontAnalytics(storefrontId, dateRange = {}) {
+  async getStorefrontAnalytics(
+    storefrontId,
+    dateRange = {},
+    ledgerSummary = null,
+  ) {
     // Base: only count orders where money actually changed hands
     const paidMatch = {
       orderType: "storefront",
@@ -1294,104 +1298,6 @@ class StorefrontService {
               ],
             },
           },
-          // Net profit = markup of completed orders only (the earned amount after fees)
-          totalProfit: {
-            $sum: {
-              $cond: [
-                { $eq: ["$status", "completed"] },
-                {
-                  $subtract: [
-                    "$storefrontData.totalMarkup",
-                    {
-                      $ifNull: [
-                        {
-                          $cond: [
-                            {
-                              $gt: [
-                                {
-                                  $ifNull: [
-                                    "$metadata.paystack.paystackCollectionFee",
-                                    0,
-                                  ],
-                                },
-                                0,
-                              ],
-                            },
-                            "$metadata.paystack.paystackCollectionFee",
-                            {
-                              $ifNull: [
-                                "$storefrontData.feeBreakdown.paystackFee",
-                                0,
-                              ],
-                            },
-                          ],
-                        },
-                        0,
-                      ],
-                    },
-                  ],
-                },
-                0,
-              ],
-            },
-          },
-          // Net profit secured from orders completed today.
-          todayNetProfit: {
-            $sum: {
-              $cond: [
-                {
-                  $and: [
-                    { $eq: ["$status", "completed"] },
-                    {
-                      $gte: [
-                        { $ifNull: ["$processingCompletedAt", "$updatedAt"] },
-                        todayStart,
-                      ],
-                    },
-                    {
-                      $lt: [
-                        { $ifNull: ["$processingCompletedAt", "$updatedAt"] },
-                        tomorrowStart,
-                      ],
-                    },
-                  ],
-                },
-                {
-                  $subtract: [
-                    "$storefrontData.totalMarkup",
-                    {
-                      $ifNull: [
-                        {
-                          $cond: [
-                            {
-                              $gt: [
-                                {
-                                  $ifNull: [
-                                    "$metadata.paystack.paystackCollectionFee",
-                                    0,
-                                  ],
-                                },
-                                0,
-                              ],
-                            },
-                            "$metadata.paystack.paystackCollectionFee",
-                            {
-                              $ifNull: [
-                                "$storefrontData.feeBreakdown.paystackFee",
-                                0,
-                              ],
-                            },
-                          ],
-                        },
-                        0,
-                      ],
-                    },
-                  ],
-                },
-                0,
-              ],
-            },
-          },
           // Count of storefront orders completed today.
           todayCompletedOrders: {
             $sum: {
@@ -1414,34 +1320,6 @@ class StorefrontService {
                   ],
                 },
                 1,
-                0,
-              ],
-            },
-          },
-          // Potential markup locked in in-flight orders
-          pendingProfit: {
-            $sum: {
-              $cond: [
-                { $eq: ["$status", "pending"] },
-                "$storefrontData.totalMarkup",
-                0,
-              ],
-            },
-          },
-          confirmedProfit: {
-            $sum: {
-              $cond: [
-                { $eq: ["$status", "confirmed"] },
-                "$storefrontData.totalMarkup",
-                0,
-              ],
-            },
-          },
-          processingProfit: {
-            $sum: {
-              $cond: [
-                { $eq: ["$status", "processing"] },
-                "$storefrontData.totalMarkup",
                 0,
               ],
             },
@@ -1469,13 +1347,50 @@ class StorefrontService {
       },
     ]);
 
-    return (
-      result || {
+    const storefront = await AgentStorefront.findById(storefrontId)
+      .select("agentId")
+      .lean();
+
+    const hasDateRange = Boolean(dateRange.startDate || dateRange.endDate);
+
+    const summary =
+      storefront?.agentId && ledgerSummary
+        ? ledgerSummary
+        : storefront?.agentId
+          ? await earningsService.getSummary(storefront.agentId, {
+              includeRecentTransactions: false,
+              includePagination: false,
+            })
+          : {
+              availableBalance: 0,
+              totalEarned: 0,
+              totalWithdrawn: 0,
+            };
+
+    const totalProfit = storefront?.agentId
+      ? hasDateRange
+        ? await earningsService.getStorefrontProfitForRange(
+            storefront.agentId,
+            {
+              startDate: dateRange.startDate,
+              endDate: dateRange.endDate,
+            },
+          )
+        : summary.totalEarned
+      : 0;
+
+    const todayNetProfit = storefront?.agentId
+      ? await earningsService.getStorefrontProfitForRange(storefront.agentId, {
+          startDate: todayStart,
+          endDate: tomorrowStart,
+        })
+      : 0;
+
+    return {
+      ...(result || {
         totalOrders: 0,
         totalRevenue: 0,
         totalFulfilmentCost: 0,
-        totalProfit: 0,
-        todayNetProfit: 0,
         todayCompletedOrders: 0,
         averageOrderValue: 0,
         completedOrders: 0,
@@ -1484,11 +1399,13 @@ class StorefrontService {
         processingOrders: 0,
         cancelledOrders: 0,
         failedOrders: 0,
-        pendingProfit: 0,
-        confirmedProfit: 0,
-        processingProfit: 0,
-      }
-    );
+      }),
+      totalProfit,
+      todayNetProfit,
+      pendingProfit: 0,
+      confirmedProfit: 0,
+      processingProfit: 0,
+    };
   }
 
   /**
@@ -1497,74 +1414,15 @@ class StorefrontService {
    * Source of truth for "how much have I made from my store?"
    */
   async getStorefrontEarnings(userId, options = {}) {
-    const user = await User.findById(userId).select("earningsBalance");
-    if (!user) throw new Error("User not found");
+    const usePagination = Boolean(options.page || options.limit);
 
-    const pageNum = Math.max(1, Number(options.page) || 1);
-    const limitNum = Math.min(100, Math.max(1, Number(options.limit) || 20));
-    const usePagination = options.page || options.limit;
-
-    const [agg] = await EarningsTransaction.aggregate([
-      {
-        $match: {
-          user: user._id,
-          type: "credit",
-          $or: [
-            { "metadata.source": "storefront_order_completed" },
-            {
-              $and: [
-                { relatedOrder: { $exists: true, $ne: null } },
-                {
-                  description: { $regex: "^Storefront profit", $options: "i" },
-                },
-              ],
-            },
-          ],
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          totalEarned: { $sum: "$amount" },
-        },
-      },
-    ]);
-
-    const [completedWithdrawn] = await PayoutRequest.aggregate([
-      { $match: { user: user._id, status: "completed" } },
-      { $group: { _id: null, total: { $sum: "$netAmount" } } },
-    ]);
-
-    const recent = await EarningsTransaction.find({ user: userId })
-      .sort({ createdAt: -1 })
-      .limit(20)
-      .lean();
-
-    let transactions = null;
-    let pagination = null;
-
-    if (usePagination) {
-      const total = await EarningsTransaction.countDocuments({ user: userId });
-      transactions = await EarningsTransaction.find({ user: userId })
-        .sort({ createdAt: -1 })
-        .skip((pageNum - 1) * limitNum)
-        .limit(limitNum)
-        .lean();
-      pagination = {
-        page: pageNum,
-        limit: limitNum,
-        total,
-        totalPages: Math.max(1, Math.ceil(total / limitNum)),
-      };
-    }
-
-    return {
-      availableBalance: Number(user.earningsBalance) || 0,
-      totalEarned: agg?.totalEarned || 0,
-      totalWithdrawn: Math.abs(completedWithdrawn?.total || 0),
-      recentTransactions: recent,
-      ...(usePagination ? { transactions, pagination } : {}),
-    };
+    return earningsService.getSummary(userId, {
+      includePagination: usePagination,
+      page: options.page,
+      limit: options.limit,
+      includeRecentTransactions: true,
+      recentLimit: 20,
+    });
   }
 
   /**
@@ -1572,18 +1430,26 @@ class StorefrontService {
    * Combines analytics, earnings, orders, bundles, and payout information in a single call.
    */
   async getStorefrontDashboardData(userId) {
-    const user = await User.findById(userId).select("earningsBalance");
+    const user = await User.findById(userId).select("_id");
     if (!user) throw new Error("User not found");
 
     // Get the user's storefront
     const storefront = await this.getAgentStorefront(userId);
     if (!storefront) throw new Error("Storefront not found");
 
-    // Get analytics data
-    const analytics = await this.getStorefrontAnalytics(storefront._id);
+    // Get earnings from a single source of truth, then reuse in analytics.
+    const earnings = await earningsService.getSummary(userId, {
+      includePagination: false,
+      includeRecentTransactions: true,
+      recentLimit: 20,
+    });
 
-    // Get earnings data (without pagination for dashboard)
-    const earnings = await this.getStorefrontEarnings(userId, {});
+    // Get analytics data with shared earnings summary to avoid diverging totals.
+    const analytics = await this.getStorefrontAnalytics(
+      storefront._id,
+      {},
+      earnings,
+    );
 
     // Get recent orders
     const orders = await this.getStorefrontOrders(

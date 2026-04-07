@@ -148,29 +148,5 @@ router.get(
   authorize("super_admin"),
   payoutController.getAutoPayoutAvailability,
 );
-router.get(
-  "/admin/earnings/reconcile",
-  authenticate,
-  authorize("super_admin"),
-  payoutController.getEarningsReconciliation,
-);
-router.post(
-  "/admin/earnings/reconcile/adjust",
-  authenticate,
-  authorize("super_admin"),
-  payoutController.applyEarningsReconciliation,
-);
-router.get(
-  "/admin/earnings/backfill",
-  authenticate,
-  authorize("super_admin"),
-  payoutController.getEarningsBackfillPreview,
-);
-router.post(
-  "/admin/earnings/backfill/apply",
-  authenticate,
-  authorize("super_admin"),
-  payoutController.applyEarningsBackfill,
-);
 
 export default router;
