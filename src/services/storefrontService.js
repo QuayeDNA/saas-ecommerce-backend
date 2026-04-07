@@ -5,11 +5,14 @@ import Bundle from "../models/Bundle.js";
 import User from "../models/User.js";
 import Order from "../models/Order.js";
 import PayoutRequest from "../models/PayoutRequest.js";
+import EarningsTransaction from "../models/EarningsTransaction.js";
 import Settings from "../models/Settings.js";
 import walletService from "./walletService.js";
 import notificationService from "./notificationService.js";
 import paystackService from "./paystackService.js";
-import earningsService from "./earningsService.js";
+import earningsService, {
+  STOREFRONT_PROFIT_SOURCES,
+} from "./earningsService.js";
 import {
   calculateStorefrontSplit,
   getFeeConfig,
@@ -1569,45 +1572,54 @@ class StorefrontService {
       .limit(10)
       .lean();
 
-    // Order stats for this storefront
-    const [orderStats] = await Order.aggregate([
-      {
-        $match: {
-          orderType: "storefront",
-          "storefrontData.storefrontId": storefront._id,
+    const agentId = storefront?.agentId?._id || storefront?.agentId || null;
+
+    // Use canonical earnings ledger for profit while keeping order-derived counters.
+    const [orderStatsAgg, earningsSummary] = await Promise.all([
+      Order.aggregate([
+        {
+          $match: {
+            orderType: "storefront",
+            "storefrontData.storefrontId": storefront._id,
+          },
         },
-      },
-      {
-        $group: {
-          _id: null,
-          totalOrders: { $sum: 1 },
-          completedOrders: {
-            $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] },
-          },
-          totalRevenue: {
-            $sum: { $cond: [{ $eq: ["$paymentStatus", "paid"] }, "$total", 0] },
-          },
-          totalProfit: {
-            $sum: {
-              $cond: [
-                { $eq: ["$status", "completed"] },
-                "$storefrontData.totalMarkup",
-                0,
-              ],
+        {
+          $group: {
+            _id: null,
+            totalOrders: { $sum: 1 },
+            completedOrders: {
+              $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] },
+            },
+            totalRevenue: {
+              $sum: {
+                $cond: [{ $eq: ["$paymentStatus", "paid"] }, "$total", 0],
+              },
             },
           },
         },
-      },
+      ]),
+      agentId
+        ? earningsService.getSummary(agentId, {
+            includeRecentTransactions: false,
+            includePagination: false,
+          })
+        : Promise.resolve(null),
     ]);
+
+    const [orderStats] = orderStatsAgg;
+    const canonicalTotalProfit = Number(earningsSummary?.totalEarned) || 0;
 
     return {
       ...storefront,
       recentOrders,
-      orderStats: orderStats || {
-        totalOrders: 0,
-        completedOrders: 0,
-        totalRevenue: 0,
-        totalProfit: 0,
+      orderStats: {
+        ...(orderStats || {
+          totalOrders: 0,
+          completedOrders: 0,
+          totalRevenue: 0,
+          totalProfit: 0,
+        }),
+        totalProfit: canonicalTotalProfit,
       },
     };
   }
@@ -1767,21 +1779,52 @@ class StorefrontService {
       Order.countDocuments({ orderType: "storefront" }),
     ]);
 
-    const [revenueStats] = await Order.aggregate([
-      {
-        $match: {
-          orderType: "storefront",
-          status: { $in: ["completed", "confirmed"] },
+    const [revenueStatsAgg, profitStatsAgg] = await Promise.all([
+      Order.aggregate([
+        {
+          $match: {
+            orderType: "storefront",
+            status: { $in: ["completed", "confirmed"] },
+          },
         },
-      },
-      {
-        $group: {
-          _id: null,
-          totalRevenue: { $sum: "$total" },
-          totalProfit: { $sum: "$storefrontData.totalMarkup" },
+        {
+          $group: {
+            _id: null,
+            totalRevenue: { $sum: "$total" },
+          },
         },
-      },
+      ]),
+      EarningsTransaction.aggregate([
+        {
+          $match: {
+            type: "credit",
+            $or: [
+              { "metadata.source": { $in: STOREFRONT_PROFIT_SOURCES } },
+              {
+                $and: [
+                  { relatedOrder: { $exists: true, $ne: null } },
+                  {
+                    description: {
+                      $regex: "^Storefront profit",
+                      $options: "i",
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalProfit: { $sum: "$amount" },
+          },
+        },
+      ]),
     ]);
+
+    const [revenueStats] = revenueStatsAgg;
+    const [profitStats] = profitStatsAgg;
 
     const settings = await Settings.getInstance();
 
@@ -1792,7 +1835,7 @@ class StorefrontService {
       suspendedStores,
       totalStorefrontOrders,
       totalRevenue: revenueStats?.totalRevenue || 0,
-      totalProfit: revenueStats?.totalProfit || 0,
+      totalProfit: Number(profitStats?.totalProfit) || 0,
       autoApproveStorefronts: settings.autoApproveStorefronts || false,
     };
   }
