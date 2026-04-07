@@ -1601,10 +1601,33 @@ class OrderService {
         order.paymentMethod === "wallet" &&
         order.total > 0
       ) {
-        // Regular order wallet refund
-        console.log("Processing wallet refund for regular order");
-        // ... existing code
-      }
+        try {
+          const orderCreator = await User.findById(order.createdBy);
+          if (!orderCreator) throw new Error("Order creator not found");
+          refundAmount = order.total;
+          refundMethod = "wallet";
+          await walletService.creditWallet(
+            order.createdBy.toString(),
+            refundAmount,
+            `Refund for cancelled order ${order.orderNumber}`,
+            userId,
+            {
+              orderId: order._id.toString(),
+              orderNumber: order.orderNumber,
+              refundReason: reason || "Order cancelled",
+              cancelledBy: userId,
+            },
+            session,
+          );
+          logger.info(
+            `Refunded GH₵${refundAmount.toFixed(2)} for cancelled order ${order.orderNumber}`,
+          );
+        } catch (refundErr) {
+          throw new Error(
+            `Cancellation failed: Unable to process refund — ${refundErr.message}`,
+          );
+        }
+      } 
 
       if (
         isStorefront &&
