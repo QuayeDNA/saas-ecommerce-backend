@@ -1387,10 +1387,28 @@ class PayoutService {
     };
   }
 
+  _ensurePayoutAccountName(payout) {
+    if (!payout || !payout.destination) return payout;
+    const destination = payout.destination || {};
+    const accountName =
+      destination.accountName || destination.recipientName || undefined;
+    return {
+      ...payout,
+      destination: {
+        ...destination,
+        accountName,
+      },
+    };
+  }
+
   async getPayoutsForUser(userId, filters = {}) {
     const query = { user: userId };
     if (filters.status) query.status = filters.status;
-    return PayoutRequest.find(query).sort({ createdAt: -1 }).limit(50).lean();
+    const payouts = await PayoutRequest.find(query)
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
+    return payouts.map((p) => this._ensurePayoutAccountName(p));
   }
 
   async getPendingPayoutsForAdmin(filters = {}) {
@@ -1398,10 +1416,12 @@ class PayoutService {
       ? { status: filters.status }
       : { status: { $in: ["pending", "approved", "processing"] } };
 
-    return PayoutRequest.find(statusFilter)
+    const payouts = await PayoutRequest.find(statusFilter)
       .populate("user", "fullName email phone earningsBalance userType")
       .sort({ requestedAt: 1 })
       .lean();
+
+    return payouts.map((p) => this._ensurePayoutAccountName(p));
   }
 
   async getPayoutHistoryForAdmin({
@@ -1442,7 +1462,10 @@ class PayoutService {
       .limit(limit)
       .lean();
 
-    return { payouts, pagination: { total, page: pageNum, limit, pages } };
+    return {
+      payouts: payouts.map((p) => this._ensurePayoutAccountName(p)),
+      pagination: { total, page: pageNum, limit, pages },
+    };
   }
 }
 
