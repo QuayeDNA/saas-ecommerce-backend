@@ -69,6 +69,7 @@ app.use(
         "https://brytelink-chi.vercel.app",
         "https://saas-ecommerce.vercel.app",
         "http://localhost:5173",
+        "http://localhost:5174",
         "http://localhost:3000",
       ].filter(Boolean);
 
