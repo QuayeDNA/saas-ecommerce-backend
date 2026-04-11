@@ -89,7 +89,7 @@ const commissionRecordSchema = new mongoose.Schema(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 // Indexes for efficient queries
@@ -100,8 +100,12 @@ commissionRecordSchema.index({ agentId: 1, status: 1, periodStart: -1 });
 
 // Virtual for formatted period
 commissionRecordSchema.virtual("formattedPeriod").get(function () {
-  const start = this.periodStart.toLocaleDateString();
-  const end = this.periodEnd.toLocaleDateString();
+  if (!this.periodStart || !this.periodEnd) {
+    return "N/A";
+  }
+
+  const start = new Date(this.periodStart).toLocaleDateString();
+  const end = new Date(this.periodEnd).toLocaleDateString();
   return `${start} - ${end}`;
 });
 
@@ -113,7 +117,7 @@ commissionRecordSchema.virtual("formattedRate").get(function () {
 // Method to mark as paid
 commissionRecordSchema.methods.markAsPaid = function (
   paidBy,
-  paymentReference = null
+  paymentReference = null,
 ) {
   this.status = "paid";
   this.paidAt = new Date();
@@ -127,7 +131,7 @@ commissionRecordSchema.methods.markAsPaid = function (
 // Method to mark as rejected
 commissionRecordSchema.methods.markAsRejected = function (
   rejectedBy,
-  rejectionReason = null
+  rejectionReason = null,
 ) {
   this.status = "rejected";
   this.rejectedAt = new Date();
@@ -143,7 +147,7 @@ commissionRecordSchema.statics.calculateCommission = async function (
   agentId,
   tenantId,
   startDate,
-  endDate
+  endDate,
 ) {
   const Order = (await import("./Order.js")).default;
   const Settings = (await import("./Settings.js")).default;
@@ -174,7 +178,7 @@ commissionRecordSchema.statics.calculateCommission = async function (
 
 const CommissionRecord = mongoose.model(
   "CommissionRecord",
-  commissionRecordSchema
+  commissionRecordSchema,
 );
 
 export default CommissionRecord;

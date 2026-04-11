@@ -5,6 +5,8 @@ import WalletTransaction from "../models/WalletTransaction.js";
 import Settings from "../models/Settings.js";
 import CommissionRecord from "../models/CommissionRecord.js";
 import Provider from "../models/Provider.js";
+import PayoutRequest from "../models/PayoutRequest.js";
+import EarningsTransaction from "../models/EarningsTransaction.js";
 import logger from "../utils/logger.js";
 import mongoose from "mongoose";
 import { getBusinessUserTypes } from "../utils/userTypeHelpers.js";
@@ -18,33 +20,76 @@ class AnalyticsService {
   async getSuperAdminAnalytics(timeframe = "30d") {
     try {
       const dateRange = this.getDateRange(timeframe);
+      const previousDateRange = this.getPreviousDateRange(dateRange);
 
-      // Get user statistics
-      const userStats = await this.getUserStatistics(dateRange);
+      const [
+        userStats,
+        orderStats,
+        revenueStats,
+        walletStats,
+        providerStats,
+        commissionStats,
+        recentActivity,
+        rates,
+        chartData,
+        payoutStats,
+        topPerformers,
+        growth,
+        earnings,
+      ] = await Promise.all([
+        this.getUserStatistics(dateRange),
+        this.getOrderStatistics(dateRange),
+        this.getRevenueStatistics(dateRange),
+        this.getWalletStatistics(dateRange),
+        this.getProviderStatistics(),
+        this.getCommissionStatistics(dateRange),
+        this.getRecentActivity(),
+        this.getRates(),
+        this.getChartData(timeframe),
+        this.getPayoutStatistics(dateRange),
+        this.getTopPerformers(dateRange),
+        this.getGrowthStatistics(dateRange, previousDateRange),
+        this.getEarningsStatistics(dateRange),
+      ]);
 
-      // Get order statistics
-      const orderStats = await this.getOrderStatistics(dateRange);
+      const overview = {
+        totalUsers: userStats.total,
+        totalOrders: orderStats.total,
+        totalRevenue: revenueStats.total,
+        totalCommissions: commissionStats.totalEarned,
+        totalWalletBalance: walletStats.totalBalance,
+        activeProviders: providerStats.active,
+        payoutLiability: payoutStats.pendingLiability,
+        pendingPayouts:
+          (payoutStats.byStatus.pending || 0) +
+          (payoutStats.byStatus.approved || 0) +
+          (payoutStats.byStatus.processing || 0),
+      };
 
-      // Get revenue statistics
-      const revenueStats = await this.getRevenueStatistics(dateRange);
+      const breakdowns = {
+        userTypes: userStats.byType,
+        orderStatuses: {
+          completed: orderStats.completed,
+          pending: orderStats.pending,
+          processing: orderStats.processing,
+          confirmed: orderStats.confirmed,
+          failed: orderStats.failed,
+          cancelled: orderStats.cancelled,
+          partiallyCompleted: orderStats.partiallyCompleted,
+        },
+        commissionStatuses: commissionStats.byStatus,
+        payoutStatuses: payoutStats.byStatus,
+      };
 
-      // Get wallet statistics
-      const walletStats = await this.getWalletStatistics(dateRange);
+      const activityFeed = this.buildActivityFeed(recentActivity);
 
-      // Get provider statistics
-      const providerStats = await this.getProviderStatistics();
-
-      // Get commission statistics
-      const commissionStats = await this.getCommissionStatistics(dateRange);
-
-      // Get recent activity
-      const recentActivity = await this.getRecentActivity();
-
-      // Calculate rates
-      const rates = await this.getRates();
-
-      // Get chart data
-      const chartData = await this.getChartData(timeframe);
+      const insights = this.generateSuperAdminInsights({
+        orderStats,
+        payoutStats,
+        walletStats,
+        rates,
+        growth,
+      });
 
       const result = {
         users: userStats,
@@ -53,9 +98,20 @@ class AnalyticsService {
         wallet: walletStats,
         providers: providerStats,
         commissions: commissionStats,
+        payouts: payoutStats,
+        earnings,
         recentActivity,
         rates,
         charts: chartData,
+        growth,
+        overview,
+        breakdowns,
+        topPerformers,
+        activityFeed,
+        insights,
+        centralizedSource: true,
+        scope: "super_admin",
+        source: "analytics-service-v2",
         timeframe,
         generatedAt: new Date(),
       };
@@ -68,6 +124,76 @@ class AnalyticsService {
   }
 
   /**
+   * Centralized analytics source with user-scoped payloads.
+   * This method is intentionally role-aware so future dashboards can consume
+   * one endpoint and request only a section when needed.
+   * @param {{ userId: string, userType: string, tenantId?: string }} userContext
+   * @param {string} timeframe
+   * @param {string} scope
+   * @returns {Promise<Object>}
+   */
+  async getCentralizedAnalytics(userContext, timeframe = "30d", scope = "all") {
+    const { userId, userType, tenantId } = userContext;
+
+    const fullData =
+      userType === "super_admin"
+        ? await this.getSuperAdminAnalytics(timeframe)
+        : await this.getAgentAnalytics(userId, tenantId, timeframe);
+
+    return {
+      actor: {
+        userId,
+        userType,
+        tenantId: tenantId || userId,
+      },
+      timeframe,
+      scope,
+      generatedAt: new Date(),
+      source: "centralized-analytics-v1",
+      data: this.getScopedAnalyticsData(fullData, scope),
+    };
+  }
+
+  /**
+   * Slice analytics payload by requested scope.
+   * @param {Object} payload
+   * @param {string} scope
+   * @returns {Object}
+   */
+  getScopedAnalyticsData(payload, scope = "all") {
+    if (!scope || scope === "all") {
+      return payload;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(payload, scope)) {
+      return { [scope]: payload[scope] };
+    }
+
+    const groupedScopes = {
+      overview: ["overview", "growth", "rates"],
+      trends: ["charts", "growth"],
+      breakdowns: ["breakdowns", "orders", "users", "commissions", "payouts"],
+      activity: ["recentActivity", "activityFeed"],
+      financial: ["revenue", "wallet", "commissions", "payouts", "earnings"],
+      performance: ["topPerformers", "orders", "providers", "rates"],
+      users: ["users"],
+      orders: ["orders"],
+    };
+
+    const keys = groupedScopes[scope];
+    if (!keys) {
+      return payload;
+    }
+
+    return keys.reduce((acc, key) => {
+      if (Object.prototype.hasOwnProperty.call(payload, key)) {
+        acc[key] = payload[key];
+      }
+      return acc;
+    }, {});
+  }
+
+  /**
    * Get analytics for agent dashboard
    * @param {string} agentId - Agent user ID
    * @param {string} tenantId - Tenant ID
@@ -77,7 +203,7 @@ class AnalyticsService {
   async getAgentAnalytics(agentId, tenantId, timeframe = "30d") {
     try {
       logger.debug(
-        `Generating agent analytics for agent ${agentId}, timeframe ${timeframe}`
+        `Generating agent analytics for agent ${agentId}, timeframe ${timeframe}`,
       );
 
       const dateRange = this.getDateRange(timeframe);
@@ -89,20 +215,20 @@ class AnalyticsService {
       const orderStats = await this.getAgentOrderStatistics(
         agentId,
         tenantId,
-        dateRange
+        dateRange,
       );
 
       // Get agent's revenue statistics
       const revenueStats = await this.getAgentRevenueStatistics(
         agentId,
         tenantId,
-        dateRange
+        dateRange,
       );
 
       // Get agent's commission statistics
       const commissionStats = await this.getAgentCommissionStatistics(
         agentId,
-        dateRange
+        dateRange,
       );
 
       // Get agent's wallet statistics
@@ -115,7 +241,7 @@ class AnalyticsService {
       const chartData = await this.getAgentChartData(
         agentId,
         tenantId,
-        timeframe
+        timeframe,
       );
 
       const result = {
@@ -131,7 +257,7 @@ class AnalyticsService {
       };
 
       logger.debug(
-        `Agent analytics generated for agent ${agentId}, timeframe ${timeframe}`
+        `Agent analytics generated for agent ${agentId}, timeframe ${timeframe}`,
       );
 
       return result;
@@ -168,6 +294,42 @@ class AnalyticsService {
     }
 
     return { startDate, endDate };
+  }
+
+  /**
+   * Get previous period date range for growth comparisons
+   * @param {Object} dateRange - Current date range
+   * @returns {Object} Previous period range
+   */
+  getPreviousDateRange(dateRange) {
+    const { startDate, endDate } = dateRange;
+    const durationMs = endDate.getTime() - startDate.getTime();
+    const previousEndDate = new Date(startDate.getTime() - 1);
+    const previousStartDate = new Date(previousEndDate.getTime() - durationMs);
+    return { startDate: previousStartDate, endDate: previousEndDate };
+  }
+
+  /**
+   * Calculate growth percentage between current and previous values
+   * @param {number} currentValue
+   * @param {number} previousValue
+   * @returns {{percent: number, trend: string}}
+   */
+  calculateGrowth(currentValue, previousValue) {
+    if (previousValue === 0) {
+      return {
+        percent: currentValue > 0 ? 100 : 0,
+        trend: currentValue > 0 ? "up" : "flat",
+      };
+    }
+
+    const percent =
+      Math.round(((currentValue - previousValue) / previousValue) * 100 * 100) /
+      100;
+
+    if (percent > 0) return { percent, trend: "up" };
+    if (percent < 0) return { percent, trend: "down" };
+    return { percent: 0, trend: "flat" };
   }
 
   /**
@@ -257,7 +419,7 @@ class AnalyticsService {
     const todayStart = new Date(
       now.getFullYear(),
       now.getMonth(),
-      now.getDate()
+      now.getDate(),
     );
     const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
 
@@ -290,7 +452,9 @@ class AnalyticsService {
               $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] },
             },
             partiallyCompleted: {
-              $sum: { $cond: [{ $eq: ["$status", "partially_completed"] }, 1, 0] },
+              $sum: {
+                $cond: [{ $eq: ["$status", "partially_completed"] }, 1, 0],
+              },
             },
             bulk: { $sum: { $cond: [{ $eq: ["$orderType", "bulk"] }, 1, 0] } },
             single: {
@@ -307,7 +471,12 @@ class AnalyticsService {
       ]),
       // Today's stats
       Order.aggregate([
-        { $match: { createdAt: { $gte: todayStart, $lte: todayEnd }, status: { $nin: ["draft", "pending_payment"] } } },
+        {
+          $match: {
+            createdAt: { $gte: todayStart, $lte: todayEnd },
+            status: { $nin: ["draft", "pending_payment"] },
+          },
+        },
         {
           $group: {
             _id: null,
@@ -329,14 +498,21 @@ class AnalyticsService {
               $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] },
             },
             partiallyCompleted: {
-              $sum: { $cond: [{ $eq: ["$status", "partially_completed"] }, 1, 0] },
+              $sum: {
+                $cond: [{ $eq: ["$status", "partially_completed"] }, 1, 0],
+              },
             },
           },
         },
       ]),
       // This month's stats
       Order.aggregate([
-        { $match: { createdAt: { $gte: thisMonthStart, $lte: thisMonthEnd }, status: { $nin: ["draft", "pending_payment"] } } },
+        {
+          $match: {
+            createdAt: { $gte: thisMonthStart, $lte: thisMonthEnd },
+            status: { $nin: ["draft", "pending_payment"] },
+          },
+        },
         {
           $group: {
             _id: null,
@@ -358,7 +534,9 @@ class AnalyticsService {
               $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] },
             },
             partiallyCompleted: {
-              $sum: { $cond: [{ $eq: ["$status", "partially_completed"] }, 1, 0] },
+              $sum: {
+                $cond: [{ $eq: ["$status", "partially_completed"] }, 1, 0],
+              },
             },
           },
         },
@@ -463,7 +641,7 @@ class AnalyticsService {
     const todayStart = new Date(
       now.getFullYear(),
       now.getMonth(),
-      now.getDate()
+      now.getDate(),
     );
     const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
 
@@ -579,7 +757,7 @@ class AnalyticsService {
       const thisMonth = new Date(
         currentDate.getFullYear(),
         currentDate.getMonth(),
-        1
+        1,
       );
 
       const [totalProviders, activeProviders, newProvidersThisMonth] =
@@ -613,29 +791,46 @@ class AnalyticsService {
    */
   async getRecentActivity() {
     try {
-      const [recentUsers, recentOrders, recentTransactions] = await Promise.all(
-        [
-          User.find({ isDeleted: { $ne: true } })
-            .select(
-              "fullName email userType createdAt status subscriptionStatus"
-            )
-            .sort({ createdAt: -1 })
-            .limit(5),
-          Order.find()
-            .select("orderNumber total status createdAt orderType")
-            .sort({ createdAt: -1 })
-            .limit(5),
-          WalletTransaction.find()
-            .select("amount type description createdAt")
-            .sort({ createdAt: -1 })
-            .limit(5),
-        ]
-      );
+      const [
+        recentUsers,
+        recentOrders,
+        recentTransactions,
+        recentPayouts,
+        recentCommissions,
+      ] = await Promise.all([
+        User.find({ isDeleted: { $ne: true } })
+          .select("fullName email userType createdAt status subscriptionStatus")
+          .sort({ createdAt: -1 })
+          .limit(5)
+          .lean(),
+        Order.find()
+          .select("orderNumber total status createdAt orderType")
+          .sort({ createdAt: -1 })
+          .limit(5)
+          .lean(),
+        WalletTransaction.find()
+          .select("amount type description createdAt")
+          .sort({ createdAt: -1 })
+          .limit(5)
+          .lean(),
+        PayoutRequest.find()
+          .select("amount status createdAt destination.type")
+          .sort({ createdAt: -1 })
+          .limit(5)
+          .lean(),
+        CommissionRecord.find()
+          .select("amount status createdAt")
+          .sort({ createdAt: -1 })
+          .limit(5)
+          .lean(),
+      ]);
 
       return {
         users: recentUsers,
         orders: recentOrders,
         transactions: recentTransactions,
+        payouts: recentPayouts,
+        commissions: recentCommissions,
       };
     } catch (error) {
       logger.error(`Recent activity error: ${error.message}`);
@@ -643,6 +838,8 @@ class AnalyticsService {
         users: [],
         orders: [],
         transactions: [],
+        payouts: [],
+        commissions: [],
       };
     }
   }
@@ -707,40 +904,74 @@ class AnalyticsService {
     try {
       const { startDate, endDate } = dateRange;
 
-      // Get commission records
-      const commissionRecords = await CommissionRecord.find({
-        createdAt: { $gte: startDate, $lte: endDate },
-      });
+      const aggregation = await CommissionRecord.aggregate([
+        {
+          $match: {
+            createdAt: { $gte: startDate, $lte: endDate },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalEarned: { $sum: "$amount" },
+            totalPaid: {
+              $sum: {
+                $cond: [{ $eq: ["$status", "paid"] }, "$amount", 0],
+              },
+            },
+            totalRecords: { $sum: 1 },
+            pendingCount: {
+              $sum: {
+                $cond: [{ $eq: ["$status", "pending"] }, 1, 0],
+              },
+            },
+            pendingAmount: {
+              $sum: {
+                $cond: [{ $eq: ["$status", "pending"] }, "$amount", 0],
+              },
+            },
+            paidCount: {
+              $sum: {
+                $cond: [{ $eq: ["$status", "paid"] }, 1, 0],
+              },
+            },
+            rejectedCount: {
+              $sum: {
+                $cond: [{ $eq: ["$status", "rejected"] }, 1, 0],
+              },
+            },
+            cancelledCount: {
+              $sum: {
+                $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0],
+              },
+            },
+          },
+        },
+      ]);
 
-      const totalRecords = commissionRecords.length;
-
-      // Separate by status
-      const paidCommissions = commissionRecords.filter(
-        (record) => record.status === "paid"
-      );
-      const pendingCommissions = commissionRecords.filter(
-        (record) => record.status === "pending"
-      );
-
-      const totalEarned = commissionRecords.reduce(
-        (sum, record) => sum + (record.amount || 0),
-        0
-      );
-      const totalPaid = paidCommissions.reduce(
-        (sum, record) => sum + (record.amount || 0),
-        0
-      );
-      const pendingAmount = pendingCommissions.reduce(
-        (sum, record) => sum + (record.amount || 0),
-        0
-      );
+      const data = aggregation[0] || {
+        totalEarned: 0,
+        totalPaid: 0,
+        totalRecords: 0,
+        pendingCount: 0,
+        pendingAmount: 0,
+        paidCount: 0,
+        rejectedCount: 0,
+        cancelledCount: 0,
+      };
 
       return {
-        totalEarned,
-        totalPaid,
-        totalRecords,
-        pendingCount: pendingCommissions.length,
-        pendingAmount,
+        totalEarned: data.totalEarned,
+        totalPaid: data.totalPaid,
+        totalRecords: data.totalRecords,
+        pendingCount: data.pendingCount,
+        pendingAmount: data.pendingAmount,
+        byStatus: {
+          pending: data.pendingCount,
+          paid: data.paidCount,
+          rejected: data.rejectedCount,
+          cancelled: data.cancelledCount,
+        },
       };
     } catch (error) {
       logger.error(`Commission statistics error: ${error.message}`);
@@ -750,8 +981,819 @@ class AnalyticsService {
         totalRecords: 0,
         pendingCount: 0,
         pendingAmount: 0,
+        byStatus: {
+          pending: 0,
+          paid: 0,
+          rejected: 0,
+          cancelled: 0,
+        },
       };
     }
+  }
+
+  /**
+   * Get payout statistics for strategy and risk visibility
+   * @param {Object} dateRange - Date range
+   * @returns {Promise<Object>} Payout statistics
+   */
+  async getPayoutStatistics(dateRange) {
+    try {
+      const { startDate, endDate } = dateRange;
+
+      const [
+        periodAggregation,
+        allTimeCount,
+        allTimeAmountAggregation,
+        pendingLiabilityAggregation,
+        destinationAggregation,
+      ] = await Promise.all([
+        PayoutRequest.aggregate([
+          {
+            $match: {
+              createdAt: { $gte: startDate, $lte: endDate },
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              count: { $sum: 1 },
+              totalAmount: { $sum: "$amount" },
+              pendingCount: {
+                $sum: {
+                  $cond: [{ $eq: ["$status", "pending"] }, 1, 0],
+                },
+              },
+              approvedCount: {
+                $sum: {
+                  $cond: [{ $eq: ["$status", "approved"] }, 1, 0],
+                },
+              },
+              processingCount: {
+                $sum: {
+                  $cond: [{ $eq: ["$status", "processing"] }, 1, 0],
+                },
+              },
+              completedCount: {
+                $sum: {
+                  $cond: [{ $eq: ["$status", "completed"] }, 1, 0],
+                },
+              },
+              rejectedCount: {
+                $sum: {
+                  $cond: [{ $eq: ["$status", "rejected"] }, 1, 0],
+                },
+              },
+              failedCount: {
+                $sum: {
+                  $cond: [{ $eq: ["$status", "failed"] }, 1, 0],
+                },
+              },
+            },
+          },
+        ]),
+        PayoutRequest.countDocuments(),
+        PayoutRequest.aggregate([
+          {
+            $group: {
+              _id: null,
+              totalAmount: { $sum: "$amount" },
+            },
+          },
+        ]),
+        PayoutRequest.aggregate([
+          {
+            $match: {
+              status: { $in: ["pending", "approved", "processing"] },
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              pendingLiability: { $sum: "$amount" },
+              queuedCount: { $sum: 1 },
+            },
+          },
+        ]),
+        PayoutRequest.aggregate([
+          {
+            $match: {
+              createdAt: { $gte: startDate, $lte: endDate },
+            },
+          },
+          {
+            $group: {
+              _id: "$destination.type",
+              count: { $sum: 1 },
+              amount: { $sum: "$amount" },
+            },
+          },
+        ]),
+      ]);
+
+      const period = periodAggregation[0] || {
+        count: 0,
+        totalAmount: 0,
+        pendingCount: 0,
+        approvedCount: 0,
+        processingCount: 0,
+        completedCount: 0,
+        rejectedCount: 0,
+        failedCount: 0,
+      };
+
+      const completionRate =
+        period.count > 0
+          ? Math.round((period.completedCount / period.count) * 10000) / 100
+          : 0;
+
+      const byDestination = {
+        mobile_money: { count: 0, amount: 0 },
+        bank_account: { count: 0, amount: 0 },
+      };
+
+      destinationAggregation.forEach((row) => {
+        if (row._id && byDestination[row._id]) {
+          byDestination[row._id] = { count: row.count, amount: row.amount };
+        }
+      });
+
+      return {
+        totalRequests: allTimeCount,
+        totalAmountAllTime: allTimeAmountAggregation[0]?.totalAmount || 0,
+        thisPeriod: {
+          count: period.count,
+          amount: period.totalAmount,
+        },
+        byStatus: {
+          pending: period.pendingCount,
+          approved: period.approvedCount,
+          processing: period.processingCount,
+          completed: period.completedCount,
+          failed: period.failedCount,
+          rejected: period.rejectedCount,
+        },
+        completionRate,
+        pendingLiability: pendingLiabilityAggregation[0]?.pendingLiability || 0,
+        queuedCount: pendingLiabilityAggregation[0]?.queuedCount || 0,
+        byDestination,
+      };
+    } catch (error) {
+      logger.error(`Payout statistics error: ${error.message}`);
+      return {
+        totalRequests: 0,
+        totalAmountAllTime: 0,
+        thisPeriod: {
+          count: 0,
+          amount: 0,
+        },
+        byStatus: {
+          pending: 0,
+          approved: 0,
+          processing: 0,
+          completed: 0,
+          failed: 0,
+          rejected: 0,
+        },
+        completionRate: 0,
+        pendingLiability: 0,
+        queuedCount: 0,
+        byDestination: {
+          mobile_money: { count: 0, amount: 0 },
+          bank_account: { count: 0, amount: 0 },
+        },
+      };
+    }
+  }
+
+  /**
+   * Get earnings ledger statistics
+   * @param {Object} dateRange - Date range
+   * @returns {Promise<Object>} Earnings statistics
+   */
+  async getEarningsStatistics(dateRange) {
+    try {
+      const { startDate, endDate } = dateRange;
+
+      const [periodRows, allTimeRows] = await Promise.all([
+        EarningsTransaction.aggregate([
+          {
+            $match: {
+              createdAt: { $gte: startDate, $lte: endDate },
+            },
+          },
+          {
+            $group: {
+              _id: "$type",
+              amount: { $sum: "$amount" },
+              count: { $sum: 1 },
+            },
+          },
+        ]),
+        EarningsTransaction.aggregate([
+          {
+            $group: {
+              _id: "$type",
+              amount: { $sum: "$amount" },
+              count: { $sum: 1 },
+            },
+          },
+        ]),
+      ]);
+
+      const toMap = (rows) => {
+        const map = {
+          credit: { amount: 0, count: 0 },
+          debit: { amount: 0, count: 0 },
+          payout: { amount: 0, count: 0 },
+        };
+        rows.forEach((row) => {
+          if (row._id && map[row._id]) {
+            map[row._id] = { amount: row.amount, count: row.count };
+          }
+        });
+        return map;
+      };
+
+      const period = toMap(periodRows);
+      const allTime = toMap(allTimeRows);
+
+      const normalizeOutflow = (value) => Math.abs(value || 0);
+
+      return {
+        period: {
+          credits: period.credit,
+          debits: {
+            amount: normalizeOutflow(period.debit.amount),
+            count: period.debit.count,
+          },
+          payouts: {
+            amount: normalizeOutflow(period.payout.amount),
+            count: period.payout.count,
+          },
+          netFlow:
+            (period.credit.amount || 0) -
+            normalizeOutflow(period.debit.amount) -
+            normalizeOutflow(period.payout.amount),
+        },
+        allTime: {
+          credits: allTime.credit,
+          debits: {
+            amount: normalizeOutflow(allTime.debit.amount),
+            count: allTime.debit.count,
+          },
+          payouts: {
+            amount: normalizeOutflow(allTime.payout.amount),
+            count: allTime.payout.count,
+          },
+          netFlow:
+            (allTime.credit.amount || 0) -
+            normalizeOutflow(allTime.debit.amount) -
+            normalizeOutflow(allTime.payout.amount),
+        },
+      };
+    } catch (error) {
+      logger.error(`Earnings statistics error: ${error.message}`);
+      return {
+        period: {
+          credits: { amount: 0, count: 0 },
+          debits: { amount: 0, count: 0 },
+          payouts: { amount: 0, count: 0 },
+          netFlow: 0,
+        },
+        allTime: {
+          credits: { amount: 0, count: 0 },
+          debits: { amount: 0, count: 0 },
+          payouts: { amount: 0, count: 0 },
+          netFlow: 0,
+        },
+      };
+    }
+  }
+
+  /**
+   * Get growth statistics against previous period
+   * @param {Object} dateRange - Current range
+   * @param {Object} previousDateRange - Previous range
+   * @returns {Promise<Object>} Growth metrics
+   */
+  async getGrowthStatistics(dateRange, previousDateRange) {
+    const currentOrderMatch = {
+      createdAt: { $gte: dateRange.startDate, $lte: dateRange.endDate },
+      status: { $nin: ["draft", "pending_payment"] },
+    };
+
+    const previousOrderMatch = {
+      createdAt: {
+        $gte: previousDateRange.startDate,
+        $lte: previousDateRange.endDate,
+      },
+      status: { $nin: ["draft", "pending_payment"] },
+    };
+
+    const [
+      currentUsers,
+      previousUsers,
+      currentOrders,
+      previousOrders,
+      currentRevenueRows,
+      previousRevenueRows,
+      currentPayoutRows,
+      previousPayoutRows,
+      currentCommissionRows,
+      previousCommissionRows,
+    ] = await Promise.all([
+      User.countDocuments({
+        createdAt: { $gte: dateRange.startDate, $lte: dateRange.endDate },
+      }),
+      User.countDocuments({
+        createdAt: {
+          $gte: previousDateRange.startDate,
+          $lte: previousDateRange.endDate,
+        },
+      }),
+      Order.countDocuments(currentOrderMatch),
+      Order.countDocuments(previousOrderMatch),
+      Order.aggregate([
+        { $match: { ...currentOrderMatch, status: "completed" } },
+        { $group: { _id: null, total: { $sum: "$total" } } },
+      ]),
+      Order.aggregate([
+        { $match: { ...previousOrderMatch, status: "completed" } },
+        { $group: { _id: null, total: { $sum: "$total" } } },
+      ]),
+      PayoutRequest.aggregate([
+        {
+          $match: {
+            createdAt: { $gte: dateRange.startDate, $lte: dateRange.endDate },
+          },
+        },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]),
+      PayoutRequest.aggregate([
+        {
+          $match: {
+            createdAt: {
+              $gte: previousDateRange.startDate,
+              $lte: previousDateRange.endDate,
+            },
+          },
+        },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]),
+      CommissionRecord.aggregate([
+        {
+          $match: {
+            createdAt: { $gte: dateRange.startDate, $lte: dateRange.endDate },
+          },
+        },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]),
+      CommissionRecord.aggregate([
+        {
+          $match: {
+            createdAt: {
+              $gte: previousDateRange.startDate,
+              $lte: previousDateRange.endDate,
+            },
+          },
+        },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]),
+    ]);
+
+    const currentRevenue = currentRevenueRows[0]?.total || 0;
+    const previousRevenue = previousRevenueRows[0]?.total || 0;
+    const currentPayoutAmount = currentPayoutRows[0]?.total || 0;
+    const previousPayoutAmount = previousPayoutRows[0]?.total || 0;
+    const currentCommission = currentCommissionRows[0]?.total || 0;
+    const previousCommission = previousCommissionRows[0]?.total || 0;
+
+    return {
+      users: {
+        current: currentUsers,
+        previous: previousUsers,
+        ...this.calculateGrowth(currentUsers, previousUsers),
+      },
+      orders: {
+        current: currentOrders,
+        previous: previousOrders,
+        ...this.calculateGrowth(currentOrders, previousOrders),
+      },
+      revenue: {
+        current: currentRevenue,
+        previous: previousRevenue,
+        ...this.calculateGrowth(currentRevenue, previousRevenue),
+      },
+      payouts: {
+        current: currentPayoutAmount,
+        previous: previousPayoutAmount,
+        ...this.calculateGrowth(currentPayoutAmount, previousPayoutAmount),
+      },
+      commissions: {
+        current: currentCommission,
+        previous: previousCommission,
+        ...this.calculateGrowth(currentCommission, previousCommission),
+      },
+    };
+  }
+
+  /**
+   * Get top performers for strategic dashboards
+   * @param {Object} dateRange - Date range
+   * @returns {Promise<Object>} Top performer data
+   */
+  async getTopPerformers(dateRange) {
+    try {
+      const { startDate, endDate } = dateRange;
+
+      const [topAgentsByRevenue, topAgentsByCommission, topOrderTypes] =
+        await Promise.all([
+          Order.aggregate([
+            {
+              $match: {
+                status: "completed",
+                createdAt: { $gte: startDate, $lte: endDate },
+                createdBy: { $exists: true, $ne: null },
+              },
+            },
+            {
+              $group: {
+                _id: "$createdBy",
+                orders: { $sum: 1 },
+                revenue: { $sum: "$total" },
+                averageOrderValue: { $avg: "$total" },
+              },
+            },
+            {
+              $lookup: {
+                from: "users",
+                localField: "_id",
+                foreignField: "_id",
+                as: "user",
+              },
+            },
+            { $unwind: "$user" },
+            {
+              $match: {
+                "user.userType": { $in: getBusinessUserTypes() },
+              },
+            },
+            { $sort: { orders: -1, revenue: -1 } },
+            { $limit: 10 },
+            {
+              $project: {
+                _id: 0,
+                userId: "$user._id",
+                fullName: "$user.fullName",
+                agentCode: "$user.agentCode",
+                userType: "$user.userType",
+                orders: 1,
+                revenue: 1,
+                averageOrderValue: { $round: ["$averageOrderValue", 2] },
+              },
+            },
+          ]),
+          CommissionRecord.aggregate([
+            {
+              $match: {
+                createdAt: { $gte: startDate, $lte: endDate },
+              },
+            },
+            {
+              $group: {
+                _id: "$agentId",
+                records: { $sum: 1 },
+                totalCommission: { $sum: "$amount" },
+              },
+            },
+            {
+              $lookup: {
+                from: "users",
+                localField: "_id",
+                foreignField: "_id",
+                as: "user",
+              },
+            },
+            { $unwind: "$user" },
+            {
+              $match: {
+                "user.userType": { $in: getBusinessUserTypes() },
+              },
+            },
+            { $sort: { totalCommission: -1 } },
+            { $limit: 5 },
+            {
+              $project: {
+                _id: 0,
+                userId: "$user._id",
+                fullName: "$user.fullName",
+                agentCode: "$user.agentCode",
+                userType: "$user.userType",
+                records: 1,
+                totalCommission: 1,
+              },
+            },
+          ]),
+          Order.aggregate([
+            {
+              $match: {
+                status: "completed",
+                createdAt: { $gte: startDate, $lte: endDate },
+              },
+            },
+            {
+              $group: {
+                _id: "$orderType",
+                count: { $sum: 1 },
+                revenue: { $sum: "$total" },
+              },
+            },
+            { $sort: { revenue: -1 } },
+          ]),
+        ]);
+
+      const allTimeTopAgents =
+        topAgentsByRevenue.length < 10
+          ? await Order.aggregate([
+              {
+                $match: {
+                  status: "completed",
+                  createdBy: { $exists: true, $ne: null },
+                },
+              },
+              {
+                $group: {
+                  _id: "$createdBy",
+                  orders: { $sum: 1 },
+                  revenue: { $sum: "$total" },
+                  averageOrderValue: { $avg: "$total" },
+                },
+              },
+              {
+                $lookup: {
+                  from: "users",
+                  localField: "_id",
+                  foreignField: "_id",
+                  as: "user",
+                },
+              },
+              { $unwind: "$user" },
+              {
+                $match: {
+                  "user.userType": { $in: getBusinessUserTypes() },
+                },
+              },
+              { $sort: { orders: -1, revenue: -1 } },
+              { $limit: 10 },
+              {
+                $project: {
+                  _id: 0,
+                  userId: "$user._id",
+                  fullName: "$user.fullName",
+                  agentCode: "$user.agentCode",
+                  userType: "$user.userType",
+                  orders: 1,
+                  revenue: 1,
+                  averageOrderValue: { $round: ["$averageOrderValue", 2] },
+                },
+              },
+            ])
+          : [];
+
+      const mergedAgents = [];
+      const seenAgents = new Set();
+
+      [...topAgentsByRevenue, ...allTimeTopAgents].forEach((agent) => {
+        const key = String(agent.userId);
+        if (seenAgents.has(key) || mergedAgents.length >= 10) {
+          return;
+        }
+
+        seenAgents.add(key);
+        mergedAgents.push(agent);
+      });
+
+      if (mergedAgents.length < 10) {
+        const extraUsers = await User.find({
+          userType: { $in: getBusinessUserTypes() },
+          isDeleted: { $ne: true },
+        })
+          .select("_id fullName agentCode userType")
+          .sort({ createdAt: -1 })
+          .limit(50)
+          .lean();
+
+        extraUsers.forEach((user) => {
+          const key = String(user._id);
+          if (seenAgents.has(key) || mergedAgents.length >= 10) {
+            return;
+          }
+
+          seenAgents.add(key);
+          mergedAgents.push({
+            userId: user._id,
+            fullName: user.fullName,
+            agentCode: user.agentCode,
+            userType: user.userType,
+            orders: 0,
+            revenue: 0,
+            averageOrderValue: 0,
+          });
+        });
+      }
+
+      const rankedAgents = [...mergedAgents]
+        .sort((a, b) => {
+          const orderDiff = (b.orders || 0) - (a.orders || 0);
+          if (orderDiff !== 0) {
+            return orderDiff;
+          }
+
+          return (b.revenue || 0) - (a.revenue || 0);
+        })
+        .slice(0, 10);
+
+      return {
+        agents: rankedAgents,
+        commissionLeaders: topAgentsByCommission,
+        orderTypes: topOrderTypes.map((row) => ({
+          orderType: row._id || "unknown",
+          count: row.count,
+          revenue: row.revenue,
+        })),
+      };
+    } catch (error) {
+      logger.error(`Top performers error: ${error.message}`);
+      return {
+        agents: [],
+        commissionLeaders: [],
+        orderTypes: [],
+      };
+    }
+  }
+
+  /**
+   * Build a normalized feed from recent activity datasets
+   * @param {Object} recentActivity - Activity object from queries
+   * @returns {Array<Object>} Unified activity feed
+   */
+  buildActivityFeed(recentActivity) {
+    const feed = [];
+
+    (recentActivity.users || []).forEach((user) => {
+      feed.push({
+        id: `user-${user._id}`,
+        type: "user_registered",
+        message: `${user.fullName} joined as ${String(user.userType || "user").replace(/_/g, " ")}`,
+        createdAt: user.createdAt,
+        meta: {
+          status: user.status,
+          subscriptionStatus: user.subscriptionStatus,
+        },
+      });
+    });
+
+    (recentActivity.orders || []).forEach((order) => {
+      feed.push({
+        id: `order-${order._id}`,
+        type: "order_update",
+        message: `Order ${order.orderNumber || "N/A"} is ${order.status}`,
+        createdAt: order.createdAt,
+        value: order.total || 0,
+        meta: {
+          status: order.status,
+          orderType: order.orderType,
+        },
+      });
+    });
+
+    (recentActivity.transactions || []).forEach((transaction) => {
+      feed.push({
+        id: `txn-${transaction._id}`,
+        type: transaction.type === "credit" ? "wallet_credit" : "wallet_debit",
+        message:
+          transaction.description ||
+          `${transaction.type === "credit" ? "Wallet credit" : "Wallet debit"} recorded`,
+        createdAt: transaction.createdAt,
+        value: transaction.amount || 0,
+        meta: {
+          type: transaction.type,
+        },
+      });
+    });
+
+    (recentActivity.payouts || []).forEach((payout) => {
+      feed.push({
+        id: `payout-${payout._id}`,
+        type: "payout_update",
+        message: `Payout ${payout.status} (${payout.destination?.type || "unknown"})`,
+        createdAt: payout.createdAt,
+        value: payout.amount || 0,
+        meta: {
+          status: payout.status,
+          destinationType: payout.destination?.type,
+        },
+      });
+    });
+
+    (recentActivity.commissions || []).forEach((commission) => {
+      feed.push({
+        id: `commission-${commission._id}`,
+        type: "commission_update",
+        message: `Commission ${commission.status}`,
+        createdAt: commission.createdAt,
+        value: commission.amount || 0,
+        meta: {
+          status: commission.status,
+        },
+      });
+    });
+
+    return feed
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .slice(0, 20);
+  }
+
+  /**
+   * Generate short strategic insights from calculated metrics
+   * @param {Object} params - Analytics slices
+   * @returns {Array<Object>} Insights list
+   */
+  generateSuperAdminInsights({
+    orderStats,
+    payoutStats,
+    walletStats,
+    rates,
+    growth,
+  }) {
+    const insights = [];
+
+    if (growth.revenue.percent >= 0) {
+      insights.push({
+        title: "Revenue Trend",
+        type: "positive",
+        description: `Revenue moved ${growth.revenue.percent}% versus the previous period.`,
+      });
+    } else {
+      insights.push({
+        title: "Revenue Decline",
+        type: "warning",
+        description: `Revenue is down ${Math.abs(growth.revenue.percent)}% versus the previous period.`,
+      });
+    }
+
+    if (orderStats.successRate < 85) {
+      insights.push({
+        title: "Order Success Risk",
+        type: "warning",
+        description: `Order success rate is ${orderStats.successRate}%. Investigate failed/cancelled volumes.`,
+      });
+    } else {
+      insights.push({
+        title: "Healthy Fulfillment",
+        type: "positive",
+        description: `Order success rate is ${orderStats.successRate}%, indicating stable fulfillment.`,
+      });
+    }
+
+    if (payoutStats.pendingLiability > 0) {
+      insights.push({
+        title: "Outstanding Payout Liability",
+        type: "warning",
+        description: `Pending payout liability is GHS ${payoutStats.pendingLiability.toLocaleString()} across ${payoutStats.queuedCount} queued requests.`,
+      });
+    }
+
+    if (rates.userVerification < 70) {
+      insights.push({
+        title: "Verification Opportunity",
+        type: "info",
+        description: `User verification rate is ${rates.userVerification}%. Improving verification can reduce fraud risk.`,
+      });
+    }
+
+    if (
+      (walletStats.transactions.debits.amount || 0) >
+      (walletStats.transactions.credits.amount || 0)
+    ) {
+      insights.push({
+        title: "Wallet Outflow Pressure",
+        type: "info",
+        description:
+          "Wallet debits exceed credits in the selected period. Monitor float coverage and top-up behavior.",
+      });
+    }
+
+    if (insights.length === 0) {
+      insights.push({
+        title: "System Stable",
+        type: "positive",
+        description:
+          "Core operating metrics are stable for the selected period.",
+      });
+    }
+
+    return insights;
   }
 
   /**
@@ -763,66 +1805,105 @@ class AnalyticsService {
     const dateRange = this.getDateRange(timeframe);
     const { startDate, endDate } = dateRange;
 
-    // Get daily order and revenue data
-    const dailyData = await Order.aggregate([
-      {
-        $match: {
-          createdAt: { $gte: startDate, $lte: endDate },
-          status: { $nin: ["draft", "pending_payment"] },
-        },
-      },
-      {
-        $group: {
-          _id: {
-            $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
-          },
-          orders: { $sum: 1 },
-          revenue: {
-            $sum: {
-              $cond: [{ $eq: ["$status", "completed"] }, "$total", 0],
+    const [dailyData, userData, statusData, commissionData] = await Promise.all(
+      [
+        Order.aggregate([
+          {
+            $match: {
+              createdAt: { $gte: startDate, $lte: endDate },
+              status: { $nin: ["draft", "pending_payment"] },
             },
           },
-          completedOrders: {
-            $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] },
+          {
+            $group: {
+              _id: {
+                $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+              },
+              orders: { $sum: 1 },
+              revenue: {
+                $sum: {
+                  $cond: [{ $eq: ["$status", "completed"] }, "$total", 0],
+                },
+              },
+              completedOrders: {
+                $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] },
+              },
+            },
           },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ]);
-
-    // Get user registration data
-    const userData = await User.aggregate([
-      {
-        $match: {
-          createdAt: { $gte: startDate, $lte: endDate },
-        },
-      },
-      {
-        $group: {
-          _id: {
-            $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+          { $sort: { _id: 1 } },
+        ]),
+        User.aggregate([
+          {
+            $match: {
+              createdAt: { $gte: startDate, $lte: endDate },
+              isDeleted: { $ne: true },
+            },
           },
-          registrations: { $sum: 1 },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ]);
+          {
+            $group: {
+              _id: {
+                $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+              },
+              registrations: { $sum: 1 },
+            },
+          },
+          { $sort: { _id: 1 } },
+        ]),
+        Order.aggregate([
+          {
+            $match: {
+              createdAt: { $gte: startDate, $lte: endDate },
+              status: { $nin: ["draft", "pending_payment"] },
+            },
+          },
+          {
+            $group: {
+              _id: "$status",
+              count: { $sum: 1 },
+            },
+          },
+        ]),
+        CommissionRecord.aggregate([
+          {
+            $match: {
+              createdAt: { $gte: startDate, $lte: endDate },
+              status: { $in: ["pending", "paid"] },
+            },
+          },
+          {
+            $group: {
+              _id: {
+                $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+              },
+              amount: { $sum: "$amount" },
+            },
+          },
+          { $sort: { _id: 1 } },
+        ]),
+      ],
+    );
 
-    // Get order status distribution
-    const statusData = await Order.aggregate([
-      {
-        $match: {
-          createdAt: { $gte: startDate, $lte: endDate },
-          status: { $nin: ["draft", "pending_payment"] },
-        },
-      },
-      {
-        $group: {
-          _id: "$status",
-          count: { $sum: 1 },
-        },
-      },
-    ]);
+    const labels = [
+      ...new Set([
+        ...dailyData.map((row) => row._id),
+        ...userData.map((row) => row._id),
+        ...commissionData.map((row) => row._id),
+      ]),
+    ].sort();
+
+    const byDateOrder = {};
+    const byDateUsers = {};
+    const byDateCommissions = {};
+
+    dailyData.forEach((row) => {
+      byDateOrder[row._id] = row;
+    });
+    userData.forEach((row) => {
+      byDateUsers[row._id] = row;
+    });
+    commissionData.forEach((row) => {
+      byDateCommissions[row._id] = row;
+    });
 
     const statusMap = {};
     statusData.forEach((stat) => {
@@ -830,17 +1911,24 @@ class AnalyticsService {
     });
 
     return {
-      labels: dailyData.map((d) => d._id),
-      orders: dailyData.map((d) => d.orders),
-      revenue: dailyData.map((d) => d.revenue),
-      completedOrders: dailyData.map((d) => d.completedOrders),
-      userRegistrations: userData.map((d) => d.registrations),
+      labels,
+      orders: labels.map((label) => byDateOrder[label]?.orders || 0),
+      revenue: labels.map((label) => byDateOrder[label]?.revenue || 0),
+      completedOrders: labels.map(
+        (label) => byDateOrder[label]?.completedOrders || 0,
+      ),
+      userRegistrations: labels.map(
+        (label) => byDateUsers[label]?.registrations || 0,
+      ),
+      commissions: labels.map((label) => byDateCommissions[label]?.amount || 0),
       orderStatus: {
         completed: statusMap.completed || 0,
         pending: statusMap.pending || 0,
         processing: statusMap.processing || 0,
         failed: statusMap.failed || 0,
         cancelled: statusMap.cancelled || 0,
+        confirmed: statusMap.confirmed || 0,
+        partiallyCompleted: statusMap.partially_completed || 0,
       },
     };
   }
@@ -859,12 +1947,12 @@ class AnalyticsService {
     const todayStart = new Date(
       today.getFullYear(),
       today.getMonth(),
-      today.getDate()
+      today.getDate(),
     );
     const todayEnd = new Date(
       today.getFullYear(),
       today.getMonth(),
-      today.getDate() + 1
+      today.getDate() + 1,
     );
 
     const [periodStats, todayStats] = await Promise.all([
@@ -901,7 +1989,9 @@ class AnalyticsService {
               $sum: { $cond: [{ $eq: ["$status", "confirmed"] }, 1, 0] },
             },
             partiallyCompleted: {
-              $sum: { $cond: [{ $eq: ["$status", "partially_completed"] }, 1, 0] },
+              $sum: {
+                $cond: [{ $eq: ["$status", "partially_completed"] }, 1, 0],
+              },
             },
           },
         },
@@ -939,7 +2029,9 @@ class AnalyticsService {
               $sum: { $cond: [{ $eq: ["$status", "confirmed"] }, 1, 0] },
             },
             partiallyCompleted: {
-              $sum: { $cond: [{ $eq: ["$status", "partially_completed"] }, 1, 0] },
+              $sum: {
+                $cond: [{ $eq: ["$status", "partially_completed"] }, 1, 0],
+              },
             },
           },
         },
@@ -1010,12 +2102,12 @@ class AnalyticsService {
     const todayStart = new Date(
       today.getFullYear(),
       today.getMonth(),
-      today.getDate()
+      today.getDate(),
     );
     const todayEnd = new Date(
       today.getFullYear(),
       today.getMonth(),
-      today.getDate() + 1
+      today.getDate() + 1,
     );
 
     // Calculate this month's range
@@ -1122,7 +2214,7 @@ class AnalyticsService {
 
       const totalRevenue = completedOrders.reduce(
         (sum, order) => sum + order.total,
-        0
+        0,
       );
       const commissionAmount = (totalRevenue * commissionRate) / 100;
 
@@ -1297,7 +2389,7 @@ class AnalyticsService {
 
       const totalCommission = commissionRecords.reduce(
         (sum, record) => sum + (record.amount || 0),
-        0
+        0,
       );
 
       const paidCommission = commissionRecords
@@ -1334,7 +2426,7 @@ class AnalyticsService {
     try {
       const agentObjectId = new mongoose.Types.ObjectId(agentId);
       const user = await User.findById(agentObjectId).select(
-        "walletBalance subscriptionStatus"
+        "walletBalance subscriptionStatus",
       );
 
       // Get wallet transactions for this agent

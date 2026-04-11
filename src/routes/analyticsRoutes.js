@@ -19,9 +19,8 @@ router.get(
     try {
       const { timeframe = "30d" } = req.query;
 
-      const analytics = await analyticsService.getSuperAdminAnalytics(
-        timeframe
-      );
+      const analytics =
+        await analyticsService.getSuperAdminAnalytics(timeframe);
 
       res.json({
         success: true,
@@ -34,7 +33,7 @@ router.get(
         message: "Failed to fetch analytics data",
       });
     }
-  }
+  },
 );
 
 // Get analytics for business user dashboard (agent, super_agent, dealer, super_dealer)
@@ -46,7 +45,7 @@ router.get("/agent", authenticate, authorizeBusinessUser, async (req, res) => {
     const analytics = await analyticsService.getAgentAnalytics(
       userId,
       tenantId,
-      timeframe
+      timeframe,
     );
 
     res.json({
@@ -61,6 +60,37 @@ router.get("/agent", authenticate, authorizeBusinessUser, async (req, res) => {
     });
   }
 });
+
+// Centralized analytics source (role-aware and user-scoped)
+router.get(
+  "/centralized",
+  authenticate,
+  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
+  async (req, res) => {
+    try {
+      const { userType, userId, tenantId } = req.user;
+      const timeframe = String(req.query.timeframe || "30d");
+      const scope = String(req.query.scope || "all");
+
+      const data = await analyticsService.getCentralizedAnalytics(
+        { userType, userId, tenantId },
+        timeframe,
+        scope,
+      );
+
+      res.json({
+        success: true,
+        data,
+      });
+    } catch (error) {
+      logger.error(`Centralized analytics error: ${error.message}`);
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch centralized analytics",
+      });
+    }
+  },
+);
 
 // Get analytics summary (for both super admin and business users)
 router.get(
@@ -80,7 +110,7 @@ router.get(
         analytics = await analyticsService.getAgentAnalytics(
           userId,
           tenantId,
-          timeframe
+          timeframe,
         );
       }
 
@@ -95,7 +125,7 @@ router.get(
         message: "Failed to fetch analytics summary",
       });
     }
-  }
+  },
 );
 
 // Get chart data only
@@ -111,15 +141,14 @@ router.get(
       let chartData;
 
       if (userType === "super_admin") {
-        const analytics = await analyticsService.getSuperAdminAnalytics(
-          timeframe
-        );
+        const analytics =
+          await analyticsService.getSuperAdminAnalytics(timeframe);
         chartData = analytics.charts;
       } else {
         chartData = await analyticsService.getAgentChartData(
           userId,
           tenantId,
-          timeframe
+          timeframe,
         );
       }
 
@@ -134,7 +163,7 @@ router.get(
         message: "Failed to fetch chart data",
       });
     }
-  }
+  },
 );
 
 // Get real-time metrics
@@ -190,7 +219,7 @@ router.get(
         message: "Failed to fetch realtime metrics",
       });
     }
-  }
+  },
 );
 
 export default router;
