@@ -475,6 +475,32 @@ class OrderController {
         });
       }
 
+      // If admin is manually setting the status to cancelled, use the cancelOrder service
+      // so refund and cancellation business logic are applied consistently.
+      if (status === "cancelled") {
+        const cancelResult = await orderService.cancelOrder(
+          id,
+          userType === "super_admin" ? null : tenantId,
+          userId,
+          notes || "Cancelled by admin via status update",
+        );
+
+        let message = "Order cancelled successfully";
+        if (cancelResult.refundAmount && cancelResult.refundAmount > 0) {
+          message = `Order cancelled successfully. GH₵${cancelResult.refundAmount.toFixed(
+            2,
+          )} has been refunded to the user's wallet.`;
+        }
+
+        return res.json({
+          success: true,
+          message,
+          order: cancelResult.order,
+          refundAmount: cancelResult.refundAmount || 0,
+          refundTransaction: cancelResult.refundTransaction,
+        });
+      }
+
       // For super admins, allow updating any order (no tenant restriction)
       // For regular users, restrict to their tenant
       const query =
