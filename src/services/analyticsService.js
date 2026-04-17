@@ -277,6 +277,11 @@ class AnalyticsService {
     let startDate;
 
     switch (timeframe) {
+      case "0d":
+      case "today":
+        startDate = new Date(endDate);
+        startDate.setHours(0, 0, 0, 0);
+        break;
       case "7d":
         startDate = new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
         break;
@@ -288,6 +293,9 @@ class AnalyticsService {
         break;
       case "365d":
         startDate = new Date(endDate.getTime() - 365 * 24 * 60 * 60 * 1000);
+        break;
+      case "all":
+        startDate = new Date("2020-01-01T00:00:00Z");
         break;
       default:
         startDate = new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -1405,187 +1413,210 @@ class AnalyticsService {
   async getTopPerformers(dateRange) {
     try {
       const { startDate, endDate } = dateRange;
+      const maxPerformers = 1000;
+      const requiredTopAgents = 10;
 
-      const [topAgentsByRevenue, topAgentsByCommission, topOrderTypes] =
-        await Promise.all([
-          Order.aggregate([
-            {
-              $match: {
-                status: "completed",
-                createdAt: { $gte: startDate, $lte: endDate },
-                createdBy: { $exists: true, $ne: null },
-              },
+      const [
+        topAgentsByRevenue,
+        topAgentsByCommission,
+        topOrderTypes,
+        topStorefronts,
+      ] = await Promise.all([
+        Order.aggregate([
+          {
+            $match: {
+              status: "completed",
+              createdAt: { $gte: startDate, $lte: endDate },
+              createdBy: { $exists: true, $ne: null },
             },
-            {
-              $group: {
-                _id: "$createdBy",
-                orders: { $sum: 1 },
-                revenue: { $sum: "$total" },
-                averageOrderValue: { $avg: "$total" },
-              },
+          },
+          {
+            $group: {
+              _id: "$createdBy",
+              orders: { $sum: 1 },
+              revenue: { $sum: "$total" },
+              averageOrderValue: { $avg: "$total" },
             },
-            {
-              $lookup: {
-                from: "users",
-                localField: "_id",
-                foreignField: "_id",
-                as: "user",
-              },
+          },
+          {
+            $lookup: {
+              from: "users",
+              localField: "_id",
+              foreignField: "_id",
+              as: "user",
             },
-            { $unwind: "$user" },
-            {
-              $match: {
-                "user.userType": { $in: getBusinessUserTypes() },
-              },
+          },
+          { $unwind: "$user" },
+          {
+            $match: {
+              "user.userType": { $ne: "super_admin" },
             },
-            { $sort: { orders: -1, revenue: -1 } },
-            { $limit: 10 },
-            {
-              $project: {
-                _id: 0,
-                userId: "$user._id",
-                fullName: "$user.fullName",
-                agentCode: "$user.agentCode",
-                userType: "$user.userType",
-                orders: 1,
-                revenue: 1,
-                averageOrderValue: { $round: ["$averageOrderValue", 2] },
-              },
+          },
+          { $sort: { orders: -1, revenue: -1 } },
+          { $limit: maxPerformers },
+          {
+            $project: {
+              _id: 0,
+              userId: "$user._id",
+              fullName: "$user.fullName",
+              agentCode: "$user.agentCode",
+              userType: "$user.userType",
+              orders: 1,
+              revenue: 1,
+              averageOrderValue: { $round: ["$averageOrderValue", 2] },
             },
-          ]),
-          CommissionRecord.aggregate([
-            {
-              $match: {
-                createdAt: { $gte: startDate, $lte: endDate },
-              },
+          },
+        ]),
+        CommissionRecord.aggregate([
+          {
+            $match: {
+              createdAt: { $gte: startDate, $lte: endDate },
             },
-            {
-              $group: {
-                _id: "$agentId",
-                records: { $sum: 1 },
-                totalCommission: { $sum: "$amount" },
-              },
+          },
+          {
+            $group: {
+              _id: "$agentId",
+              records: { $sum: 1 },
+              totalCommission: { $sum: "$amount" },
             },
-            {
-              $lookup: {
-                from: "users",
-                localField: "_id",
-                foreignField: "_id",
-                as: "user",
-              },
+          },
+          {
+            $lookup: {
+              from: "users",
+              localField: "_id",
+              foreignField: "_id",
+              as: "user",
             },
-            { $unwind: "$user" },
-            {
-              $match: {
-                "user.userType": { $in: getBusinessUserTypes() },
-              },
+          },
+          { $unwind: "$user" },
+          {
+            $match: {
+              "user.userType": { $ne: "super_admin" },
             },
-            { $sort: { totalCommission: -1 } },
-            { $limit: 5 },
-            {
-              $project: {
-                _id: 0,
-                userId: "$user._id",
-                fullName: "$user.fullName",
-                agentCode: "$user.agentCode",
-                userType: "$user.userType",
-                records: 1,
-                totalCommission: 1,
-              },
+          },
+          { $sort: { totalCommission: -1 } },
+          { $limit: maxPerformers },
+          {
+            $project: {
+              _id: 0,
+              userId: "$user._id",
+              fullName: "$user.fullName",
+              agentCode: "$user.agentCode",
+              userType: "$user.userType",
+              records: 1,
+              totalCommission: 1,
             },
-          ]),
-          Order.aggregate([
-            {
-              $match: {
-                status: "completed",
-                createdAt: { $gte: startDate, $lte: endDate },
-              },
+          },
+        ]),
+        Order.aggregate([
+          {
+            $match: {
+              status: "completed",
+              createdAt: { $gte: startDate, $lte: endDate },
             },
-            {
-              $group: {
-                _id: "$orderType",
-                count: { $sum: 1 },
-                revenue: { $sum: "$total" },
-              },
+          },
+          {
+            $group: {
+              _id: "$orderType",
+              count: { $sum: 1 },
+              revenue: { $sum: "$total" },
             },
-            { $sort: { revenue: -1 } },
-          ]),
-        ]);
-
-      const allTimeTopAgents =
-        topAgentsByRevenue.length < 10
-          ? await Order.aggregate([
-              {
-                $match: {
-                  status: "completed",
-                  createdBy: { $exists: true, $ne: null },
+          },
+          { $sort: { revenue: -1 } },
+        ]),
+        Order.aggregate([
+          {
+            $match: {
+              orderType: "storefront",
+              status: "completed",
+              createdAt: { $gte: startDate, $lte: endDate },
+              "storefrontData.storefrontId": { $exists: true, $ne: null },
+            },
+          },
+          {
+            $group: {
+              _id: "$storefrontData.storefrontId",
+              totalOrders: { $sum: 1 },
+              grossRevenue: { $sum: "$total" },
+              netProfit: {
+                $sum: {
+                  $ifNull: ["$storefrontData.totalMarkup", 0],
                 },
               },
-              {
-                $group: {
-                  _id: "$createdBy",
-                  orders: { $sum: 1 },
-                  revenue: { $sum: "$total" },
-                  averageOrderValue: { $avg: "$total" },
-                },
+              averageOrderValue: { $avg: "$total" },
+            },
+          },
+          {
+            $lookup: {
+              from: "agentstorefronts",
+              localField: "_id",
+              foreignField: "_id",
+              as: "storefront",
+            },
+          },
+          { $unwind: "$storefront" },
+          {
+            $lookup: {
+              from: "users",
+              localField: "storefront.agentId",
+              foreignField: "_id",
+              as: "agent",
+            },
+          },
+          {
+            $unwind: {
+              path: "$agent",
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+          { $sort: { totalOrders: -1, netProfit: -1 } },
+          { $limit: maxPerformers },
+          {
+            $project: {
+              _id: 0,
+              storefrontId: "$storefront._id",
+              storefrontName: {
+                $ifNull: [
+                  "$storefront.displayName",
+                  "$storefront.businessName",
+                ],
               },
-              {
-                $lookup: {
-                  from: "users",
-                  localField: "_id",
-                  foreignField: "_id",
-                  as: "user",
-                },
-              },
-              { $unwind: "$user" },
-              {
-                $match: {
-                  "user.userType": { $in: getBusinessUserTypes() },
-                },
-              },
-              { $sort: { orders: -1, revenue: -1 } },
-              { $limit: 10 },
-              {
-                $project: {
-                  _id: 0,
-                  userId: "$user._id",
-                  fullName: "$user.fullName",
-                  agentCode: "$user.agentCode",
-                  userType: "$user.userType",
-                  orders: 1,
-                  revenue: 1,
-                  averageOrderValue: { $round: ["$averageOrderValue", 2] },
-                },
-              },
-            ])
-          : [];
+              businessName: "$storefront.businessName",
+              agentId: "$agent._id",
+              agentName: "$agent.fullName",
+              totalOrders: 1,
+              netProfit: 1,
+              grossRevenue: 1,
+              orders: "$totalOrders",
+              revenue: "$netProfit",
+              averageOrderValue: { $round: ["$averageOrderValue", 2] },
+            },
+          },
+        ]),
+      ]);
 
-      const mergedAgents = [];
-      const seenAgents = new Set();
+      const mergedAgents = [...topAgentsByRevenue];
+      const seenAgents = new Set(
+        mergedAgents.map((agent) => String(agent.userId)),
+      );
 
-      [...topAgentsByRevenue, ...allTimeTopAgents].forEach((agent) => {
-        const key = String(agent.userId);
-        if (seenAgents.has(key) || mergedAgents.length >= 10) {
-          return;
-        }
-
-        seenAgents.add(key);
-        mergedAgents.push(agent);
-      });
-
-      if (mergedAgents.length < 10) {
+      if (mergedAgents.length < requiredTopAgents) {
         const extraUsers = await User.find({
-          userType: { $in: getBusinessUserTypes() },
+          userType: { $ne: "super_admin" },
           isDeleted: { $ne: true },
         })
           .select("_id fullName agentCode userType")
           .sort({ createdAt: -1 })
-          .limit(50)
+          .limit(maxPerformers)
           .lean();
 
         extraUsers.forEach((user) => {
+          if (mergedAgents.length >= requiredTopAgents) {
+            return;
+          }
+
           const key = String(user._id);
-          if (seenAgents.has(key) || mergedAgents.length >= 10) {
+          if (seenAgents.has(key)) {
             return;
           }
 
@@ -1611,11 +1642,12 @@ class AnalyticsService {
 
           return (b.revenue || 0) - (a.revenue || 0);
         })
-        .slice(0, 10);
+        .slice(0, maxPerformers);
 
       return {
         agents: rankedAgents,
         commissionLeaders: topAgentsByCommission,
+        storefronts: topStorefronts,
         orderTypes: topOrderTypes.map((row) => ({
           orderType: row._id || "unknown",
           count: row.count,
@@ -1627,6 +1659,7 @@ class AnalyticsService {
       return {
         agents: [],
         commissionLeaders: [],
+        storefronts: [],
         orderTypes: [],
       };
     }
