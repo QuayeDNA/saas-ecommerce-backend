@@ -1,12 +1,21 @@
 import mongoose from "mongoose";
 import { getBusinessUserTypes } from "./userTypeHelpers.js";
+import { getCurrentRequestContext } from "./requestContext.js";
+import { getPrefixByKind } from "./appCodeStrategy.js";
+
+const getActiveAppId = (appId) => {
+  if (appId) return appId;
+  return getCurrentRequestContext()?.appContext?.appId || null;
+};
 
 /**
  * Generate a unique agent code using randomized format: BLA-XXX
  * @returns {Promise<string>} - Unique agent code (7 characters max)
  */
-export const generateUniqueAgentCode = async () => {
+export const generateUniqueAgentCode = async (appId = null) => {
   const maxAttempts = 5;
+  const resolvedAppId = getActiveAppId(appId);
+  const agentPrefix = getPrefixByKind("agent", resolvedAppId);
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
@@ -15,12 +24,12 @@ export const generateUniqueAgentCode = async () => {
       let randomSuffix = "";
       for (let i = 0; i < 3; i++) {
         randomSuffix += numbers.charAt(
-          Math.floor(Math.random() * numbers.length)
+          Math.floor(Math.random() * numbers.length),
         );
       }
 
-      // Format: BLA-XXX (7 characters total)
-      const agentCode = `BLA-${randomSuffix}`;
+      // Format: PREFIX-XXX (7 characters total)
+      const agentCode = `${agentPrefix}-${randomSuffix}`;
 
       // Check if this agent code already exists across all business user types
       const User = mongoose.model("User");
@@ -36,18 +45,18 @@ export const generateUniqueAgentCode = async () => {
       // If exists, try again with exponential backoff
       console.warn(`Agent code ${agentCode} already exists, retrying...`);
       await new Promise((resolve) =>
-        setTimeout(resolve, Math.pow(2, attempt) * 10)
+        setTimeout(resolve, Math.pow(2, attempt) * 10),
       );
     } catch (error) {
       console.error(
         `Attempt ${attempt + 1} failed to generate agent code:`,
-        error.message
+        error.message,
       );
 
       if (attempt === maxAttempts - 1) {
         // Final fallback: timestamp-based with numeric only
         const timestamp = Date.now().toString().slice(-3);
-        return `BLA-${timestamp}`;
+        return `${agentPrefix}-${timestamp}`;
       }
 
       // Wait before retry
@@ -56,7 +65,7 @@ export const generateUniqueAgentCode = async () => {
   }
 
   throw new Error(
-    "Failed to generate unique agent code after maximum attempts"
+    "Failed to generate unique agent code after maximum attempts",
   );
 };
 
@@ -78,7 +87,7 @@ export const generateSpecialAgentCode = async (prefix = "BLA") => {
       let randomSuffix = "";
       for (let i = 0; i < 3; i++) {
         randomSuffix += numbers.charAt(
-          Math.floor(Math.random() * numbers.length)
+          Math.floor(Math.random() * numbers.length),
         );
       }
 
@@ -98,15 +107,15 @@ export const generateSpecialAgentCode = async (prefix = "BLA") => {
 
       // If exists, try again
       console.warn(
-        `Special agent code ${agentCode} already exists, retrying...`
+        `Special agent code ${agentCode} already exists, retrying...`,
       );
       await new Promise((resolve) =>
-        setTimeout(resolve, Math.pow(2, attempt) * 10)
+        setTimeout(resolve, Math.pow(2, attempt) * 10),
       );
     } catch (error) {
       console.error(
         `Attempt ${attempt + 1} failed to generate special agent code:`,
-        error.message
+        error.message,
       );
 
       if (attempt === maxAttempts - 1) {
@@ -118,7 +127,7 @@ export const generateSpecialAgentCode = async (prefix = "BLA") => {
   }
 
   throw new Error(
-    `Failed to generate unique ${prefix} agent code after maximum attempts`
+    `Failed to generate unique ${prefix} agent code after maximum attempts`,
   );
 };
 

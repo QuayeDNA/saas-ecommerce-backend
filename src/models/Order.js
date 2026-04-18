@@ -1,6 +1,11 @@
 // src/models/Order.js
 import mongoose from "mongoose";
-import { generateUniqueOrderNumber, generateUniqueStorefrontOrderNumber } from "../utils/orderNumberGenerator.js";
+import {
+  generateUniqueOrderNumber,
+  generateUniqueStorefrontOrderNumber,
+} from "../utils/orderNumberGenerator.js";
+import { getCurrentRequestContext } from "../utils/requestContext.js";
+import { normalizeAppId } from "../utils/appContextResolver.js";
 
 const orderItemSchema = new mongoose.Schema(
   {
@@ -63,9 +68,8 @@ const orderItemSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     },
-
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 const orderSchema = new mongoose.Schema(
@@ -100,52 +104,64 @@ const orderSchema = new mongoose.Schema(
 
     // Storefront-specific data (only for storefront orders)
     storefrontData: {
-      storefrontId: { 
-        type: mongoose.Schema.Types.ObjectId, 
-        ref: 'AgentStorefront',
-        required: function() { return this.orderType === 'storefront'; }
+      storefrontId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "AgentStorefront",
+        required: function () {
+          return this.orderType === "storefront";
+        },
       },
       customerInfo: {
-        name: { 
-          type: String, 
-          required: function() { return this.orderType === 'storefront'; }
+        name: {
+          type: String,
+          required: function () {
+            return this.orderType === "storefront";
+          },
         },
         // buyer/customer phone is optional for public storefront checkout
         phone: { type: String },
         email: String,
-        ghanaCardNumber: String // AFA-specific
+        ghanaCardNumber: String, // AFA-specific
       },
       paymentMethod: {
-        type: { 
-          type: String, 
-          enum: ['mobile_money', 'bank_transfer', 'paystack'],
-          required: function() { return this.orderType === 'storefront'; }
+        type: {
+          type: String,
+          enum: ["mobile_money", "bank_transfer", "paystack"],
+          required: function () {
+            return this.orderType === "storefront";
+          },
         },
         reference: String, // Transaction ID or reference
         paymentProofUrl: String, // Future: screenshot of payment for verification
         verified: { type: Boolean, default: false },
         verifiedAt: Date,
-        verificationNotes: String
+        verificationNotes: String,
       },
       totalMarkup: { type: Number, default: 0 }, // Total profit for agent
       totalTierCost: { type: Number, default: 0 }, // Agent's cost at tier prices
-      items: [{
-        bundleId: { type: mongoose.Schema.Types.ObjectId, ref: 'Bundle' },
-        bundleName: String,
-        provider: String,
-        dataVolume: Number,
-        dataUnit: String,
-        validity: mongoose.Schema.Types.Mixed,
-        validityUnit: String,
-        quantity: { type: Number, default: 1 },
-        customerPhone: String,
-        unitPrice: Number,   // Storefront price (what customer pays per unit)
-        tierPrice: Number,   // Agent's cost (for wallet deduction)
-        totalPrice: Number,  // unitPrice * quantity
-        processingStatus: { type: String, enum: ['pending', 'processing', 'completed', 'failed'], default: 'pending' },
-        processingError: String,
-        processedAt: Date
-      }]
+      items: [
+        {
+          bundleId: { type: mongoose.Schema.Types.ObjectId, ref: "Bundle" },
+          bundleName: String,
+          provider: String,
+          dataVolume: Number,
+          dataUnit: String,
+          validity: mongoose.Schema.Types.Mixed,
+          validityUnit: String,
+          quantity: { type: Number, default: 1 },
+          customerPhone: String,
+          unitPrice: Number, // Storefront price (what customer pays per unit)
+          tierPrice: Number, // Agent's cost (for wallet deduction)
+          totalPrice: Number, // unitPrice * quantity
+          processingStatus: {
+            type: String,
+            enum: ["pending", "processing", "completed", "failed"],
+            default: "pending",
+          },
+          processingError: String,
+          processedAt: Date,
+        },
+      ],
     },
 
     // Order items
@@ -253,6 +269,11 @@ const orderSchema = new mongoose.Schema(
       ref: "User",
     },
 
+    sourceApp: {
+      type: String,
+      default: normalizeAppId(),
+    },
+
     // Metadata
     notes: String,
     tags: [String],
@@ -266,7 +287,7 @@ const orderSchema = new mongoose.Schema(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 // Indexes
@@ -286,21 +307,29 @@ orderSchema.index({ tenantId: 1, receptionStatus: 1 }); // Index for reception s
 orderSchema.virtual("completionPercentage").get(function () {
   if (!this.items || this.items.length === 0) return 0;
   const completedItems = this.items.filter(
-    (item) => item.processingStatus === "completed"
+    (item) => item.processingStatus === "completed",
   ).length;
   return Math.round((completedItems / this.items.length) * 100);
 });
 
 // Pre-save middleware to generate order number
 orderSchema.pre("save", async function (next) {
+  const currentAppId = getCurrentRequestContext()?.appContext?.appId;
+  this.sourceApp = normalizeAppId(this.sourceApp || currentAppId);
+
   // Generate order number if not provided
   if (!this.orderNumber) {
     try {
       // Storefront orders get BAGS-XXXX prefix; all others get ORD-XXXX
-      if (this.orderType === 'storefront') {
-        this.orderNumber = await generateUniqueStorefrontOrderNumber();
+      if (this.orderType === "storefront") {
+        this.orderNumber = await generateUniqueStorefrontOrderNumber(
+          this.sourceApp,
+        );
       } else {
-        this.orderNumber = await generateUniqueOrderNumber();
+        this.orderNumber = await generateUniqueOrderNumber(
+          "orderNumber",
+          this.sourceApp,
+        );
       }
     } catch (error) {
       console.error("Failed to generate order number:", error);
@@ -310,19 +339,19 @@ orderSchema.pre("save", async function (next) {
 
   // Calculate totals
   // Storefront orders store items in storefrontData.items and set total directly
-  if (this.orderType === 'storefront') {
+  if (this.orderType === "storefront") {
     // Preserve the manually set total for storefront orders
     if (!this.total && this.storefrontData?.items?.length > 0) {
       this.total = this.storefrontData.items.reduce(
         (sum, item) => sum + (item.totalPrice || 0),
-        0
+        0,
       );
     }
     this.subtotal = this.total || 0;
   } else if (this.items && Array.isArray(this.items) && this.items.length > 0) {
     this.subtotal = this.items.reduce(
       (sum, item) => sum + (item.totalPrice || 0),
-      0
+      0,
     );
   } else {
     this.subtotal = 0;
@@ -333,7 +362,7 @@ orderSchema.pre("save", async function (next) {
   this.discount = this.discount || 0;
 
   // Calculate final total (skip for storefront - already set)
-  if (this.orderType !== 'storefront') {
+  if (this.orderType !== "storefront") {
     this.total = this.subtotal + this.tax - this.discount;
   }
 
@@ -371,7 +400,7 @@ orderSchema.methods.updateStatus = async function () {
   // Update bulk data counters
   if (this.orderType === "bulk") {
     this.bulkData.successfulItems = statuses.filter(
-      (s) => s === "completed"
+      (s) => s === "completed",
     ).length;
     this.bulkData.failedItems = statuses.filter((s) => s === "failed").length;
   }
@@ -394,7 +423,7 @@ orderSchema.methods.updateStatus = async function () {
           total: this.total,
           items: this.items.length,
           orderType: this.orderType,
-        }
+        },
       );
 
       // Send bulk order progress notification for bulk orders
@@ -409,7 +438,7 @@ orderSchema.methods.updateStatus = async function () {
             this._id.toString(),
             this.orderNumber,
             processed,
-            total
+            total,
           );
         }
       }

@@ -31,6 +31,9 @@ import pushNotificationRoutes from "./src/routes/pushNotificationRoutes.js";
 import announcementRoutes from "./src/routes/announcementRoutes.js";
 import storefrontRoutes from "./src/routes/storefrontRoutes.js";
 import paystackRoutes from "./src/routes/paystackRoutes.js";
+import appContextMiddleware from "./src/middlewares/appContext.js";
+import requestContextMiddleware from "./src/middlewares/requestContext.js";
+import { buildManifestForApp } from "./src/utils/appContextResolver.js";
 
 // ─── App & Server ─────────────────────────────────────────────────────────────
 
@@ -103,11 +106,17 @@ app.use(
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
+app.use(appContextMiddleware());
+app.use(requestContextMiddleware());
 
 // ─── Request Logging ──────────────────────────────────────────────────────────
 
 app.use((req, _res, next) => {
-  logger.info(`${req.method} ${req.url} - ${req.ip}`);
+  const appId = req.appContext?.appId || "unknown";
+  const appSource = req.appContext?.source || "unknown";
+  logger.info(
+    `${req.method} ${req.url} - ${req.ip} [app:${appId} via ${appSource}]`,
+  );
   next();
 });
 
@@ -115,61 +124,8 @@ app.use((req, _res, next) => {
 
 app.get("/manifest", (req, res) => {
   const { theme = "#142850" } = req.query;
-
-  // Determine branding based on request origin/referer
-  const origin = req.get("origin") || req.get("referer") || "";
-  const isStorefrontDomain =
-    origin.includes("directdata.shop") ||
-    origin.includes("storefront") ||
-    req.query.context === "storefront";
-
-  const branding = isStorefrontDomain
-    ? {
-        name: "DirectData — Instant Data Bundles",
-        short_name: "DirectData",
-        description:
-          "A modern storefront for buying data bundles from trusted agents across Ghana.",
-        start_url: "/",
-      }
-    : {
-        name: "BryteLinks — Telecom Solutions Platform",
-        short_name: "BryteLinks",
-        description:
-          "Modern telecom solutions platform for agents and dealers in Ghana.",
-        start_url: "/",
-      };
-
   res.setHeader("Content-Type", "application/manifest+json");
-  res.json({
-    ...branding,
-    icons: [
-      {
-        src: "/favicon.svg",
-        sizes: "any",
-        type: "image/svg+xml",
-        purpose: "any maskable",
-      },
-      { src: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
-      { src: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
-      {
-        src: "/android-chrome-192x192.png",
-        sizes: "192x192",
-        type: "image/png",
-      },
-      {
-        src: "/android-chrome-512x512.png",
-        sizes: "512x512",
-        type: "image/png",
-      },
-    ],
-    theme_color: theme,
-    background_color: theme,
-    display: "standalone",
-    orientation: "portrait-primary",
-    categories: isStorefrontDomain
-      ? ["business", "finance", "utilities"]
-      : ["business", "productivity"],
-  });
+  res.json(buildManifestForApp({ appId: req.appContext?.appId, theme }));
 });
 
 // ─── Paystack Browser Callback Redirect ──────────────────────────────────────

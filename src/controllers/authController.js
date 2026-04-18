@@ -26,7 +26,7 @@ class AuthController {
     return jwt.sign(
       { userId, userType, tenantId },
       process.env.JWTSECRET,
-      { expiresIn: "24h" } // Extended to 24 hours for better user experience
+      { expiresIn: "24h" }, // Extended to 24 hours for better user experience
     );
   }
 
@@ -35,17 +35,16 @@ class AuthController {
     return jwt.sign(
       { userId, type: "refresh" },
       process.env.REFRESH_TOKEN_SECRET || process.env.JWTSECRET,
-      { expiresIn: "30d" } // Extended to 30 days for better user experience
+      { expiresIn: "30d" }, // Extended to 30 days for better user experience
     );
   }
 
   // Generate unique agent code using randomized format: BLA-XXXX
-  async generateAgentCode() {
+  async generateAgentCode(appId = null) {
     // Import the agent code generator
-    const { generateUniqueAgentCode } = await import(
-      "../utils/agentCodeGenerator.js"
-    );
-    return await generateUniqueAgentCode();
+    const { generateUniqueAgentCode } =
+      await import("../utils/agentCodeGenerator.js");
+    return await generateUniqueAgentCode(appId);
   }
 
   // Register new agent (multi-tenant admin)
@@ -110,12 +109,12 @@ class AuthController {
       agent.tenantId = tenantId || agent._id;
 
       // Generate and set the real agent code using the new randomized format
-      const agentCode = await this.generateAgentCode();
+      const agentCode = await this.generateAgentCode(req.appContext?.appId);
       agent.agentCode = agentCode;
       await agent.save();
 
       logger.info(
-        `${userType} registered successfully: ${email} - Business: ${businessName} - Agent Code: ${agentCode}`
+        `${userType} registered successfully: ${email} - Business: ${businessName} - Agent Code: ${agentCode}`,
       );
 
       // Always return success message - user must login manually
@@ -167,7 +166,7 @@ class AuthController {
       // Block login if user is not active
       if (user.status !== "active" || user.isActive === false) {
         logger.warn(
-          `Login attempt for user with status '${user.status}' or inactive: ${email}`
+          `Login attempt for user with status '${user.status}' or inactive: ${email}`,
         );
         return res.status(401).json({
           success: false,
@@ -175,8 +174,8 @@ class AuthController {
             user.isActive === false
               ? "Your account has been deactivated by an administrator."
               : user.status === "pending"
-              ? "Your account is pending approval by a super admin."
-              : "Your account has been rejected. Please contact support.",
+                ? "Your account is pending approval by a super admin."
+                : "Your account has been rejected. Please contact support.",
         });
       }
 
@@ -185,7 +184,7 @@ class AuthController {
       const accessToken = this.generateAccessToken(
         user._id,
         user.userType,
-        tenantId
+        tenantId,
       );
       const refreshToken = this.generateRefreshToken(user._id);
 
@@ -195,7 +194,7 @@ class AuthController {
       // Ensure tenantId is set for agent-type users before saving
       if (
         ["agent", "super_agent", "dealer", "super_dealer"].includes(
-          user.userType
+          user.userType,
         ) &&
         !user.tenantId
       ) {
@@ -216,7 +215,7 @@ class AuthController {
       res.cookie("refreshToken", refreshToken, cookieOptions);
 
       logger.info(
-        `User logged in successfully: ${email} - Type: ${user.userType}`
+        `User logged in successfully: ${email} - Type: ${user.userType}`,
       );
 
       // Check for first-time login for business users
@@ -232,11 +231,11 @@ class AuthController {
           user.isFirstTime = false;
           await user.save();
           logger.info(
-            `Initialized agent wallet for first login: ${user.email}`
+            `Initialized agent wallet for first login: ${user.email}`,
           );
         } catch (walletError) {
           logger.error(
-            `Failed to initialize agent wallet: ${walletError.message}`
+            `Failed to initialize agent wallet: ${walletError.message}`,
           );
           // Continue login process even if wallet initialization fails
         }
@@ -311,7 +310,7 @@ class AuthController {
       const { token } = req.body;
 
       logger.info(
-        `Verification attempt with token: ${token ? "provided" : "missing"}`
+        `Verification attempt with token: ${token ? "provided" : "missing"}`,
       );
 
       if (!token) {
@@ -342,7 +341,7 @@ class AuthController {
           logger.warn(
             `User found but verification failed - isVerified: ${
               userByEmail.isVerified
-            }, hasVerificationToken: ${!!userByEmail.verificationToken}`
+            }, hasVerificationToken: ${!!userByEmail.verificationToken}`,
           );
         }
 
@@ -362,7 +361,7 @@ class AuthController {
       if (isBusinessUser(user.userType)) {
         user.status = "pending"; // Ensure business user remains pending
         logger.info(
-          `Business user account verified but pending approval: ${user.email}`
+          `Business user account verified but pending approval: ${user.email}`,
         );
       } else {
         user.status = "active"; // Customers can be active immediately
@@ -371,7 +370,7 @@ class AuthController {
       await user.save();
 
       logger.info(
-        `Account verified successfully: ${user.email} - Status: ${user.status}`
+        `Account verified successfully: ${user.email} - Status: ${user.status}`,
       );
 
       // Return appropriate message based on user type
@@ -502,7 +501,7 @@ class AuthController {
       // Verify refresh token
       const decoded = jwt.verify(
         token,
-        process.env.REFRESH_TOKEN_SECRET || process.env.JWTSECRET
+        process.env.REFRESH_TOKEN_SECRET || process.env.JWTSECRET,
       );
 
       if (decoded.type !== "refresh") {
@@ -526,7 +525,7 @@ class AuthController {
       const newAccessToken = this.generateAccessToken(
         user._id,
         user.userType,
-        tenantId
+        tenantId,
       );
       const newRefreshToken = this.generateRefreshToken(user._id);
 
@@ -566,7 +565,7 @@ class AuthController {
     try {
       // Token is already verified by middleware, just return user data
       const user = await User.findById(req.user.userId).select(
-        "-password -refreshToken"
+        "-password -refreshToken",
       );
 
       if (!user) {
@@ -640,7 +639,7 @@ class AuthController {
 
       if (!user) {
         logger.warn(
-          `Verification resend attempt for non-existent user: ${email}`
+          `Verification resend attempt for non-existent user: ${email}`,
         );
         return res.status(404).json({
           success: false,
@@ -651,7 +650,7 @@ class AuthController {
       // Check if account is already verified
       if (user.isVerified) {
         logger.warn(
-          `Verification resend attempt for already verified account: ${email}`
+          `Verification resend attempt for already verified account: ${email}`,
         );
         return res.status(400).json({
           success: false,
@@ -686,7 +685,7 @@ class AuthController {
         await emailService.sendAgentVerificationEmail(
           email,
           verificationToken,
-          agentCode
+          agentCode,
         );
       } else {
         await emailService.sendVerificationEmail(email, verificationToken);
@@ -739,7 +738,7 @@ class AuthController {
       const existingUser = await User.findOne({ email });
       if (existingUser) {
         logger.warn(
-          `Super admin registration attempt with existing email: ${email}`
+          `Super admin registration attempt with existing email: ${email}`,
         );
         return res.status(400).json({
           success: false,
@@ -763,7 +762,7 @@ class AuthController {
       // Generate tokens
       const accessToken = this.generateAccessToken(
         superAdmin._id,
-        "super_admin"
+        "super_admin",
       );
       const refreshToken = this.generateRefreshToken(superAdmin._id);
 
@@ -840,8 +839,8 @@ class AuthController {
           page: pageNum,
           limit: limitNum,
           total,
-          pages: totalPages
-        }
+          pages: totalPages,
+        },
       });
     } catch (error) {
       logger.error(`List users failed: ${error.message}`);
@@ -865,7 +864,7 @@ class AuthController {
       if (
         !user ||
         !["agent", "super_agent", "dealer", "super_dealer"].includes(
-          user.userType
+          user.userType,
         )
       ) {
         return res
@@ -1043,7 +1042,7 @@ class AuthController {
     try {
       logger.debug(
         `Debug user request - User: ${req.user.email}, UserType: "${req.user.userType}", Full user object:`,
-        req.user
+        req.user,
       );
 
       res.json({
