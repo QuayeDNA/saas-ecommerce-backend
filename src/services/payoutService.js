@@ -1035,6 +1035,61 @@ class PayoutService {
     };
   }
 
+  async getAdminPayoutSummary({ tenantId = null } = {}) {
+    const userMatch = tenantId ? { tenantId } : {};
+
+    const [balanceAgg, withdrawnAgg, processingAgg] = await Promise.all([
+      User.aggregate([
+        { $match: userMatch },
+        {
+          $group: {
+            _id: null,
+            totalAvailableEarnings: {
+              $sum: { $ifNull: ["$earningsBalance", 0] },
+            },
+          },
+        },
+      ]),
+      PayoutRequest.aggregate([
+        {
+          $match: {
+            status: { $in: ["approved", "processing", "completed"] },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalAmount: { $sum: "$amount" },
+          },
+        },
+      ]),
+      PayoutRequest.aggregate([
+        { $match: { status: "processing" } },
+        {
+          $group: {
+            _id: null,
+            totalAmount: { $sum: "$amount" },
+          },
+        },
+      ]),
+    ]);
+
+    const availableEarnings = Number(
+      balanceAgg?.[0]?.totalAvailableEarnings || 0,
+    );
+    const totalWithdrawn = Number(withdrawnAgg?.[0]?.totalAmount || 0);
+    const processingAmount = Number(processingAgg?.[0]?.totalAmount || 0);
+    const totalProfit =
+      Math.round((availableEarnings + totalWithdrawn) * 100) / 100;
+
+    return {
+      totalProfit,
+      availableEarnings,
+      totalWithdrawn,
+      processingAmount,
+    };
+  }
+
   _ensurePayoutAccountName(payout) {
     if (!payout || !payout.destination) return payout;
     const destination = payout.destination || {};

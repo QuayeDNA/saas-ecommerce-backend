@@ -118,6 +118,12 @@ router.get(
   authorize("super_admin"),
   payoutController.getPayoutHistory,
 );
+router.get(
+  "/admin/payouts/summary",
+  authenticate,
+  authorize("super_admin"),
+  payoutController.getAdminPayoutSummary,
+);
 router.put(
   "/admin/payouts/:id/approve",
   authenticate,

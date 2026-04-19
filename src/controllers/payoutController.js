@@ -152,6 +152,16 @@ class PayoutController {
     }
   }
 
+  async getAdminPayoutSummary(req, res) {
+    try {
+      const summary = await payoutService.getAdminPayoutSummary();
+      return res.json({ success: true, data: summary });
+    } catch (err) {
+      logger.error("[Payout] getAdminPayoutSummary", { message: err.message });
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  }
+
   /**
    * POST /api/admin/payouts/:id/approve
    * Admin approves a pending payout request (deducts earnings).
