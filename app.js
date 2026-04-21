@@ -14,7 +14,9 @@ import { initializeReportedOrdersCleanupJob } from "./src/jobs/reportedOrdersCle
 import { initializeCancelledStorefrontOrdersCleanupJob } from "./src/jobs/cancelledStorefrontOrdersCleanup.js";
 import announcementExpirationJob from "./src/jobs/announcementExpiration.js";
 import { initializePendingPaymentExpiryJob } from "./src/jobs/pendingPaymentExpiry.js";
+import { initializeMomoPendingExpiryJob } from "./src/jobs/momoPendingExpiry.js";
 import { schedulePaystackVerificationRetryJob } from "./src/jobs/paystackVerificationRetry.js";
+import walletService from "./src/services/walletService.js";
 import authRoutes from "./src/routes/authRoutes.js";
 import orderRouter from "./src/routes/orderRoutes.js";
 import packageRoutes from "./src/routes/packageRoutes.js";
@@ -44,19 +46,40 @@ const PORT = process.env.PORT || 5050;
 // ─── Startup ──────────────────────────────────────────────────────────────────
 
 logger.info("Starting SaaS E-Commerce backend...");
-connectDB();
 
-// ─── Background Jobs ──────────────────────────────────────────────────────────
+// Ensure DB connected and perform one-off startup tasks
+(async () => {
+  try {
+    await connectDB();
 
-scheduleNotificationCleanup();
-commissionFinalizationJob.start();
-scheduleDailyCommissionGeneration();
-initializeReportedOrdersCleanupJob();
-initializePendingPaymentExpiryJob();
-initializeCancelledStorefrontOrdersCleanupJob();
-announcementExpirationJob();
-// Retry background Paystack verification for storefront orders and wallet top-ups
-schedulePaystackVerificationRetryJob();
+    // One-off immediate cleanup: mark existing pending MoMo top-ups as rejected
+    try {
+      const result = await walletService.markAllPendingMomoAsRejected();
+      logger.info(
+        `[Startup] Auto-rejected ${result.rejectedCount || 0} pending MoMo top-up(s)`,
+      );
+    } catch (err) {
+      logger.warn(
+        `[Startup] Auto-reject pending MoMo top-ups failed: ${err.message}`,
+      );
+    }
+
+    // ─── Background Jobs ───────────────────────────────────────────────────────
+    scheduleNotificationCleanup();
+    commissionFinalizationJob.start();
+    scheduleDailyCommissionGeneration();
+    initializeReportedOrdersCleanupJob();
+    initializePendingPaymentExpiryJob();
+    initializeMomoPendingExpiryJob();
+    initializeCancelledStorefrontOrdersCleanupJob();
+    announcementExpirationJob();
+    // Retry background Paystack verification for storefront orders and wallet top-ups
+    schedulePaystackVerificationRetryJob();
+  } catch (e) {
+    logger.error(`Startup initialization failed: ${e.message}`);
+    process.exit(1);
+  }
+})();
 
 // ─── Security Middleware ──────────────────────────────────────────────────────
 

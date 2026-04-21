@@ -704,43 +704,161 @@ class WalletService {
     });
     if (!pending) throw new Error("No pending top-up found for this reference");
 
-    const statusData = await mtnMomoService.getTransactionStatus(referenceId);
-    if (statusData.status !== "SUCCESSFUL") {
-      throw new Error(
-        `Payment not yet successful. Status: ${statusData.status}`,
+    // Check MTN transaction status
+    let statusData;
+    try {
+      statusData = await mtnMomoService.getTransactionStatus(referenceId);
+    } catch (err) {
+      logger.error(
+        `[WalletService] getTransactionStatus failed for ${referenceId}: ${err.message}`,
       );
+      throw new Error(`Failed to verify MoMo transaction: ${err.message}`);
     }
-    // Apply the credit by updating the user's balance and marking the pending
-    // transaction as completed (so there's a single transaction record).
-    const updatedUser = await User.findByIdAndUpdate(
-      userId,
-      { $inc: { walletBalance: pending.amount } },
-      { new: true, runValidators: false },
-    );
-    if (!updatedUser) throw new Error(`User ${userId} not found`);
 
-    pending.status = "completed";
-    pending.balanceAfter = updatedUser.walletBalance;
-    pending.description = "MoMo top-up confirmed";
-    pending.metadata = {
-      ...pending.metadata,
-      momoReferenceId: referenceId,
-      processedAt: new Date(),
-    };
-    await pending.save();
+    const status = (statusData?.status || "").toString().toUpperCase();
 
-    logger.info(
-      `[WalletService] MoMo top-up credited: GH₵${pending.amount} for user ${userId}, momoRef: ${referenceId}`,
-    );
+    // Successful -> credit wallet
+    if (status === "SUCCESSFUL") {
+      const updatedUser = await User.findByIdAndUpdate(
+        userId,
+        { $inc: { walletBalance: pending.amount } },
+        { new: true, runValidators: false },
+      );
+      if (!updatedUser) throw new Error(`User ${userId} not found`);
 
-    // Notify the user (non-blocking for financial correctness)
-    await this._notifyUser(
-      userId,
-      updatedUser.walletBalance,
-      `Your wallet has been credited with GH₵${pending.amount}. New balance: GH₵${updatedUser.walletBalance}`,
-    );
+      pending.status = "completed";
+      pending.balanceAfter = updatedUser.walletBalance;
+      pending.description = "MoMo top-up confirmed";
+      pending.metadata = {
+        ...pending.metadata,
+        momoReferenceId: referenceId,
+        momoStatus: statusData,
+        processedAt: new Date(),
+      };
+      await pending.save();
 
-    return pending;
+      logger.info(
+        `[WalletService] MoMo top-up credited: GH₵${pending.amount} for user ${userId}, momoRef: ${referenceId}`,
+      );
+
+      // Notify the user (non-blocking for financial correctness)
+      await this._notifyUser(
+        userId,
+        updatedUser.walletBalance,
+        `Your wallet has been credited with GH₵${pending.amount}. New balance: GH₵${updatedUser.walletBalance}`,
+      );
+
+      return pending;
+    }
+
+    // Terminal failure statuses from provider — mark the DB record as rejected
+    const terminalFailures = [
+      "FAILED",
+      "REJECTED",
+      "CANCELLED",
+      "EXPIRED",
+      "ERROR",
+      "TIMEOUT",
+    ];
+    if (terminalFailures.includes(status)) {
+      pending.status = "rejected";
+      pending.description = `${pending.description} - MoMo ${status}`;
+      pending.metadata = {
+        ...pending.metadata,
+        momoReferenceId: referenceId,
+        momoStatus: statusData,
+        processedAt: new Date(),
+        momoFailed: true,
+      };
+      await pending.save();
+
+      logger.info(
+        `[WalletService] MoMo top-up failed: ${status} for user ${userId}, momoRef: ${referenceId}`,
+      );
+
+      // Notify user of failure (best-effort)
+      try {
+        await notificationService.sendWalletTopUpRejectionNotification(
+          pending.user.toString(),
+          pending.amount,
+          `Mobile Money ${status}`,
+          "system",
+        );
+      } catch (notifyErr) {
+        logger.warn(`[WalletService] notify failure: ${notifyErr.message}`);
+      }
+
+      throw new Error(`Payment failed. Status: ${statusData.status}`);
+    }
+
+    // Not yet successful -> allow caller to retry
+    throw new Error(`Payment not yet successful. Status: ${statusData.status}`);
+  }
+
+  /**
+   * Mark all existing pending MoMo top-ups as rejected.
+   * This is a one-off cleanup utility used on startup to unblock users.
+   * Returns an object { rejectedCount }
+   */
+  async markAllPendingMomoAsRejected({ limit = 2000 } = {}) {
+    try {
+      const query = {
+        type: "credit",
+        status: "pending",
+        "metadata.momoReferenceId": { $exists: true },
+      };
+
+      const pending = await WalletTransaction.find(query).limit(limit);
+      if (!pending || pending.length === 0) {
+        logger.info(
+          "markAllPendingMomoAsRejected: no pending MoMo top-ups found",
+        );
+        return { rejectedCount: 0 };
+      }
+
+      let rejectedCount = 0;
+      for (const tx of pending) {
+        try {
+          tx.status = "rejected";
+          tx.description = `${tx.description || "MoMo top-up"} - Auto-rejected (cleanup)`;
+          tx.metadata = {
+            ...(tx.metadata || {}),
+            momoFailed: true,
+            autoRejected: true,
+            processedAt: new Date(),
+          };
+          await tx.save();
+          rejectedCount += 1;
+
+          try {
+            await notificationService.sendWalletTopUpRejectionNotification(
+              tx.user.toString(),
+              tx.amount,
+              "Auto-rejected: no payment verification",
+              "system",
+            );
+          } catch (notifyErr) {
+            logger.warn(
+              `[WalletService] notify failure during auto-reject for tx ${tx._id}: ${notifyErr.message}`,
+            );
+          }
+        } catch (err) {
+          logger.error(
+            `[WalletService] Failed to auto-reject tx ${tx._id}: ${err.message}`,
+          );
+        }
+      }
+
+      logger.info(
+        `[WalletService] Auto-rejected ${rejectedCount} pending MoMo top-up(s)`,
+      );
+      return { rejectedCount };
+    } catch (err) {
+      logger.error(
+        `[WalletService] markAllPendingMomoAsRejected failed: ${err.message}`,
+      );
+      return { rejectedCount: 0, error: err.message };
+    }
   }
 }
 

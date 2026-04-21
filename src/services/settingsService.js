@@ -234,6 +234,8 @@ class SettingsService {
           false,
         paystackWalletTopUpEnabled:
           settings.paystackWalletTopUpEnabled ?? false,
+        // MTN wallet top-up availability for frontend toggles
+        mtnWalletTopUpEnabled: settings.mtnWalletTopUpEnabled ?? false,
         paystackStorefrontEnabled: settings.paystackStorefrontEnabled ?? false,
         paystackTestPublicKey: process.env.PAYSTACK_TEST_PUBLIC_KEY || "",
         paystackLivePublicKey: process.env.PAYSTACK_LIVE_PUBLIC_KEY || "",
@@ -260,10 +262,14 @@ class SettingsService {
 
   async updateApiSettings(settings) {
     const settingsDoc = await Settings.getInstance();
-    settingsDoc.mtnApiKey = settings.mtnApiKey;
-    settingsDoc.telecelApiKey = settings.telecelApiKey;
-    settingsDoc.airtelTigoApiKey = settings.airtelTigoApiKey;
-    settingsDoc.apiEndpoint = settings.apiEndpoint;
+    if (settings.mtnApiKey !== undefined)
+      settingsDoc.mtnApiKey = settings.mtnApiKey;
+    if (settings.telecelApiKey !== undefined)
+      settingsDoc.telecelApiKey = settings.telecelApiKey;
+    if (settings.airtelTigoApiKey !== undefined)
+      settingsDoc.airtelTigoApiKey = settings.airtelTigoApiKey;
+    if (settings.apiEndpoint !== undefined)
+      settingsDoc.apiEndpoint = settings.apiEndpoint;
 
     // Paystack settings (optional)
     if (settings.paystackEnabled !== undefined)
@@ -274,6 +280,9 @@ class SettingsService {
     if (settings.paystackStorefrontEnabled !== undefined)
       settingsDoc.paystackStorefrontEnabled =
         settings.paystackStorefrontEnabled;
+    // MTN wallet top-up toggle
+    if (settings.mtnWalletTopUpEnabled !== undefined)
+      settingsDoc.mtnWalletTopUpEnabled = settings.mtnWalletTopUpEnabled;
     // Paystack key configuration is managed via environment variables for security.
     // We no longer persist Paystack keys in the database.
 
@@ -286,6 +295,7 @@ class SettingsService {
       airtelTigoApiKey: settings.airtelTigoApiKey ? "[HIDDEN]" : "",
       paystackTestSecretKey: settings.paystackTestSecretKey ? "[HIDDEN]" : "",
       paystackLiveSecretKey: settings.paystackLiveSecretKey ? "[HIDDEN]" : "",
+      mtnWalletTopUpEnabled: settings.mtnWalletTopUpEnabled,
     });
     return settings;
   }
