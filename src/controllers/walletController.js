@@ -124,12 +124,10 @@ class WalletController {
       res.json({ success: true, hasPendingRequest: Boolean(pendingRequest) });
     } catch (err) {
       logger.error(`[checkPendingTopUpRequest] ${err.message}`);
-      res
-        .status(500)
-        .json({
-          success: false,
-          message: "Failed to check pending request status",
-        });
+      res.status(500).json({
+        success: false,
+        message: "Failed to check pending request status",
+      });
     }
   }
 
@@ -145,13 +143,11 @@ class WalletController {
         parseFloat(amount),
         description,
       );
-      res
-        .status(201)
-        .json({
-          success: true,
-          message: "Top-up request created successfully",
-          transaction,
-        });
+      res.status(201).json({
+        success: true,
+        message: "Top-up request created successfully",
+        transaction,
+      });
     } catch (err) {
       logger.error(`[requestWalletTopUp] ${err.message}`);
       res
@@ -184,13 +180,11 @@ class WalletController {
           .default;
         const apiSettings = await settingsSvc.getApiSettings();
         if (!apiSettings.paystackWalletTopUpEnabled) {
-          return res
-            .status(403)
-            .json({
-              success: false,
-              message:
-                "Paystack wallet top-up is currently disabled by the administrator.",
-            });
+          return res.status(403).json({
+            success: false,
+            message:
+              "Paystack wallet top-up is currently disabled by the administrator.",
+          });
         }
 
         const walletSettings = await settingsSvc.getWalletSettings();
@@ -265,12 +259,10 @@ class WalletController {
         reference.toString(),
       );
       if (!paystackData || paystackData.status !== "success") {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "Paystack transaction not successful",
-          });
+        return res.status(400).json({
+          success: false,
+          message: "Paystack transaction not successful",
+        });
       }
 
       // Check idempotency first — if already processed, return success immediately
@@ -443,12 +435,10 @@ class WalletController {
       });
     } catch (err) {
       logger.error(`[getPendingTopUpRequests] ${err.message}`);
-      res
-        .status(500)
-        .json({
-          success: false,
-          message: "Failed to get pending top-up requests",
-        });
+      res.status(500).json({
+        success: false,
+        message: "Failed to get pending top-up requests",
+      });
     }
   }
 
@@ -458,12 +448,10 @@ class WalletController {
       const adminId = req.user.userId;
 
       if (!userId || !amount || amount <= 0) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "User ID and a positive amount are required",
-          });
+        return res.status(400).json({
+          success: false,
+          message: "User ID and a positive amount are required",
+        });
       }
 
       const transaction = await walletService.debitWallet(
@@ -580,6 +568,49 @@ class WalletController {
       res
         .status(500)
         .json({ success: false, message: "Failed to get admin transactions" });
+    }
+  }
+
+  async initiateMomoTopUp(req, res) {
+    try {
+      const { userId } = req.user;
+      const { amount, phoneNumber } = req.body;
+
+      const result = await walletService.initiateMomoTopUp(
+        userId,
+        parseFloat(amount),
+        phoneNumber,
+      );
+      res
+        .status(202)
+        .json({
+          success: true,
+          message: "Payment request sent to your phone. Please approve it.",
+          referenceId: result.referenceId,
+        });
+    } catch (err) {
+      logger.error(`[initiateMomoTopUp] ${err.message}`);
+      res.status(400).json({ success: false, message: err.message });
+    }
+  }
+
+  async verifyMomoTopUp(req, res) {
+    try {
+      const { referenceId } = req.params;
+      const { userId } = req.user;
+
+      const result = await walletService.verifyAndCreditMomoTopUp(
+        userId,
+        referenceId,
+      );
+      res.json({
+        success: true,
+        message: "Wallet credited successfully",
+        transaction: result,
+      });
+    } catch (err) {
+      logger.error(`[verifyMomoTopUp] ${err.message}`);
+      res.status(400).json({ success: false, message: err.message });
     }
   }
 }
