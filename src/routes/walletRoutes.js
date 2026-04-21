@@ -155,4 +155,16 @@ router.get(
   payoutController.getAutoPayoutAvailability,
 );
 
+router.post(
+  "/momo/initiate",
+  authenticate,
+  authorizeWalletUser,
+  walletController.initiateMomoTopUp,
+);
+router.get(
+  "/momo/verify/:referenceId",
+  authenticate,
+  walletController.verifyMomoTopUp,
+);
+
 export default router;

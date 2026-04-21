@@ -164,6 +164,7 @@ class SettingsController {
         paystackEnabled,
         paystackWalletTopUpEnabled,
         paystackStorefrontEnabled,
+        mtnWalletTopUpEnabled,
       } = req.body;
 
       const settings = await settingsService.updateApiSettings({
@@ -175,6 +176,7 @@ class SettingsController {
         paystackEnabled,
         paystackWalletTopUpEnabled,
         paystackStorefrontEnabled,
+        mtnWalletTopUpEnabled,
       });
       res.json(settings);
     } catch (error) {
