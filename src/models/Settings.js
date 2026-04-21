@@ -91,6 +91,11 @@ const settingsSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // Whether MTN Mobile Money (MoMo) can be used for wallet top-ups
+    mtnWalletTopUpEnabled: {
+      type: Boolean,
+      default: false,
+    },
     paystackStorefrontEnabled: {
       type: Boolean,
       default: false,

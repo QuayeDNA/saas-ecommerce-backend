@@ -13,6 +13,35 @@ import {
 import paystackService from "./paystackService.js";
 import mtnMomoService from "./mtnMomoService.js";
 
+function normalizeGhanaPhoneNumber(phoneNumber) {
+  if (!phoneNumber) return "";
+  let cleaned = String(phoneNumber)
+    .trim()
+    .replace(/[^\d+]/g, "");
+
+  if (cleaned.startsWith("+")) {
+    cleaned = cleaned.slice(1);
+  }
+
+  if (cleaned.startsWith("00")) {
+    cleaned = cleaned.slice(2);
+  }
+
+  if (cleaned.startsWith("233")) {
+    return cleaned;
+  }
+
+  if (cleaned.startsWith("0")) {
+    return `233${cleaned.slice(1)}`;
+  }
+
+  if (cleaned.length === 9) {
+    return `233${cleaned}`;
+  }
+
+  return cleaned;
+}
+
 class WalletService {
   // ─── Shared Helpers ──────────────────────────────────────────────────────────
 
@@ -658,13 +687,19 @@ class WalletService {
     if (!user) throw new Error("User not found");
     if (amount <= 0) throw new Error("Amount must be greater than zero");
 
-    // MTN sandbox sometimes rejects non-ASCII characters in message fields
+    // MTN top-ups use the exact requested amount; do not apply Paystack wallet fees or gross-up logic.
+    // MTN sandbox sometimes rejects non-ASCII characters in message fields.
     const payerMessage = `Wallet top-up of ${amount} GHS`;
+
+    const normalizedPhone = normalizeGhanaPhoneNumber(phoneNumber);
+    if (!/^233\d{9}$/.test(normalizedPhone)) {
+      throw new Error("Enter a valid Ghana MTN phone number.");
+    }
 
     const referenceId = await mtnMomoService.requestToPay({
       amount,
       // currency removed — service auto-selects EUR/GHS based on environment
-      partyId: phoneNumber,
+      partyId: normalizedPhone,
       externalId: userId.toString(),
       payerMessage,
       payeeNote: `Top-up for user ${userId}`,
@@ -681,7 +716,7 @@ class WalletService {
       reference: referenceId,
       metadata: {
         momoReferenceId: referenceId,
-        phoneNumber,
+        phoneNumber: normalizedPhone,
         initiatedAt: new Date(),
       },
     });
