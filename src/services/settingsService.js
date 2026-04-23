@@ -16,6 +16,9 @@ class SettingsService {
       const result = {
         isSiteOpen: settings.isSiteOpen,
         customMessage: settings.customMessage,
+        greetingText: settings.greetingText,
+        welcomeMessage: settings.welcomeMessage,
+        showGreetingIcon: settings.showGreetingIcon,
         storefrontsOpen: settings.storefrontsOpen ?? true,
         storefrontsClosedMessage: settings.storefrontsClosedMessage || "",
       };
@@ -31,6 +34,15 @@ class SettingsService {
     const settingsDoc = await Settings.getInstance();
     settingsDoc.isSiteOpen = settings.isSiteOpen;
     settingsDoc.customMessage = settings.customMessage;
+    if (settings.greetingText !== undefined) {
+      settingsDoc.greetingText = settings.greetingText;
+    }
+    if (settings.welcomeMessage !== undefined) {
+      settingsDoc.welcomeMessage = settings.welcomeMessage;
+    }
+    if (settings.showGreetingIcon !== undefined) {
+      settingsDoc.showGreetingIcon = settings.showGreetingIcon;
+    }
     if (settings.storefrontsOpen !== undefined) {
       settingsDoc.storefrontsOpen = settings.storefrontsOpen;
     }
@@ -51,6 +63,9 @@ class SettingsService {
     const siteStatus = {
       isSiteOpen: settings.isSiteOpen,
       customMessage: settings.customMessage,
+      greetingText: settings.greetingText,
+      welcomeMessage: settings.welcomeMessage,
+      showGreetingIcon: settings.showGreetingIcon,
       storefrontsOpen: settings.storefrontsOpen ?? true,
       storefrontsClosedMessage: settings.storefrontsClosedMessage || "",
     };
@@ -87,6 +102,9 @@ class SettingsService {
       const siteStatus = {
         isSiteOpen: settings.isSiteOpen,
         customMessage: settings.customMessage,
+        greetingText: settings.greetingText,
+        welcomeMessage: settings.welcomeMessage,
+        showGreetingIcon: settings.showGreetingIcon,
         storefrontsOpen: settings.storefrontsOpen ?? true,
         storefrontsClosedMessage: settings.storefrontsClosedMessage || "",
       };
@@ -139,6 +157,9 @@ class SettingsService {
     const siteStatus = {
       isSiteOpen: settings.isSiteOpen,
       customMessage: settings.customMessage,
+      greetingText: settings.greetingText,
+      welcomeMessage: settings.welcomeMessage,
+      showGreetingIcon: settings.showGreetingIcon,
       storefrontsOpen: settings.storefrontsOpen ?? true,
       storefrontsClosedMessage: settings.storefrontsClosedMessage || "",
     };

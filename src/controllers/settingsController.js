@@ -19,10 +19,19 @@ class SettingsController {
 
   async updateSiteSettings(req, res) {
     try {
-      const { isSiteOpen, customMessage } = req.body;
+      const {
+        isSiteOpen,
+        customMessage,
+        greetingText,
+        welcomeMessage,
+        showGreetingIcon,
+      } = req.body;
       const settings = await settingsService.updateSiteSettings({
         isSiteOpen,
         customMessage,
+        greetingText,
+        welcomeMessage,
+        showGreetingIcon,
       });
       res.json(settings);
     } catch (error) {
@@ -229,6 +238,9 @@ class SettingsController {
       res.json({
         isSiteOpen: siteSettings.isSiteOpen,
         customMessage: siteSettings.customMessage,
+        greetingText: siteSettings.greetingText,
+        welcomeMessage: siteSettings.welcomeMessage,
+        showGreetingIcon: siteSettings.showGreetingIcon,
         storefrontsOpen: siteSettings.storefrontsOpen,
         storefrontsClosedMessage: siteSettings.storefrontsClosedMessage,
       });

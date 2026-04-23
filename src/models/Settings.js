@@ -12,6 +12,18 @@ const settingsSchema = new mongoose.Schema(
       default:
         "We're currently performing maintenance. Please check back later.",
     },
+    greetingText: {
+      type: String,
+      default: "",
+    },
+    welcomeMessage: {
+      type: String,
+      default: "Welcome back!",
+    },
+    showGreetingIcon: {
+      type: Boolean,
+      default: true,
+    },
     requireApprovalForSignup: {
       type: Boolean,
       default: true,
