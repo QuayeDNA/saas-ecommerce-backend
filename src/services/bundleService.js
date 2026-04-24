@@ -314,7 +314,7 @@ const bundleService = {
           throw new Error("Invalid providerId format");
         }
         bundleData.providerId = new mongoose.Types.ObjectId(
-          bundleData.providerId
+          bundleData.providerId,
         );
       }
 
@@ -333,9 +333,12 @@ const bundleService = {
       }
 
       // Validate required fields based on provider type
-      if (provider.code !== 'AFA') {
+      if (provider.code !== "AFA") {
         // For non-AFA bundles, data fields are required
-        if (bundleData.dataVolume === undefined || bundleData.dataVolume === null) {
+        if (
+          bundleData.dataVolume === undefined ||
+          bundleData.dataVolume === null
+        ) {
           throw new Error("Data volume is required for this bundle type");
         }
         if (bundleData.validity === undefined || bundleData.validity === null) {
@@ -415,11 +418,11 @@ const bundleService = {
           !mongoose.Types.ObjectId.isValid(updateData.providerId)
         ) {
           throw new Error(
-            "Invalid providerId format. Please provide a valid provider ID."
+            "Invalid providerId format. Please provide a valid provider ID.",
           );
         }
         updateData.providerId = new mongoose.Types.ObjectId(
-          updateData.providerId
+          updateData.providerId,
         );
       }
 
@@ -439,7 +442,10 @@ const bundleService = {
       }
 
       // Get current bundle to check provider type for validation
-      const currentBundle = await Bundle.findById(id).populate('providerId', 'code');
+      const currentBundle = await Bundle.findById(id).populate(
+        "providerId",
+        "code",
+      );
       if (!currentBundle) {
         throw new Error("Bundle not found");
       }
@@ -450,12 +456,18 @@ const bundleService = {
         : currentBundle.providerId?.code;
 
       // Validate required fields based on provider type
-      if (providerCode !== 'AFA') {
+      if (providerCode !== "AFA") {
         // For non-AFA bundles, data fields are required
-        if (updateData.dataVolume !== undefined && (updateData.dataVolume === null || updateData.dataVolume === '')) {
+        if (
+          updateData.dataVolume !== undefined &&
+          (updateData.dataVolume === null || updateData.dataVolume === "")
+        ) {
           throw new Error("Data volume cannot be empty for this bundle type");
         }
-        if (updateData.validity !== undefined && (updateData.validity === null || updateData.validity === '')) {
+        if (
+          updateData.validity !== undefined &&
+          (updateData.validity === null || updateData.validity === "")
+        ) {
           throw new Error("Validity cannot be empty for this bundle type");
         }
       }
@@ -463,7 +475,7 @@ const bundleService = {
       const bundle = await Bundle.findByIdAndUpdate(
         id,
         { ...updateData, updatedAt: new Date() },
-        { new: true, runValidators: true }
+        { new: true, runValidators: true },
       )
         .populate("providerId", "name logo code")
         .populate("packageId", "name description");
@@ -720,7 +732,7 @@ const bundleService = {
   },
 
   // Update bundle pricing tiers
-  updateBundlePricing: async (bundleId, pricingTiers) => {
+  updateBundlePricing: async (bundleId, pricingTiers, basePrice) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(bundleId)) {
         throw new Error("Invalid bundle ID");
@@ -731,8 +743,11 @@ const bundleService = {
         return null;
       }
 
-      // Use the model's method for updating pricing tiers
-      await bundle.updatePricingTiers(pricingTiers);
+      // Use the model's method for updating pricing tiers and optional base price
+      await bundle.updatePricingTiers({
+        ...pricingTiers,
+        basePrice,
+      });
 
       return bundle;
     } catch (error) {

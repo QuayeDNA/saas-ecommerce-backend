@@ -172,7 +172,7 @@ const bundleSchema = new mongoose.Schema(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 // Indexes for efficient querying
@@ -266,6 +266,15 @@ bundleSchema.methods.getPriceForUserType = function (userType) {
 bundleSchema.methods.updatePricingTiers = function (pricingData, updatedBy) {
   if (!this.pricingTiers) {
     this.pricingTiers = {};
+  }
+
+  // Update base price if provided and keep default in sync
+  if (
+    pricingData.basePrice !== undefined &&
+    typeof pricingData.basePrice === "number"
+  ) {
+    this.price = pricingData.basePrice;
+    this.pricingTiers.default = pricingData.basePrice;
   }
 
   // Update individual pricing tiers

@@ -306,7 +306,7 @@ const bundleController = {
       const { period = "30d" } = req.query;
       const analytics = await bundleService.getProviderBundleAnalytics(
         providerId,
-        period
+        period,
       );
 
       res.json({
@@ -358,7 +358,7 @@ const bundleController = {
   updateBundlePricing: async (req, res) => {
     try {
       const { id } = req.params;
-      const { pricingTiers } = req.body;
+      const { pricingTiers, basePrice } = req.body;
 
       // Validate pricing tiers structure
       const validUserTypes = [
@@ -369,14 +369,14 @@ const bundleController = {
         "default",
       ];
       const invalidUserTypes = Object.keys(pricingTiers || {}).filter(
-        (userType) => !validUserTypes.includes(userType)
+        (userType) => !validUserTypes.includes(userType),
       );
 
       if (invalidUserTypes.length > 0) {
         return res.status(400).json({
           success: false,
           message: `Invalid user types: ${invalidUserTypes.join(
-            ", "
+            ", ",
           )}. Valid types are: ${validUserTypes.join(", ")}`,
         });
       }
@@ -391,7 +391,21 @@ const bundleController = {
         }
       }
 
-      const bundle = await bundleService.updateBundlePricing(id, pricingTiers);
+      if (
+        basePrice !== undefined &&
+        (typeof basePrice !== "number" || basePrice < 0)
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid basePrice: must be a positive number",
+        });
+      }
+
+      const bundle = await bundleService.updateBundlePricing(
+        id,
+        pricingTiers,
+        basePrice,
+      );
 
       if (!bundle) {
         return res.status(404).json({
@@ -444,7 +458,7 @@ const bundleController = {
 
       for (const update of updates) {
         try {
-          const { bundleId, pricingTiers } = update;
+          const { bundleId, pricingTiers, basePrice } = update;
 
           if (!bundleId || !pricingTiers) {
             errors.push({
@@ -454,9 +468,20 @@ const bundleController = {
             continue;
           }
 
+          if (
+            basePrice !== undefined &&
+            (typeof basePrice !== "number" || basePrice < 0)
+          ) {
+            errors.push({
+              bundleId,
+              error: "Invalid basePrice: must be a positive number",
+            });
+            continue;
+          }
+
           // Validate user types
           const invalidUserTypes = Object.keys(pricingTiers).filter(
-            (userType) => !validUserTypes.includes(userType)
+            (userType) => !validUserTypes.includes(userType),
           );
 
           if (invalidUserTypes.length > 0) {
@@ -484,7 +509,8 @@ const bundleController = {
 
           const bundle = await bundleService.updateBundlePricing(
             bundleId,
-            pricingTiers
+            pricingTiers,
+            basePrice,
           );
 
           if (bundle) {
