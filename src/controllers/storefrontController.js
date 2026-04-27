@@ -103,13 +103,13 @@ class StorefrontController {
           );
         }
 
-        const customerEmail = order.storefrontData.customerInfo?.email;
-        if (!customerEmail) {
-          return badRequest(
-            res,
-            "Customer email is required for Paystack payments",
-          );
-        }
+        const rawCustomerEmail = order.storefrontData.customerInfo?.email;
+        const customerPhone = (
+          order.storefrontData.customerInfo?.phone || ""
+        ).replace(/\D/g, "");
+        const customerEmail =
+          rawCustomerEmail ||
+          `customer-${customerPhone}@storefront.brytelink.com`;
 
         await paystackService.ensureKeys().catch((e) =>
           logger.warn("[createStorefrontOrder] ensureKeys failed", {

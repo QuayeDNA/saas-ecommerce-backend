@@ -2,7 +2,6 @@
 import cron from "node-cron";
 import paystackService from "../services/paystackService.js";
 import storefrontService from "../services/storefrontService.js";
-import walletService from "../services/walletService.js";
 import Order from "../models/Order.js";
 import PaystackVerificationTask from "../models/PaystackVerificationTask.js";
 import logger from "../utils/logger.js";
@@ -21,9 +20,18 @@ async function processTask(task) {
     if (!paystackData || paystackData.status !== "success") {
       const reason =
         paystackData?.message || "Paystack transaction not successful";
-      logger.warn(
-        `[PaystackVerificationJob] Reference ${reference} not successful: ${reason}`,
-      );
+      const taskAgeMinutes = task.createdAt
+        ? (Date.now() - new Date(task.createdAt).getTime()) / 60000
+        : 0;
+      if (taskAgeMinutes > 15) {
+        logger.warn(
+          `[PaystackVerificationJob] Reference ${reference} not successful after ${Math.round(taskAgeMinutes)}min: ${reason}`,
+        );
+      } else {
+        logger.debug(
+          `[PaystackVerificationJob] Reference ${reference} pending (${Math.round(taskAgeMinutes)}min old, awaiting customer payment)`,
+        );
+      }
 
       // Keep retrying for a while; eventually mark as failed to avoid infinite loops.
       if (task.attemptCount >= MAX_ATTEMPTS) {
@@ -47,22 +55,20 @@ async function processTask(task) {
       try {
         const result =
           await storefrontService.processPaystackPayment(paystackData);
-        // If result indicates duplicate, that's fine.
+        // If already processed by the webhook, mark done immediately
+        // so this task stops retrying.
+        if (result?.duplicate) {
+          task.status = "done";
+          task.lastError = null;
+          await task.save();
+          logger.info(
+            `[PaystackVerificationJob] Reference ${reference} already processed by webhook — marking done`,
+          );
+          return;
+        }
       } catch (err) {
         logger.error(
           `[PaystackVerificationJob] Error processing storefront payment for ${reference}: ${err.message}`,
-        );
-        throw err;
-      }
-    } else if (task.kind === "wallet") {
-      try {
-        await walletService.processPaystackWebhook({
-          event: "charge.success",
-          data: paystackData,
-        });
-      } catch (err) {
-        logger.error(
-          `[PaystackVerificationJob] Error processing wallet top-up for ${reference}: ${err.message}`,
         );
         throw err;
       }
