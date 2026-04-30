@@ -762,7 +762,9 @@ const bundleService = {
           await import("../models/StorefrontPricing.js")
         ).default;
 
-        const pricingRecords = await StorefrontPricing.find({ bundleId }).populate({
+        const pricingRecords = await StorefrontPricing.find({
+          bundleId,
+        }).populate({
           path: "storefrontId",
           select: "agentId",
           populate: { path: "agentId", select: "userType" },
@@ -770,7 +772,8 @@ const bundleService = {
 
         const updateOps = [];
         for (const record of pricingRecords) {
-          const agentUserType = record.storefrontId?.agentId?.userType || "agent";
+          const agentUserType =
+            record.storefrontId?.agentId?.userType || "agent";
           const newTierPrice = bundle.getPriceForUserType(agentUserType);
 
           if (newTierPrice === record.tierPrice) continue;
