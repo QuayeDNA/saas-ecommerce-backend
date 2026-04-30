@@ -603,10 +603,39 @@ class StorefrontService {
             `Bundle not available in this store: ${item.bundleId}`,
           );
         bundle = pricingRecord.bundleId;
-        tierPrice = pricingRecord.tierPrice;
+
+        // Always fetch live bundle price — StorefrontPricing.tierPrice may be stale
+        // if admin reduced the base price after the agent set up their storefront.
+        const liveTierPrice = bundle.getPriceForUserType
+          ? bundle.getPriceForUserType(storefront.agentId?.userType || "agent")
+          : (bundle.pricingTiers?.agent ?? bundle.price);
+
+        // Use whichever is lower: stored tier or live tier.
+        // - Price drop  → agent pays live (lower) price, profit increases ✓
+        // - Price rise  → agent pays stored price until they re-save pricing ✓
+        tierPrice = Math.min(pricingRecord.tierPrice, liveTierPrice);
+
+        // If admin reduced the base price, sync the record so future reads are correct
+        if (liveTierPrice < pricingRecord.tierPrice) {
+          StorefrontPricing.findByIdAndUpdate(pricingRecord._id, {
+            tierPrice: liveTierPrice,
+            markup: pricingRecord.customPrice - liveTierPrice,
+            markupPercentage:
+              liveTierPrice > 0
+                ? ((pricingRecord.customPrice - liveTierPrice) /
+                    liveTierPrice) *
+                  100
+                : 0,
+          }).catch((err) =>
+            logger.warn(
+              `[StorefrontService] tierPrice sync failed for ${pricingRecord._id}: ${err.message}`,
+            ),
+          );
+        }
+
         displayPrice = pricingRecord.hasCustomPrice
           ? pricingRecord.customPrice
-          : pricingRecord.tierPrice;
+          : tierPrice;
       } else {
         bundle = await Bundle.findOne({
           _id: item.bundleId,

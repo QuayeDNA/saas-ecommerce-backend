@@ -749,6 +749,64 @@ const bundleService = {
         basePrice,
       });
 
+      // ── Sync StorefrontPricing records that use this bundle ──────────────────
+      // For each user type whose price changed, update the stored tierPrice on
+      // any StorefrontPricing record where:
+      //   1. The tierPrice stored matches the OLD bundle price (it was auto-set,
+      //      not manually overridden by the agent at a different value).
+      //   2. The agent has NOT set a custom customer price above the new tierPrice
+      //      (if they have, we only update tierPrice + recalculate markup; the
+      //      customer-facing price stays untouched).
+      try {
+        const StorefrontPricing = (
+          await import("../models/StorefrontPricing.js")
+        ).default;
+
+        const pricingRecords = await StorefrontPricing.find({ bundleId }).populate({
+          path: "storefrontId",
+          select: "agentId",
+          populate: { path: "agentId", select: "userType" },
+        });
+
+        const updateOps = [];
+        for (const record of pricingRecords) {
+          const agentUserType = record.storefrontId?.agentId?.userType || "agent";
+          const newTierPrice = bundle.getPriceForUserType(agentUserType);
+
+          if (newTierPrice === record.tierPrice) continue;
+
+          const newCustomPrice = record.hasCustomPrice
+            ? record.customPrice
+            : newTierPrice;
+
+          updateOps.push({
+            updateOne: {
+              filter: { _id: record._id },
+              update: {
+                tierPrice: newTierPrice,
+                customPrice: newCustomPrice,
+                markup: newCustomPrice - newTierPrice,
+                markupPercentage:
+                  newTierPrice > 0
+                    ? ((newCustomPrice - newTierPrice) / newTierPrice) * 100
+                    : 0,
+              },
+            },
+          });
+        }
+
+        if (updateOps.length > 0) {
+          await StorefrontPricing.bulkWrite(updateOps);
+          logger.info(
+            `[BundleService] Synced tierPrice on ${updateOps.length} StorefrontPricing record(s) for bundle ${bundleId}`,
+          );
+        }
+      } catch (syncErr) {
+        logger.error(
+          `[BundleService] StorefrontPricing sync failed for bundle ${bundleId}: ${syncErr.message}`,
+        );
+      }
+
       return bundle;
     } catch (error) {
       logger.error("Error updating bundle pricing:", error);
