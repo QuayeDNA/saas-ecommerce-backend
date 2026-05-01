@@ -1,33 +1,43 @@
 // src/services/emailService.js
-import nodemailer from 'nodemailer';
-import logger from '../utils/logger.js';
+import nodemailer from "nodemailer";
+import logger from "../utils/logger.js";
 
 class EmailService {
   constructor() {
     if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
       const missingVars = [];
-      if (!process.env.EMAIL_USER) missingVars.push('EMAIL_USER');
-      if (!process.env.EMAIL_PASSWORD) missingVars.push('EMAIL_PASSWORD');
-      
-      throw new Error(`Gmail configuration missing. Required environment variables: ${missingVars.join(', ')}`);
+      if (!process.env.EMAIL_USER) missingVars.push("EMAIL_USER");
+      if (!process.env.EMAIL_PASSWORD) missingVars.push("EMAIL_PASSWORD");
+
+      logger.warn(
+        `Gmail configuration missing. Email features disabled. Missing environment variables: ${missingVars.join(", ")}`,
+      );
+      this.enabled = false;
+      this.transporter = null;
+      return;
     }
 
     // Gmail SMTP configuration
     const transportOptions = {
-      service: 'gmail',
+      service: "gmail",
       auth: {
         user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD
-      }
+        pass: process.env.EMAIL_PASSWORD,
+      },
     };
-    
+
     this.transporter = nodemailer.createTransport(transportOptions);
   }
 
   async verifyConnection() {
+    if (!this.enabled) {
+      logger.warn("Email transporter not configured; skipping verification");
+      return false;
+    }
+
     try {
       await this.transporter.verify();
-      logger.info('Email transporter connection verified successfully');
+      logger.info("Email transporter connection verified successfully");
       return true;
     } catch (error) {
       logger.error(`Email transporter verification failed: ${error.message}`);
@@ -35,12 +45,23 @@ class EmailService {
     }
   }
 
-   async sendAgentVerificationEmail(email, token, agentCode) {
+  async sendAgentVerificationEmail(email, token, agentCode) {
+    if (!this.enabled) {
+      logger.warn(
+        `[EMAIL_DISABLED] Skipping agent verification email to ${email}`,
+      );
+      logger.info(
+        `[EMAIL_DISABLED] Verification Link (simulated): ${process.env.FRONTEND_URL}/verify-account?token=${token}`,
+      );
+      logger.info(`[EMAIL_DISABLED] Agent Code: ${agentCode}`);
+      return;
+    }
+
     const verificationUrl = `${process.env.FRONTEND_URL}/verify-account?token=${token}`;
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: email,
-      subject: 'Welcome to SaaS E-commerce - Verify Your Agent Account',
+      subject: "Welcome to SaaS E-commerce - Verify Your Agent Account",
       html: `
         <h2>Welcome to SaaS E-commerce Platform!</h2>
         <p>Your agent account has been created successfully.</p>
@@ -51,10 +72,10 @@ class EmailService {
         <p>This link will expire in 10 minutes.</p>
         <hr>
         <p><small>Keep your agent code secure and only share it with legitimate customers.</small></p>
-      `
+      `,
     };
 
-    if (process.env.NODE_ENV === 'development') {
+    if (process.env.NODE_ENV === "development") {
       logger.info(`[DEV] Simulated agent verification email to ${email}`);
       logger.info(`[DEV] Verification Link: ${verificationUrl}`);
       logger.info(`[DEV] Agent Code: ${agentCode}`);
@@ -66,25 +87,35 @@ class EmailService {
       logger.info(`Agent verification email sent to ${email}`);
     } catch (error) {
       logger.error(`Failed to send agent verification email: ${error.message}`);
-      throw new Error('Failed to send verification email');
+      throw new Error("Failed to send verification email");
     }
   }
 
   async sendVerificationEmail(email, token) {
+    if (!this.enabled) {
+      logger.warn(
+        `[EMAIL_DISABLED] Skipping customer verification email to ${email}`,
+      );
+      logger.info(
+        `[EMAIL_DISABLED] Verification Link (simulated): ${process.env.FRONTEND_URL}/verify-account?token=${token}`,
+      );
+      return;
+    }
+
     const verificationUrl = `${process.env.FRONTEND_URL}/verify-account?token=${token}`;
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: email,
-      subject: 'Verify Your Customer Account',
+      subject: "Verify Your Customer Account",
       html: `
         <h2>Welcome to SaaS E-commerce!</h2>
         <p>Please click the link below to verify your customer account:</p>
         <a href="${verificationUrl}" style="background-color: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Verify Account</a>
         <p>This link will expire in 10 minutes.</p>
-      `
+      `,
     };
 
-    if (process.env.NODE_ENV === 'development') {
+    if (process.env.NODE_ENV === "development") {
       logger.info(`[DEV] Simulated customer verification email to ${email}`);
       logger.info(`[DEV] Verification Link: ${verificationUrl}`);
       return;
@@ -94,17 +125,27 @@ class EmailService {
       await this.transporter.sendMail(mailOptions);
       logger.info(`Customer verification email sent to ${email}`);
     } catch (error) {
-      logger.error(`Failed to send customer verification email: ${error.message}`);
-      throw new Error('Failed to send verification email');
+      logger.error(
+        `Failed to send customer verification email: ${error.message}`,
+      );
+      throw new Error("Failed to send verification email");
     }
   }
 
   async sendPasswordResetEmail(email, token) {
+    if (!this.enabled) {
+      logger.warn(`[EMAIL_DISABLED] Skipping password reset email to ${email}`);
+      logger.info(
+        `[EMAIL_DISABLED] Reset Link (simulated): ${process.env.FRONTEND_URL}/reset-password?token=${token}`,
+      );
+      return;
+    }
+
     const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: email,
-      subject: 'Password Reset Request',
+      subject: "Password Reset Request",
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #333;">Password Reset Request</h2>
@@ -123,29 +164,41 @@ class EmailService {
             If you didn't request this password reset, please ignore this email.
           </p>
         </div>
-      `
+      `,
     };
 
-    if (process.env.NODE_ENV === 'development') {
-      logger.info(`[DEV] Simulated password reset email to ${email}:`, mailOptions);
+    if (process.env.NODE_ENV === "development") {
+      logger.info(
+        `[DEV] Simulated password reset email to ${email}:`,
+        mailOptions,
+      );
       return;
     }
 
     try {
       const info = await this.transporter.sendMail(mailOptions);
-      logger.info(`Password reset email sent to ${email}`, { messageId: info.messageId });
+      logger.info(`Password reset email sent to ${email}`, {
+        messageId: info.messageId,
+      });
       return info;
     } catch (error) {
-      logger.error(`Failed to send password reset email to ${email}: ${error.message}`);
-      throw new Error('Failed to send password reset email');
+      logger.error(
+        `Failed to send password reset email to ${email}: ${error.message}`,
+      );
+      throw new Error("Failed to send password reset email");
     }
   }
 
   async sendWelcomeEmail(email, userName) {
+    if (!this.enabled) {
+      logger.warn(`[EMAIL_DISABLED] Skipping welcome email to ${email}`);
+      return;
+    }
+
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: email,
-      subject: 'Welcome to SaaS E-commerce!',
+      subject: "Welcome to SaaS E-commerce!",
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #333;">Welcome ${userName}!</h2>
@@ -162,21 +215,25 @@ class EmailService {
             If you have any questions, feel free to contact our support team.
           </p>
         </div>
-      `
+      `,
     };
 
-    if (process.env.NODE_ENV === 'development') {
+    if (process.env.NODE_ENV === "development") {
       logger.info(`[DEV] Simulated welcome email to ${email}:`, mailOptions);
       return;
     }
 
     try {
       const info = await this.transporter.sendMail(mailOptions);
-      logger.info(`Welcome email sent to ${email}`, { messageId: info.messageId });
+      logger.info(`Welcome email sent to ${email}`, {
+        messageId: info.messageId,
+      });
       return info;
     } catch (error) {
-      logger.error(`Failed to send welcome email to ${email}: ${error.message}`);
-      throw new Error('Failed to send welcome email');
+      logger.error(
+        `Failed to send welcome email to ${email}: ${error.message}`,
+      );
+      throw new Error("Failed to send welcome email");
     }
   }
 }
