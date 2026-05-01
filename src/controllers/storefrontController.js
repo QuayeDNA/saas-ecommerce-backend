@@ -67,137 +67,112 @@ class StorefrontController {
    *   bank_transfer → same as mobile_money
    */
   async createStorefrontOrder(req, res) {
-    try {
-      if (!validationGuard(req, res)) return;
+  try {
+    if (!validationGuard(req, res)) return;
 
-      const { businessName } = req.params;
-      const orderData = req.body;
+    const { businessName } = req.params;
+    const orderData = req.body;
 
-      logger.info(`[createStorefrontOrder] ${businessName}`, {
-        items: orderData.items?.length,
-        customer: orderData.customerInfo?.name,
-        paymentType: orderData.paymentMethod?.type,
-      });
+    logger.info(`[createStorefrontOrder] ${businessName}`, {
+      items: orderData.items?.length,
+      customer: orderData.customerInfo?.name,
+      paymentType: orderData.paymentMethod?.type,
+    });
 
-      const order = await storefrontService.createStorefrontOrder(
-        businessName,
-        orderData,
-      );
+    const order = await storefrontService.createStorefrontOrder(
+      businessName,
+      orderData,
+    );
 
-      // ── Paystack inline checkout ─────────────────────────────────────────────
-      if (orderData.paymentMethod?.type === "paystack") {
-        // Guard: check admin toggle for storefront Paystack payments
-        try {
-          const settingsSvc = (await import("../services/settingsService.js"))
-            .default;
-          const apiSettings = await settingsSvc.getApiSettings();
-          if (!apiSettings.paystackStorefrontEnabled) {
-            return badRequest(
-              res,
-              "Paystack payments are currently disabled for storefronts.",
-            );
-          }
-        } catch (settingsErr) {
-          logger.warn(
-            `[createStorefrontOrder] Could not verify paystackStorefrontEnabled: ${settingsErr.message}`,
+    // ── Paystack inline checkout ─────────────────────────────────────────────
+    if (orderData.paymentMethod?.type === "paystack") {
+      // Guard: check admin toggle for storefront Paystack payments
+      try {
+        const settingsSvc = (await import("../services/settingsService.js"))
+          .default;
+        const apiSettings = await settingsSvc.getApiSettings();
+        if (!apiSettings.paystackStorefrontEnabled) {
+          return badRequest(
+            res,
+            "Paystack payments are currently disabled for storefronts.",
           );
         }
-
-        const rawCustomerEmail = order.storefrontData.customerInfo?.email;
-        const customerPhone = (
-          order.storefrontData.customerInfo?.phone || ""
-        ).replace(/\D/g, "");
-        const customerEmail =
-          rawCustomerEmail ||
-          `customer-${customerPhone}@storefront.brytelink.com`;
-
-        await paystackService.ensureKeys().catch((e) =>
-          logger.warn("[createStorefrontOrder] ensureKeys failed", {
-            message: e.message,
-          }),
+      } catch (settingsErr) {
+        logger.warn(
+          `[createStorefrontOrder] Could not verify paystackStorefrontEnabled: ${settingsErr.message}`,
         );
-
-        // Reference encodes the order ID so we can look it up without needing metadata
-        const reference = `storefront_${order._id}`;
-        const amountPesewas = paystackService.convertToPesewas(
-          order.total || 0,
-        );
-
-        // Callback URL: optional public backend → redirect → frontend
-        const frontendBase = (
-          process.env.FRONTEND_URL || "http://localhost:5173"
-        ).replace(/\/$/, "");
-        const publicBase = process.env.PUBLIC_URL
-          ? process.env.PUBLIC_URL.replace(/\/$/, "")
-          : null;
-        const callbackUrl = publicBase
-          ? `${publicBase}/wallet/topup/callback`
-          : `${frontendBase}/storefront/callback`;
-
-        const init = await initializePaystackCheckout({
-          email: customerEmail,
-          amountPesewas,
-          reference,
-          callbackUrl,
-          metadata: {
-            // orderId in metadata is kept for backward compatibility with old webhook handlers
-            orderId: order._id.toString(),
-            orderNumber: order.orderNumber,
-            storefrontId: order.storefrontData.storefrontId?.toString(),
-          },
-        });
-
-        // Build response – include fee breakdown when fees were delegated
-        const responseData = {
-          orderId: order._id,
-          orderNumber: order.orderNumber,
-          total: order.total, // amount charged (may include fees)
-          subtotal: order.subtotal ?? order.total, // base product price
-          status: order.status,
-          paymentMethod: "paystack",
-          paystack: {
-            authorizationUrl: init.authorization_url,
-            reference,
-            accessCode: init.access_code,
-          },
-        };
-
-        // Attach fee breakdown if fees were delegated to customer
-        if (order.storefrontData?.feeBreakdown) {
-          responseData.feeBreakdown = order.storefrontData.feeBreakdown;
-        }
-
-        return res.status(201).json({
-          success: true,
-          message: "Order created. Paystack checkout initialized.",
-          data: responseData,
-        });
       }
 
-      // ── Mobile Money / Bank Transfer (manual) ────────────────────────────────
-      const paymentTypeLabel =
-        orderData.paymentMethod?.type === "mobile_money"
-          ? "Mobile Money"
-          : "Bank Transfer";
+      await paystackService.ensureKeys().catch((e) =>
+        logger.warn("[createStorefrontOrder] ensureKeys failed", {
+          message: e.message,
+        }),
+      );
+
+      // Reference encodes the order ID so we can look it up without needing metadata.
+      // We do NOT call initializePaystackCheckout here — the Paystack inline popup
+      // initializes its own transaction client-side. Pre-registering via the backend
+      // API and then opening the popup with the same reference causes Paystack to
+      // reject the popup initialization if there is any amount mismatch (even 1
+      // pesewa from floating-point rounding), which is the root cause of the
+      // intermittent "Unable to process transaction" errors customers reported.
+      const reference = `storefront_${order._id}`;
+
+      // Convert the backend-computed total (which already includes any fee gross-up)
+      // to pesewas so the frontend popup uses the exact same amount the order was
+      // created with — no client-side re-calculation needed.
+      const amountPesewas = paystackService.convertToPesewas(order.total || 0);
+
+      const responseData = {
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+        total: order.total,       // amount the customer will be charged (fees included)
+        subtotal: order.subtotal ?? order.total, // base bundle price before fees
+        status: order.status,
+        paymentMethod: "paystack",
+        paystack: {
+          reference,
+          amountPesewas, // send exact pesewa value so frontend doesn't recalculate
+          // No authorizationUrl — popup handles its own initialization
+        },
+      };
+
+      // Attach fee breakdown if fees were delegated to customer
+      if (order.storefrontData?.feeBreakdown) {
+        responseData.feeBreakdown = order.storefrontData.feeBreakdown;
+      }
+
       return res.status(201).json({
         success: true,
-        message: `Order placed! Please complete your ${paymentTypeLabel} payment and the store owner will verify it.`,
-        data: {
-          orderId: order._id,
-          orderNumber: order.orderNumber,
-          total: order.total,
-          subtotal: order.subtotal ?? order.total,
-          status: order.status,
-          paymentMethod: orderData.paymentMethod?.type,
-          instructions:
-            "Send the exact amount and provide your transaction reference to the store owner for verification.",
-        },
+        message: "Order created. Complete payment via Paystack.",
+        data: responseData,
       });
-    } catch (err) {
-      logger.error(`[createStorefrontOrder] ${err.message}`);
-      res.status(400).json({ success: false, message: err.message });
     }
+
+    // ── Mobile Money / Bank Transfer (manual) ────────────────────────────────
+    const paymentTypeLabel =
+      orderData.paymentMethod?.type === "mobile_money"
+        ? "Mobile Money"
+        : "Bank Transfer";
+    return res.status(201).json({
+      success: true,
+      message: `Order placed! Please complete your ${paymentTypeLabel} payment and the store owner will verify it.`,
+      data: {
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+        total: order.total,
+        subtotal: order.subtotal ?? order.total,
+        status: order.status,
+        paymentMethod: orderData.paymentMethod?.type,
+        instructions:
+          "Send the exact amount and provide your transaction reference to the store owner for verification.",
+      },
+    });
+  } catch (err) {
+    logger.error(`[createStorefrontOrder] ${err.message}`);
+    res.status(400).json({ success: false, message: err.message });
   }
+}
 
   /**
    * GET /api/storefront/paystack/verify?reference=storefront_<orderId>
