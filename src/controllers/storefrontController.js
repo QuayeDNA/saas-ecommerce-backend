@@ -1,6 +1,7 @@
 // src/controllers/storefrontController.js
 import storefrontService from "../services/storefrontService.js";
 import paystackService from "../services/paystackService.js";
+import { initializePaystackCheckout } from "../utils/paystackHelpers.js";
 import { validationResult } from "express-validator";
 import logger from "../utils/logger.js";
 import Order from "../models/Order.js";
@@ -102,39 +103,62 @@ class StorefrontController {
           );
         }
 
+        const rawCustomerEmail = order.storefrontData.customerInfo?.email;
+        const customerPhone = (
+          order.storefrontData.customerInfo?.phone || ""
+        ).replace(/\D/g, "");
+        const customerEmail =
+          rawCustomerEmail ||
+          `customer-${customerPhone}@storefront.brytelink.com`;
+
         await paystackService.ensureKeys().catch((e) =>
           logger.warn("[createStorefrontOrder] ensureKeys failed", {
             message: e.message,
           }),
         );
 
-        // Reference encodes the order ID so we can look it up without needing metadata.
-        // We do NOT call initializePaystackCheckout here — the Paystack inline popup
-        // initializes its own transaction client-side. Pre-registering via the backend
-        // API and then opening the popup with the same reference causes Paystack to
-        // reject the popup initialization if there is any amount mismatch (even 1
-        // pesewa from floating-point rounding), which is the root cause of the
-        // intermittent "Unable to process transaction" errors customers reported.
+        // Reference encodes the order ID so we can look it up without needing metadata
         const reference = `storefront_${order._id}`;
-
-        // Convert the backend-computed total (which already includes any fee gross-up)
-        // to pesewas so the frontend popup uses the exact same amount the order was
-        // created with — no client-side re-calculation needed.
         const amountPesewas = paystackService.convertToPesewas(
           order.total || 0,
         );
 
+        // Callback URL: optional public backend → redirect → frontend
+        const frontendBase = (
+          process.env.FRONTEND_URL || "http://localhost:5173"
+        ).replace(/\/$/, "");
+        const publicBase = process.env.PUBLIC_URL
+          ? process.env.PUBLIC_URL.replace(/\/$/, "")
+          : null;
+        const callbackUrl = publicBase
+          ? `${publicBase}/wallet/topup/callback`
+          : `${frontendBase}/storefront/callback`;
+
+        const init = await initializePaystackCheckout({
+          email: customerEmail,
+          amountPesewas,
+          reference,
+          callbackUrl,
+          metadata: {
+            // orderId in metadata is kept for backward compatibility with old webhook handlers
+            orderId: order._id.toString(),
+            orderNumber: order.orderNumber,
+            storefrontId: order.storefrontData.storefrontId?.toString(),
+          },
+        });
+
+        // Build response – include fee breakdown when fees were delegated
         const responseData = {
           orderId: order._id,
           orderNumber: order.orderNumber,
-          total: order.total, // amount the customer will be charged (fees included)
-          subtotal: order.subtotal ?? order.total, // base bundle price before fees
+          total: order.total, // amount charged (may include fees)
+          subtotal: order.subtotal ?? order.total, // base product price
           status: order.status,
           paymentMethod: "paystack",
           paystack: {
+            authorizationUrl: init.authorization_url,
             reference,
-            amountPesewas, // send exact pesewa value so frontend doesn't recalculate
-            // No authorizationUrl — popup handles its own initialization
+            accessCode: init.access_code,
           },
         };
 
@@ -145,7 +169,7 @@ class StorefrontController {
 
         return res.status(201).json({
           success: true,
-          message: "Order created. Complete payment via Paystack.",
+          message: "Order created. Paystack checkout initialized.",
           data: responseData,
         });
       }
