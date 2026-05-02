@@ -1,27 +1,31 @@
 // src/services/packageService.js
-import Package from '../models/Package.js';
-import Provider from '../models/Provider.js';
-import logger from '../utils/logger.js';
+import Package from "../models/Package.js";
+import Provider from "../models/Provider.js";
+import logger from "../utils/logger.js";
 
 class PackageService {
   // Create a new package
   async createPackage(packageData) {
     try {
       // Validate provider exists and is active
-      const providerExists = await Provider.exists({ 
+      const providerExists = await Provider.exists({
         code: packageData.provider,
         isDeleted: false,
-        isActive: true
+        isActive: true,
       });
-      
+
       if (!providerExists) {
-        throw new Error(`Provider ${packageData.provider} does not exist or is inactive`);
+        throw new Error(
+          `Provider ${packageData.provider} does not exist or is inactive`,
+        );
       }
 
       const packageGroup = new Package(packageData);
       await packageGroup.save();
-      
-      logger.info(`Package created: ${packageGroup._id} by user ${packageData.createdBy}`);
+
+      logger.info(
+        `Package created: ${packageGroup._id} by user ${packageData.createdBy}`,
+      );
       return packageGroup;
     } catch (error) {
       logger.error(`Package creation failed: ${error.message}`);
@@ -31,44 +35,79 @@ class PackageService {
 
   // Get packages with filtering and pagination
   async getPackages(filters = {}, pagination = {}) {
-    const { page = 1, limit = 20, sortBy = 'createdAt', sortOrder = -1 } = pagination;
-    const { search, provider, category, isActive, includeDeleted = false } = filters;
-    
+    const {
+      page = 1,
+      limit = 20,
+      sortBy = "createdAt",
+      sortOrder = -1,
+    } = pagination;
+    const {
+      search,
+      provider,
+      category,
+      packageSlug,
+      packageName,
+      isActive,
+      includeDeleted = false,
+    } = filters;
+
     const query = {};
-    
+
     if (!includeDeleted) {
       query.isDeleted = false;
     }
-    
+
     if (provider) query.provider = provider;
-    if (category) query.category = category;
     if (isActive !== undefined) query.isActive = isActive;
-    
-    if (search) {
+
+    if (packageSlug) {
+      const normalizedSlug = packageSlug.toString().trim().toLowerCase();
+      const phrase = normalizedSlug.replace(/[-_]+/g, " ");
       query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } }
+        { slug: normalizedSlug },
+        { category: normalizedSlug },
+        { name: { $regex: new RegExp(phrase.replace(/\s+/g, "\\s+"), "i") } },
       ];
+    } else {
+      if (category) query.category = category;
+      if (packageName) {
+        const phrase = packageName.toString().trim().replace(/[-_]+/g, " ");
+        query.name = {
+          $regex: new RegExp(phrase.replace(/\s+/g, "\\s+"), "i"),
+        };
+      }
     }
-    
+
+    if (search) {
+      query.$or = query.$or
+        ? query.$or.concat([
+            { name: { $regex: search, $options: "i" } },
+            { description: { $regex: search, $options: "i" } },
+          ])
+        : [
+            { name: { $regex: search, $options: "i" } },
+            { description: { $regex: search, $options: "i" } },
+          ];
+    }
+
     const [packages, total] = await Promise.all([
       Package.find(query)
-        .populate('createdBy', 'fullName email')
-        .populate('updatedBy', 'fullName email')
+        .populate("createdBy", "fullName email")
+        .populate("updatedBy", "fullName email")
         .skip((page - 1) * limit)
         .limit(Number(limit))
         .sort({ [sortBy]: sortOrder }),
-      Package.countDocuments(query)
+      Package.countDocuments(query),
     ]);
-    
+
     return {
       packages,
       pagination: {
         total,
         page: Number(page),
         pages: Math.ceil(total / limit),
-        limit: Number(limit)
-      }
+        limit: Number(limit),
+      },
     };
   }
 
@@ -76,14 +115,41 @@ class PackageService {
   async getPackageById(packageId) {
     const packageGroup = await Package.findOne({
       _id: packageId,
-      isDeleted: false
-    }).populate('createdBy', 'fullName email')
-      .populate('updatedBy', 'fullName email');
-    
+      isDeleted: false,
+    })
+      .populate("createdBy", "fullName email")
+      .populate("updatedBy", "fullName email");
+
     if (!packageGroup) {
-      throw new Error('Package not found');
+      throw new Error("Package not found");
     }
-    
+
+    return packageGroup;
+  }
+
+  // Get single package by stable slug or package name
+  async getPackageBySlug(packageSlug) {
+    const normalizedSlug = packageSlug.toString().trim().toLowerCase();
+    const slugPattern = new RegExp(
+      normalizedSlug.replace(/[-_]+/g, "\\s*"),
+      "i",
+    );
+
+    const packageGroup = await Package.findOne({
+      isDeleted: false,
+      $or: [
+        { slug: normalizedSlug },
+        { category: normalizedSlug },
+        { name: { $regex: slugPattern } },
+      ],
+    })
+      .populate("createdBy", "fullName email")
+      .populate("updatedBy", "fullName email");
+
+    if (!packageGroup) {
+      throw new Error("Package not found");
+    }
+
     return packageGroup;
   }
 
@@ -92,37 +158,39 @@ class PackageService {
     // For super admins, don't filter by tenantId
     const query = {
       _id: packageId,
-      isDeleted: false
+      isDeleted: false,
     };
-    
+
     // Only filter by tenantId for non-super admin users
     if (tenantId) {
       query.tenantId = tenantId;
     }
-    
+
     const packageGroup = await Package.findOne(query);
-    
+
     if (!packageGroup) {
-      throw new Error('Package not found');
+      throw new Error("Package not found");
     }
-    
+
     // Validate provider if being updated
     if (updateData.provider) {
-      const providerExists = await Provider.exists({ 
+      const providerExists = await Provider.exists({
         code: updateData.provider,
         isDeleted: false,
-        isActive: true
+        isActive: true,
       });
-      
+
       if (!providerExists) {
-        throw new Error(`Provider ${updateData.provider} does not exist or is inactive`);
+        throw new Error(
+          `Provider ${updateData.provider} does not exist or is inactive`,
+        );
       }
     }
-    
+
     updateData.updatedBy = userId;
     Object.assign(packageGroup, updateData);
     await packageGroup.save();
-    
+
     logger.info(`Package updated: ${packageId} by user ${userId}`);
     return packageGroup;
   }
@@ -132,20 +200,20 @@ class PackageService {
     // For super admins, don't filter by tenantId
     const query = {
       _id: packageId,
-      isDeleted: false
+      isDeleted: false,
     };
-    
+
     // Only filter by tenantId for non-super admin users
     if (tenantId) {
       query.tenantId = tenantId;
     }
-    
+
     const packageGroup = await Package.findOne(query);
-    
+
     if (!packageGroup) {
-      throw new Error('Package not found');
+      throw new Error("Package not found");
     }
-    
+
     await packageGroup.softDelete(userId);
     logger.info(`Package deleted: ${packageId} by user ${userId}`);
     return packageGroup;
@@ -156,20 +224,20 @@ class PackageService {
     // For super admins, don't filter by tenantId
     const query = {
       _id: packageId,
-      isDeleted: true
+      isDeleted: true,
     };
-    
+
     // Only filter by tenantId for non-super admin users
     if (tenantId) {
       query.tenantId = tenantId;
     }
-    
+
     const packageGroup = await Package.findOne(query);
-    
+
     if (!packageGroup) {
-      throw new Error('Package not found');
+      throw new Error("Package not found");
     }
-    
+
     await packageGroup.restore();
     logger.info(`Package restored: ${packageId} by user ${userId}`);
     return packageGroup;
@@ -180,8 +248,8 @@ class PackageService {
     return await Package.find({
       provider,
       isActive: true,
-      isDeleted: false
-    }).populate('createdBy', 'fullName email');
+      isDeleted: false,
+    }).populate("createdBy", "fullName email");
   }
 
   // Get packages by category
@@ -189,8 +257,8 @@ class PackageService {
     return await Package.find({
       category,
       isActive: true,
-      isDeleted: false
-    }).populate('createdBy', 'fullName email');
+      isDeleted: false,
+    }).populate("createdBy", "fullName email");
   }
 
   // Get package statistics
@@ -202,45 +270,47 @@ class PackageService {
           _id: null,
           totalPackages: { $sum: 1 },
           activePackages: {
-            $sum: { $cond: ['$isActive', 1, 0] }
+            $sum: { $cond: ["$isActive", 1, 0] },
           },
           providerStats: {
             $push: {
-              provider: '$provider',
-              category: '$category',
-              isActive: '$isActive'
-            }
-          }
-        }
-      }
+              provider: "$provider",
+              category: "$category",
+              isActive: "$isActive",
+            },
+          },
+        },
+      },
     ]);
-    
+
     if (stats.length === 0) {
       return {
         totalPackages: 0,
         activePackages: 0,
-        providerStats: []
+        providerStats: [],
       };
     }
-    
+
     const result = stats[0];
-    
+
     // Group by provider
     const providerGroups = {};
-    result.providerStats.forEach(stat => {
+    result.providerStats.forEach((stat) => {
       if (!providerGroups[stat.provider]) {
         providerGroups[stat.provider] = { total: 0, active: 0 };
       }
       providerGroups[stat.provider].total++;
       if (stat.isActive) providerGroups[stat.provider].active++;
     });
-    
-    result.providerStats = Object.entries(providerGroups).map(([provider, counts]) => ({
-      provider,
-      totalPackages: counts.total,
-      activePackages: counts.active
-    }));
-    
+
+    result.providerStats = Object.entries(providerGroups).map(
+      ([provider, counts]) => ({
+        provider,
+        totalPackages: counts.total,
+        activePackages: counts.active,
+      }),
+    );
+
     return result;
   }
 }

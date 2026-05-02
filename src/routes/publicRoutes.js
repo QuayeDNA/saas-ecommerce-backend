@@ -16,6 +16,7 @@ router.get("/manifest", (req, res) => {
 
 // Public package routes (no authentication required)
 router.get("/packages", packageController.getPackages);
+router.get("/packages/slug/:slug", packageController.getPackageBySlug);
 router.get("/packages/:id", packageController.getPackage);
 router.get(
   "/packages/provider/:provider",

@@ -17,10 +17,12 @@ router.post(
   authenticate,
   authorize("admin", "super_admin"),
   validate(packageValidation.create),
-  packageController.createPackage
+  packageController.createPackage,
 );
 
 router.get("/", packageController.getPackages);
+
+router.get("/slug/:slug", packageController.getPackageBySlug);
 
 router.get("/:id", packageController.getPackage);
 
@@ -29,21 +31,21 @@ router.put(
   authenticate,
   authorize("admin", "super_admin"),
   validate(packageValidation.update),
-  packageController.updatePackage
+  packageController.updatePackage,
 );
 
 router.delete(
   "/:id",
   authenticate,
   authorize("admin", "super_admin"),
-  packageController.deletePackage
+  packageController.deletePackage,
 );
 
 router.post(
   "/:id/restore",
   authenticate,
   authorize("admin", "super_admin"),
-  packageController.restorePackage
+  packageController.restorePackage,
 );
 
 // Package-specific routes
@@ -59,7 +61,7 @@ router.post(
   authenticate,
   authorize("admin", "super_admin"),
   validate(bundleValidation.create),
-  bundleController.createBundle
+  bundleController.createBundle,
 );
 
 router.get(
@@ -71,9 +73,9 @@ router.get(
     "dealer",
     "super_dealer",
     "admin",
-    "super_admin"
+    "super_admin",
   ),
-  bundleController.getAllBundles
+  bundleController.getAllBundles,
 );
 
 router.get(
@@ -85,9 +87,9 @@ router.get(
     "dealer",
     "super_dealer",
     "admin",
-    "super_admin"
+    "super_admin",
   ),
-  bundleController.getBundleById
+  bundleController.getBundleById,
 );
 
 router.put(
@@ -95,14 +97,14 @@ router.put(
   authenticate,
   authorize("admin", "super_admin"),
   validate(bundleValidation.update),
-  bundleController.updateBundle
+  bundleController.updateBundle,
 );
 
 router.delete(
   "/bundles/:id",
   authenticate,
   authorize("admin", "super_admin"),
-  bundleController.deleteBundle
+  bundleController.deleteBundle,
 );
 
 // Remove or comment out restoreBundle and category routes as they are not present in the new controller
@@ -129,9 +131,9 @@ router.get(
     "dealer",
     "super_dealer",
     "admin",
-    "super_admin"
+    "super_admin",
   ),
-  bundleController.getBundlesByProvider
+  bundleController.getBundlesByProvider,
 );
 
 router.get(
@@ -143,9 +145,9 @@ router.get(
     "dealer",
     "super_dealer",
     "admin",
-    "super_admin"
+    "super_admin",
   ),
-  bundleController.getBundlesByPackage
+  bundleController.getBundlesByPackage,
 );
 
 // Remove or comment out checkBundleAvailability as it is not present in the new controller
@@ -161,22 +163,24 @@ router.get(
   "/bundles/analytics/summary",
   authenticate,
   authorize("admin", "super_admin"),
-  bundleController.getBundleAnalytics
+  bundleController.getBundleAnalytics,
 );
 
 // Public routes
 router.get("/public", packageController.getPackages);
 
+router.get("/public/slug/:slug", packageController.getPackageBySlug);
+
 router.get("/public/:id", packageController.getPackage);
 
 router.get(
   "/public/provider/:provider",
-  packageController.getPackagesByProvider
+  packageController.getPackagesByProvider,
 );
 
 router.get(
   "/public/category/:category",
-  packageController.getPackagesByCategory
+  packageController.getPackagesByCategory,
 );
 
 router.get("/public/bundles", bundleController.getAllBundles);
@@ -185,12 +189,12 @@ router.get("/public/bundles/:id", bundleController.getBundleById);
 
 router.get(
   "/public/bundles/provider/:providerId",
-  bundleController.getBundlesByProvider
+  bundleController.getBundlesByProvider,
 );
 
 router.get(
   "/public/bundles/package/:packageId",
-  bundleController.getBundlesByPackage
+  bundleController.getBundlesByPackage,
 );
 
 export default router;
