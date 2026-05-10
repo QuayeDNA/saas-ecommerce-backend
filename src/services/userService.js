@@ -1,10 +1,13 @@
 // src/services/userService.js
+import { BUSINESS_ROLES } from "../constants/roles.js";
 import User from "../models/User.js";
 import logger from "../utils/logger.js";
 import {
   isBusinessUser,
   getBusinessUserTypes,
 } from "../utils/userTypeHelpers.js";
+import mongoose from "mongoose";
+import settingsService from "../services/settingsService.js";
 
 class UserService {
   /**
@@ -43,7 +46,7 @@ class UserService {
       const { page = 1, limit = 10 } = pagination;
       const { search, userType, status } = filters;
 
-      let query = {};
+      const query = {};
 
       // Build query based on user permissions
       if (isBusinessUser(requestUserType)) {
@@ -71,7 +74,7 @@ class UserService {
 
       const users = await User.find(query)
         .select(
-          "-password -refreshToken -verificationToken -resetPasswordToken"
+          "-password -refreshToken -verificationToken -resetPasswordToken",
         )
         .sort({ createdAt: -1 })
         .limit(limit * 1)
@@ -109,7 +112,7 @@ class UserService {
       const { page = 1, limit = 20 } = pagination;
       const { search, userType } = filters;
 
-      let query = {};
+      const query = {};
 
       if (userType) {
         query.userType = userType;
@@ -324,9 +327,7 @@ class UserService {
 
       if (
         statusUpdates.subscriptionStatus &&
-        ["agent", "super_agent", "dealer", "super_dealer"].includes(
-          user.userType
-        )
+        BUSINESS_ROLES.includes(user.userType)
       ) {
         user.subscriptionStatus = statusUpdates.subscriptionStatus;
       }
@@ -376,6 +377,176 @@ class UserService {
     } catch (error) {
       logger.error(`Delete user error: ${error.message}`);
       throw new Error("Failed to delete user");
+    }
+  }
+
+  /**
+   * Register a new agent (moved from controller)
+   */
+  async registerAgent(payload, appContext = {}) {
+    try {
+      const {
+        fullName,
+        email,
+        phone,
+        password,
+        businessName,
+        businessCategory = "services",
+        subscriptionPlan = "basic",
+        userType = "agent",
+        tenantId,
+      } = payload;
+
+      // Check if user already exists
+      const existingUser = await User.findOne({ email });
+      if (existingUser) {
+        const err = new Error("User already exists with this email");
+        err.statusCode = 400;
+        throw err;
+      }
+
+      if (!isBusinessUser(userType)) {
+        const err = new Error(
+          "Invalid user type. Must be agent, super_agent, dealer, or super_dealer",
+        );
+        err.statusCode = 400;
+        throw err;
+      }
+
+      const requireApproval = await settingsService.getSignupApprovalSetting();
+      const userStatus = requireApproval ? "pending" : "active";
+
+      const agent = new User({
+        fullName,
+        email,
+        phone,
+        password,
+        userType,
+        businessName,
+        businessCategory,
+        subscriptionPlan,
+        subscriptionStatus: "active",
+        isVerified: true,
+        status: userStatus,
+        agentCode: "TEMP",
+        tenantId: new mongoose.Types.ObjectId(),
+      });
+
+      await agent.save();
+
+      // Set tenantId and generate real agent code
+      agent.tenantId = tenantId || agent._id;
+      const { generateUniqueAgentCode } =
+        await import("../utils/agentCodeGenerator.js");
+      const agentCode = await generateUniqueAgentCode(appContext.appId);
+      agent.agentCode = agentCode;
+      await agent.save();
+
+      logger.info(
+        `${userType} registered successfully: ${email} - Business: ${businessName} - Agent Code: ${agentCode}`,
+      );
+
+      return { agent, agentCode, userType, userStatus };
+    } catch (error) {
+      logger.error(`Register agent error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Get agent dashboard data
+   */
+  async getAgentDashboard(agentId, userMeta = {}) {
+    try {
+      const subordinateCount = await User.countDocuments({
+        tenantId: agentId,
+        userType: { $in: getBusinessUserTypes() },
+      });
+
+      const recentSubordinates = await User.find({
+        tenantId: agentId,
+        userType: { $in: getBusinessUserTypes() },
+      })
+        .select("fullName email phone createdAt isVerified userType")
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean();
+
+      return {
+        totalSubordinates: subordinateCount,
+        recentSubordinates,
+        businessInfo: {
+          businessName: userMeta.businessName,
+          businessCategory: userMeta.businessCategory,
+          subscriptionPlan: userMeta.subscriptionPlan,
+          subscriptionStatus: userMeta.subscriptionStatus,
+        },
+      };
+    } catch (error) {
+      logger.error(`Get agent dashboard error: ${error.message}`);
+      throw new Error("Failed to load dashboard data");
+    }
+  }
+
+  /**
+   * Update user (admin)
+   */
+  async updateUser(userId, updates) {
+    try {
+      const allowedFields = [
+        "fullName",
+        "email",
+        "phone",
+        "userType",
+        "businessName",
+        "businessCategory",
+        "subscriptionPlan",
+        "subscriptionStatus",
+        "isActive",
+        "status",
+      ];
+      const updateData = {};
+      for (const key of allowedFields) {
+        if (updates[key] !== undefined) updateData[key] = updates[key];
+      }
+      const user = await User.findByIdAndUpdate(userId, updateData, {
+        new: true,
+        runValidators: true,
+      }).select("-password -refreshToken");
+      if (!user) {
+        const err = new Error("User not found");
+        err.statusCode = 404;
+        throw err;
+      }
+      return user;
+    } catch (error) {
+      logger.error(`Update user error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Reset user password (admin)
+   */
+  async resetUserPassword(userId, newPassword) {
+    try {
+      if (!newPassword || newPassword.length < 6) {
+        const err = new Error("Password must be at least 6 characters.");
+        err.statusCode = 400;
+        throw err;
+      }
+      const user = await User.findById(userId);
+      if (!user) {
+        const err = new Error("User not found");
+        err.statusCode = 404;
+        throw err;
+      }
+      user.password = newPassword;
+      await user.save();
+      return true;
+    } catch (error) {
+      logger.error(`Reset user password error: ${error.message}`);
+      throw error;
     }
   }
 }

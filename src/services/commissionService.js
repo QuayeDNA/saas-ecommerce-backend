@@ -1,4 +1,5 @@
 // src/services/commissionService.js
+/* global setImmediate */
 import CommissionRecord from "../models/CommissionRecord.js";
 import CommissionMonthlySummary from "../models/CommissionMonthlySummary.js";
 import Order from "../models/Order.js";
@@ -85,7 +86,7 @@ class CommissionService {
       };
 
       logger.info(
-        `Commission calculated for agent ${agent.fullName}: ${result.amount} from ${result.totalOrders} orders`
+        `Commission calculated for agent ${agent.fullName}: ${result.amount} from ${result.totalOrders} orders`,
       );
       return result;
     } catch (error) {
@@ -122,16 +123,16 @@ class CommissionService {
             status: commissionData.status || "pending",
             createdAt: commissionRecord.createdAt,
             updatedAt: commissionRecord.updatedAt,
-          }
+          },
         );
       } catch (wsError) {
         logger.error(
-          `Failed to send WebSocket commission created notification: ${wsError.message}`
+          `Failed to send WebSocket commission created notification: ${wsError.message}`,
         );
       }
 
       logger.info(
-        `Commission record created for agent ${commissionData.agentId}: ${commissionData.amount}`
+        `Commission record created for agent ${commissionData.agentId}: ${commissionData.amount}`,
       );
 
       return commissionRecord;
@@ -254,9 +255,8 @@ class CommissionService {
 
     try {
       // Step 1: Validate commission exists and can be paid
-      const commission = await CommissionRecord.findById(commissionId).session(
-        session
-      );
+      const commission =
+        await CommissionRecord.findById(commissionId).session(session);
 
       if (!commission) {
         throw new Error(COMMISSION_ERRORS.COMMISSION_NOT_FOUND);
@@ -295,7 +295,7 @@ class CommissionService {
           totalRevenue: commission.totalRevenue,
           paymentReference: paymentReference || `COM-${commissionId}`,
         },
-        { session } // Pass session for transaction
+        { session }, // Pass session for transaction
       );
 
       // Step 4: Update commission record (within transaction)
@@ -309,7 +309,7 @@ class CommissionService {
       await session.commitTransaction();
 
       logger.info(
-        `Commission paid successfully to agent ${agent.fullName}: GH₵${commission.amount}`
+        `Commission paid successfully to agent ${agent.fullName}: GH₵${commission.amount}`,
       );
 
       // Step 6: Send notifications (AFTER successful transaction)
@@ -319,7 +319,7 @@ class CommissionService {
           // Get updated statistics for real-time updates
           const updatedStats = await this.getCurrentMonthStatistics(
             commission.tenantId,
-            commission.agentId
+            commission.agentId,
           );
 
           await notificationService.createInAppNotification(
@@ -334,7 +334,7 @@ class CommissionService {
               paidBy: admin?.fullName || admin?.email || "Admin",
               type: COMMISSION_EVENTS.PAID,
               navigationLink: "/agent/dashboard/wallet",
-            }
+            },
           );
 
           // Send WebSocket notification with updated stats
@@ -353,12 +353,12 @@ class CommissionService {
               paymentReference: commission.paymentReference,
               // Include updated statistics for real-time frontend updates
               updatedStats: updatedStats.currentMonth,
-            }
+            },
           );
         } catch (notificationError) {
           // Log notification errors but don't fail the payment
           logger.error(
-            `Failed to send commission payment notification: ${notificationError.message}`
+            `Failed to send commission payment notification: ${notificationError.message}`,
           );
         }
       });
@@ -430,7 +430,7 @@ class CommissionService {
             rejectionReason: rejectionReason,
             type: COMMISSION_EVENTS.REJECTED,
             navigationLink: "/agent/dashboard/commissions",
-          }
+          },
         );
 
         // Send WebSocket notification
@@ -446,12 +446,12 @@ class CommissionService {
         });
       } catch (notificationError) {
         logger.error(
-          `Failed to send commission rejection notification: ${notificationError.message}`
+          `Failed to send commission rejection notification: ${notificationError.message}`,
         );
       }
 
       logger.info(
-        `Commission rejected for agent ${agent.fullName}: GH₵${commission.amount}`
+        `Commission rejected for agent ${agent.fullName}: GH₵${commission.amount}`,
       );
 
       return commission;
@@ -471,7 +471,7 @@ class CommissionService {
   async rejectMultipleCommissions(
     commissionIds,
     rejectedBy,
-    rejectionReason = null
+    rejectionReason = null,
   ) {
     try {
       const results = [];
@@ -481,7 +481,7 @@ class CommissionService {
           const commission = await this.rejectCommission(
             commissionId,
             rejectedBy,
-            rejectionReason
+            rejectionReason,
           );
           results.push({ success: true, commissionId, commission });
         } catch (error) {
@@ -512,7 +512,7 @@ class CommissionService {
           const commission = await this.payCommission(
             commissionId,
             paidBy,
-            paymentReference
+            paymentReference,
           );
           results.push({ success: true, commissionId, commission });
         } catch (error) {
@@ -539,7 +539,7 @@ class CommissionService {
       // Get updated statistics for real-time updates
       const updatedStats = await this.getCurrentMonthStatistics(
         agent.tenantId || agent._id,
-        agent._id
+        agent._id,
       );
 
       // Send in-app notification
@@ -561,7 +561,7 @@ class CommissionService {
           totalRevenue: commissionRecord.totalRevenue,
           type: COMMISSION_EVENTS.GENERATED,
           navigationLink: "/agent/dashboard/commissions",
-        }
+        },
       );
 
       // Send WebSocket notification with updated stats
@@ -584,7 +584,7 @@ class CommissionService {
       });
     } catch (error) {
       logger.error(
-        `Failed to send commission notification for agent ${agent._id}: ${error.message}`
+        `Failed to send commission notification for agent ${agent._id}: ${error.message}`,
       );
       throw error;
     }
@@ -614,7 +614,7 @@ class CommissionService {
   async generateMonthlyCommissions(
     month = new Date(),
     force = false,
-    onProgress = null
+    onProgress = null,
   ) {
     try {
       const startTime = Date.now();
@@ -626,7 +626,7 @@ class CommissionService {
         23,
         59,
         59,
-        999
+        999,
       );
 
       const monthName = startOfMonth.toLocaleDateString("en-US", {
@@ -635,7 +635,7 @@ class CommissionService {
       });
 
       logger.info(
-        `Starting commission generation for ${monthName} (force: ${force})`
+        `Starting commission generation for ${monthName} (force: ${force})`,
       );
 
       // Check if commissions already exist for this period (unless force=true)
@@ -648,11 +648,11 @@ class CommissionService {
 
         if (existingCount > 0) {
           logger.warn(
-            `Commissions already generated for ${monthName} (${existingCount} records). Use force=true to regenerate.`
+            `Commissions already generated for ${monthName} (${existingCount} records). Use force=true to regenerate.`,
           );
           throw new Error(
             COMMISSION_ERRORS.DUPLICATE_GENERATION +
-              `. Found ${existingCount} existing records. Use force flag to regenerate.`
+              `. Found ${existingCount} existing records. Use force flag to regenerate.`,
           );
         }
       }
@@ -682,7 +682,7 @@ class CommissionService {
       }
 
       logger.info(
-        `Processing ${agents.length} agents for commission generation`
+        `Processing ${agents.length} agents for commission generation`,
       );
 
       const results = [];
@@ -695,7 +695,7 @@ class CommissionService {
         const totalBatches = Math.ceil(agents.length / batchSize);
 
         logger.info(
-          `Processing batch ${batchNumber}/${totalBatches} (${batch.length} agents)`
+          `Processing batch ${batchNumber}/${totalBatches} (${batch.length} agents)`,
         );
 
         const batchPromises = batch.map(async (agent) => {
@@ -723,7 +723,7 @@ class CommissionService {
             if (existingRecord && force) {
               await CommissionRecord.deleteOne({ _id: existingRecord._id });
               logger.info(
-                `Deleted existing commission record for agent ${agent.fullName} (force regeneration)`
+                `Deleted existing commission record for agent ${agent.fullName} (force regeneration)`,
               );
             }
 
@@ -736,7 +736,7 @@ class CommissionService {
               agent._id,
               agentTenantId,
               startOfMonth,
-              endOfMonth
+              endOfMonth,
             );
 
             // Only create record if there's actual commission to pay
@@ -752,11 +752,11 @@ class CommissionService {
                   await this.sendCommissionNotification(
                     agent,
                     commissionRecord,
-                    startOfMonth
+                    startOfMonth,
                   );
                 } catch (notificationError) {
                   logger.error(
-                    `Failed to send commission notification for agent ${agent._id}: ${notificationError.message}`
+                    `Failed to send commission notification for agent ${agent._id}: ${notificationError.message}`,
                   );
                 }
               });
@@ -782,7 +782,7 @@ class CommissionService {
             }
           } catch (error) {
             logger.error(
-              `Error processing agent ${agent.fullName}: ${error.message}`
+              `Error processing agent ${agent.fullName}: ${error.message}`,
             );
             return {
               agentId: agent._id,
@@ -813,7 +813,7 @@ class CommissionService {
         // Small delay between batches to prevent overwhelming the database
         if (i + batchSize < agents.length) {
           await new Promise((resolve) =>
-            setTimeout(resolve, COMMISSION_DEFAULTS.BATCH_DELAY_MS)
+            setTimeout(resolve, COMMISSION_DEFAULTS.BATCH_DELAY_MS),
           );
         }
       }
@@ -824,7 +824,7 @@ class CommissionService {
       const successful = results.filter((r) => r.status === "created").length;
       const existing = results.filter((r) => r.status === "exists").length;
       const noCommission = results.filter(
-        (r) => r.status === "no_commission"
+        (r) => r.status === "no_commission",
       ).length;
       const errors = results.filter((r) => r.status === "error").length;
 
@@ -842,7 +842,7 @@ class CommissionService {
 
       logger.info(
         `Commission generation completed in ${duration.toFixed(2)}s:`,
-        summary
+        summary,
       );
 
       return {
@@ -872,7 +872,7 @@ class CommissionService {
       const startOfDay = new Date(
         yesterday.getFullYear(),
         yesterday.getMonth(),
-        yesterday.getDate()
+        yesterday.getDate(),
       );
       const endOfDay = new Date(
         yesterday.getFullYear(),
@@ -881,7 +881,7 @@ class CommissionService {
         23,
         59,
         59,
-        999
+        999,
       );
 
       const dayName = yesterday.toLocaleDateString("en-US", {
@@ -918,7 +918,7 @@ class CommissionService {
       }
 
       logger.info(
-        `Processing ${agents.length} agents for daily commission generation`
+        `Processing ${agents.length} agents for daily commission generation`,
       );
 
       const results = [];
@@ -931,7 +931,7 @@ class CommissionService {
         const totalBatches = Math.ceil(agents.length / batchSize);
 
         logger.info(
-          `Processing batch ${batchNumber}/${totalBatches} (${batch.length} agents)`
+          `Processing batch ${batchNumber}/${totalBatches} (${batch.length} agents)`,
         );
 
         const batchPromises = batch.map(async (agent) => {
@@ -954,7 +954,7 @@ class CommissionService {
               agent._id,
               agentTenantId,
               startOfDay,
-              endOfDay
+              endOfDay,
             );
 
             // Only create/update record if there's actual commission to pay
@@ -971,7 +971,7 @@ class CommissionService {
                       commissionRate: calculation.commissionRate,
                       updatedAt: new Date(),
                     },
-                  }
+                  },
                 );
 
                 return {
@@ -1001,11 +1001,11 @@ class CommissionService {
                     await this.sendCommissionNotification(
                       agent,
                       commissionRecord,
-                      startOfDay
+                      startOfDay,
                     );
                   } catch (notificationError) {
                     logger.error(
-                      `Failed to send daily commission notification for agent ${agent._id}: ${notificationError.message}`
+                      `Failed to send daily commission notification for agent ${agent._id}: ${notificationError.message}`,
                     );
                   }
                 });
@@ -1032,7 +1032,7 @@ class CommissionService {
             }
           } catch (error) {
             logger.error(
-              `Error processing agent ${agent.fullName} for daily commission: ${error.message}`
+              `Error processing agent ${agent.fullName} for daily commission: ${error.message}`,
             );
             return {
               agentId: agent._id,
@@ -1050,7 +1050,7 @@ class CommissionService {
         // Small delay between batches to prevent overwhelming the database
         if (i + batchSize < agents.length) {
           await new Promise((resolve) =>
-            setTimeout(resolve, COMMISSION_DEFAULTS.BATCH_DELAY_MS)
+            setTimeout(resolve, COMMISSION_DEFAULTS.BATCH_DELAY_MS),
           );
         }
       }
@@ -1058,7 +1058,7 @@ class CommissionService {
       const created = results.filter((r) => r.status === "created").length;
       const updated = results.filter((r) => r.status === "updated").length;
       const noCommission = results.filter(
-        (r) => r.status === "no_commission"
+        (r) => r.status === "no_commission",
       ).length;
       const errors = results.filter((r) => r.status === "error").length;
 
@@ -1103,7 +1103,7 @@ class CommissionService {
         23,
         59,
         59,
-        999
+        999,
       );
 
       // Get current month for new commissions
@@ -1113,7 +1113,7 @@ class CommissionService {
         `Resetting commissions for ${resetMonth.toLocaleDateString("en-US", {
           month: "long",
           year: "numeric",
-        })}`
+        })}`,
       );
 
       // Find all pending commissions from the previous month
@@ -1151,7 +1151,7 @@ class CommissionService {
               period: commission.period,
               expiredDate: new Date().toISOString(),
               type: COMMISSION_EVENTS.EXPIRED,
-            }
+            },
           );
 
           // Send WebSocket notification for expired commission
@@ -1165,26 +1165,25 @@ class CommissionService {
           });
         } catch (notificationError) {
           logger.error(
-            `Failed to send commission expiry notification: ${notificationError.message}`
+            `Failed to send commission expiry notification: ${notificationError.message}`,
           );
         }
       }
 
       // Generate new commissions for current month
-      const generationResults = await this.generateMonthlyCommissions(
-        currentMonth
-      );
+      const generationResults =
+        await this.generateMonthlyCommissions(currentMonth);
 
       const newCommissions = generationResults.filter(
-        (r) => r.status === "created"
+        (r) => r.status === "created",
       );
       const newCommissionAmount = newCommissions.reduce(
         (sum, r) => sum + r.record.amount,
-        0
+        0,
       );
 
       logger.info(
-        `Monthly commission reset completed: ${expiredCount} expired (GH₵${expiredAmount}), ${newCommissions.length} new (GH₵${newCommissionAmount})`
+        `Monthly commission reset completed: ${expiredCount} expired (GH₵${expiredAmount}), ${newCommissions.length} new (GH₵${newCommissionAmount})`,
       );
 
       return {
@@ -1236,11 +1235,11 @@ class CommissionService {
       // Calculate totals manually
       const totalPaid = paidCommissions.reduce(
         (sum, record) => sum + (record.amount || 0),
-        0
+        0,
       );
       const totalPending = pendingCommissions.reduce(
         (sum, record) => sum + (record.amount || 0),
-        0
+        0,
       );
       const pendingCount = pendingCommissions.length;
 
@@ -1484,11 +1483,11 @@ class CommissionService {
           recordsArchived += records.length;
 
           logger.info(
-            `Created summary for ${agent.fullName}: ${records.length} records, GH₵${totalEarned}`
+            `Created summary for ${agent.fullName}: ${records.length} records, GH₵${totalEarned}`,
           );
         } catch (error) {
           logger.error(
-            `Failed to create summary for agent ${agentId}: ${error.message}`
+            `Failed to create summary for agent ${agentId}: ${error.message}`,
           );
         }
       }
@@ -1496,7 +1495,7 @@ class CommissionService {
       const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
       logger.info(
-        `Archival completed for ${monthName} in ${duration}s: ${summariesCreated.length} summaries, ${recordsArchived} records`
+        `Archival completed for ${monthName} in ${duration}s: ${summariesCreated.length} summaries, ${recordsArchived} records`,
       );
 
       return {
@@ -1542,7 +1541,7 @@ class CommissionService {
       if (tenantId) {
         return await CommissionMonthlySummary.getTenantSummaries(
           tenantId,
-          options
+          options,
         );
       } else {
         // Super admin - get all summaries
@@ -1580,7 +1579,7 @@ class CommissionService {
       const startOfMonth = new Date(
         currentDate.getFullYear(),
         currentDate.getMonth(),
-        1
+        1,
       );
       const endOfMonth = new Date(
         currentDate.getFullYear(),
@@ -1589,7 +1588,7 @@ class CommissionService {
         23,
         59,
         59,
-        999
+        999,
       );
 
       // Get all non-finalized records within current month (regardless of period type)
@@ -1609,7 +1608,7 @@ class CommissionService {
       // Calculate current month stats (real-time accumulation)
       const totalEarned = currentMonthRecords.reduce(
         (sum, r) => sum + r.amount,
-        0
+        0,
       );
       const totalPaid = currentMonthRecords
         .filter((r) => r.status === COMMISSION_STATUS.PAID)
@@ -1622,10 +1621,10 @@ class CommissionService {
         .reduce((sum, r) => sum + r.amount, 0);
 
       const pendingCount = currentMonthRecords.filter(
-        (r) => r.status === COMMISSION_STATUS.PENDING
+        (r) => r.status === COMMISSION_STATUS.PENDING,
       ).length;
       const uniqueAgents = new Set(
-        currentMonthRecords.map((r) => r.agentId.toString())
+        currentMonthRecords.map((r) => r.agentId.toString()),
       ).size;
 
       return {
@@ -1689,7 +1688,7 @@ class CommissionService {
         23,
         59,
         59,
-        999
+        999,
       );
 
       // Find or create current month commission record for this agent
@@ -1722,7 +1721,7 @@ class CommissionService {
         logger.info(
           `Updated commission for agent ${
             order.createdBy.fullName
-          }: +${orderCommission.toFixed(2)} (Total: ${commissionRecord.amount})`
+          }: +${orderCommission.toFixed(2)} (Total: ${commissionRecord.amount})`,
         );
       } else {
         // Create new record for current month
@@ -1743,7 +1742,7 @@ class CommissionService {
         logger.info(
           `Created new commission record for agent ${
             order.createdBy.fullName
-          }: ${orderCommission.toFixed(2)}`
+          }: ${orderCommission.toFixed(2)}`,
         );
       }
 
@@ -1799,14 +1798,14 @@ class CommissionService {
         23,
         59,
         59,
-        999
+        999,
       );
 
       logger.info(
         `Starting monthly commission finalization for ${lastMonth.toLocaleDateString(
           "en-US",
-          { month: "long", year: "numeric" }
-        )}`
+          { month: "long", year: "numeric" },
+        )}`,
       );
 
       // Find all non-finalized daily commission records from last month
@@ -1855,11 +1854,11 @@ class CommissionService {
           const monthlyTotal = records.reduce((sum, r) => sum + r.amount, 0);
           const monthlyOrders = records.reduce(
             (sum, r) => sum + r.totalOrders,
-            0
+            0,
           );
           const monthlyRevenue = records.reduce(
             (sum, r) => sum + r.totalRevenue,
-            0
+            0,
           );
           const avgCommissionRate =
             records.reduce((sum, r) => sum + r.commissionRate, 0) /
@@ -1896,7 +1895,7 @@ class CommissionService {
                 isFinal: true,
                 finalizedAt: now,
               },
-            }
+            },
           );
 
           totalFinalizedRecords += records.length;
@@ -1909,11 +1908,11 @@ class CommissionService {
           logger.info(
             `Finalized ${records.length} daily records for ${
               agent.fullName
-            }: GHS ${monthlyTotal.toFixed(2)}`
+            }: GHS ${monthlyTotal.toFixed(2)}`,
           );
         } catch (error) {
           logger.error(
-            `Failed to finalize monthly commissions for agent ${agentId}: ${error.message}`
+            `Failed to finalize monthly commissions for agent ${agentId}: ${error.message}`,
           );
         }
       }
@@ -1928,7 +1927,7 @@ class CommissionService {
             title: "Monthly Commission Finalized",
             message: `Your commission for ${lastMonth.toLocaleDateString(
               "en-US",
-              { month: "long", year: "numeric" }
+              { month: "long", year: "numeric" },
             )} has been finalized: GHS ${summary.amount.toFixed(2)} (${
               summary.status
             })`,
@@ -1947,7 +1946,7 @@ class CommissionService {
           });
         } catch (notifError) {
           logger.error(
-            `Failed to notify agent ${summary.agentId._id}: ${notifError.message}`
+            `Failed to notify agent ${summary.agentId._id}: ${notifError.message}`,
           );
         }
       }
@@ -1963,13 +1962,13 @@ class CommissionService {
             message: `${
               monthlySummaries.length
             } monthly summaries created from ${totalFinalizedRecords} daily records. Total pending payment: GHS ${totalPending.toFixed(
-              2
+              2,
             )}`,
             priority: "high",
           });
         } catch (notifError) {
           logger.error(
-            `Failed to notify admin ${admin._id}: ${notifError.message}`
+            `Failed to notify admin ${admin._id}: ${notifError.message}`,
           );
         }
       }
@@ -1978,8 +1977,8 @@ class CommissionService {
         `Monthly commission finalization completed: ${totalFinalizedRecords} daily records finalized, ${
           monthlySummaries.length
         } monthly summaries created, Total: GHS ${totalAmount.toFixed(
-          2
-        )}, Pending: GHS ${totalPending.toFixed(2)}`
+          2,
+        )}, Pending: GHS ${totalPending.toFixed(2)}`,
       );
 
       return {

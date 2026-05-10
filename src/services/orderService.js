@@ -1674,6 +1674,7 @@ class OrderService {
         refundAmount,
         refundMethod,
       } = result;
+      const isStorefront = order?.orderType === "storefront";
       const [creatorUser, cancellerUser] = await Promise.all([
         User.findById(orderCreator),
         User.findById(canceller),

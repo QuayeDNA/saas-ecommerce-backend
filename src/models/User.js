@@ -1,6 +1,7 @@
 // src/models/User.js
 import mongoose from "mongoose";
 import bcrypt from "bcrypt";
+import { ALL_ROLES, BUSINESS_ROLES } from "../constants/roles.js";
 
 const userSchema = new mongoose.Schema({
   fullName: {
@@ -32,7 +33,7 @@ const userSchema = new mongoose.Schema({
   },
   userType: {
     type: String,
-    enum: ["agent", "super_agent", "dealer", "super_dealer", "super_admin"],
+    enum: ALL_ROLES,
     default: "agent",
   },
   // Multi-tenant fields
@@ -40,17 +41,13 @@ const userSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
     required: function () {
-      return ["agent", "super_agent", "dealer", "super_dealer"].includes(
-        this.userType,
-      );
+      return BUSINESS_ROLES.includes(this.userType);
     },
   },
   businessName: {
     type: String,
     required: function () {
-      return ["agent", "super_agent", "dealer", "super_dealer"].includes(
-        this.userType,
-      );
+      return BUSINESS_ROLES.includes(this.userType);
     },
     trim: true,
   },
@@ -59,9 +56,7 @@ const userSchema = new mongoose.Schema({
     unique: true,
     sparse: true, // Only enforce uniqueness when the field is present
     required: function () {
-      return ["agent", "super_agent", "dealer", "super_dealer"].includes(
-        this.userType,
-      );
+      return BUSINESS_ROLES.includes(this.userType);
     },
   },
   businessCategory: {
@@ -69,9 +64,7 @@ const userSchema = new mongoose.Schema({
     enum: ["electronics", "fashion", "food", "services", "other"],
     default: "services",
     required: function () {
-      return ["agent", "super_agent", "dealer", "super_dealer"].includes(
-        this.userType,
-      );
+      return BUSINESS_ROLES.includes(this.userType);
     },
   },
   subscriptionPlan: {
@@ -79,9 +72,7 @@ const userSchema = new mongoose.Schema({
     enum: ["basic", "premium", "enterprise"],
     default: "basic",
     required: function () {
-      return ["agent", "super_agent", "dealer", "super_dealer"].includes(
-        this.userType,
-      );
+      return BUSINESS_ROLES.includes(this.userType);
     },
   },
   subscriptionStatus: {
@@ -89,9 +80,7 @@ const userSchema = new mongoose.Schema({
     enum: ["active", "inactive", "suspended"],
     default: "active",
     required: function () {
-      return ["agent", "super_agent", "dealer", "super_dealer"].includes(
-        this.userType,
-      );
+      return BUSINESS_ROLES.includes(this.userType);
     },
   },
   walletBalance: {
@@ -133,14 +122,19 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: true,
   },
-  verificationToken: String,
-  verificationResent: {
+  securityPin: {
+    type: String,
+    minlength: 60, // bcrypt hash length
+  },
+  requiresPinSetup: {
+    type: Boolean,
+    default: true,
+  },
+  forcePasswordChange: {
     type: Boolean,
     default: false,
   },
-  resetPasswordToken: String,
   refreshToken: String,
-  resetPasswordExpires: Date,
   createdAt: {
     type: Date,
     default: Date.now,
@@ -197,11 +191,7 @@ const userSchema = new mongoose.Schema({
     type: String,
     enum: ["pending", "active", "rejected"],
     default: function () {
-      return ["agent", "super_agent", "dealer", "super_dealer"].includes(
-        this.userType,
-      )
-        ? "pending"
-        : "active";
+      return BUSINESS_ROLES.includes(this.userType) ? "pending" : "active";
     },
   },
 });
@@ -231,10 +221,7 @@ userSchema.methods.comparePassword = async function (candidatePassword) {
 userSchema.methods.toJSON = function () {
   const userObject = this.toObject();
   delete userObject.password;
-  delete userObject.verificationToken;
-  delete userObject.verificationResent;
-  delete userObject.resetPasswordToken;
-  delete userObject.resetPasswordExpires;
+  delete userObject.securityPin;
   return userObject;
 };
 

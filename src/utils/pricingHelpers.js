@@ -1,4 +1,5 @@
 // src/utils/pricingHelpers.js
+import { BUSINESS_ROLES } from "../constants/roles.js";
 import logger from "./logger.js";
 
 /**
@@ -76,7 +77,7 @@ export const getBundlePricingSummary = (bundle) => {
       throw new Error("Bundle is required");
     }
 
-    const userTypes = ["agent", "super_agent", "dealer", "super_dealer"];
+    const userTypes = BUSINESS_ROLES;
     const pricing = {
       basePrice: bundle.price || 0,
       userTypePrices: {},
@@ -89,7 +90,7 @@ export const getBundlePricingSummary = (bundle) => {
 
     // Check if any user type has custom pricing different from base price
     pricing.hasCustomPricing = userTypes.some(
-      (userType) => pricing.userTypePrices[userType] !== pricing.basePrice
+      (userType) => pricing.userTypePrices[userType] !== pricing.basePrice,
     );
 
     return pricing;
@@ -119,13 +120,7 @@ export const validatePricingTiers = (pricingTiers) => {
       return result; // Empty pricing tiers is valid
     }
 
-    const validUserTypes = [
-      "agent",
-      "super_agent",
-      "dealer",
-      "super_dealer",
-      "default",
-    ];
+    const validUserTypes = [...BUSINESS_ROLES, "default"];
 
     Object.entries(pricingTiers).forEach(([userType, price]) => {
       // Check if user type is valid
@@ -133,8 +128,8 @@ export const validatePricingTiers = (pricingTiers) => {
         result.isValid = false;
         result.errors.push(
           `Invalid user type: ${userType}. Valid types are: ${validUserTypes.join(
-            ", "
-          )}`
+            ", ",
+          )}`,
         );
       }
 
@@ -142,7 +137,7 @@ export const validatePricingTiers = (pricingTiers) => {
       if (typeof price !== "number" || price < 0) {
         result.isValid = false;
         result.errors.push(
-          `Invalid price for ${userType}: must be a positive number`
+          `Invalid price for ${userType}: must be a positive number`,
         );
       }
     });

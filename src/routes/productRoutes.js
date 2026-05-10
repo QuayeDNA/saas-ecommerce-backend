@@ -1,10 +1,6 @@
 // src/routes/productRoutes.js
 import express from "express";
-import {
-  authenticate,
-  authorize,
-  authorizeBusinessUser,
-} from "../middlewares/auth.js";
+import { authenticate, authorizeBusinessUser } from "../middlewares/auth.js";
 
 // Import the new controllers
 import packageRoutes from "./packageRoutes.js";

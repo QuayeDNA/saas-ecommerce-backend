@@ -1,17 +1,11 @@
 // src/controllers/authController.js
 import jwt from "jsonwebtoken";
-import crypto from "crypto";
-import mongoose from "mongoose";
 import User from "../models/User.js";
-import emailService from "../services/emailService.js";
-import settingsService from "../services/settingsService.js";
+import authService from "../services/authService.js";
 import logger from "../utils/logger.js";
-import {
-  isBusinessUser,
-  getTenantId,
-  getBusinessUserTypes,
-  needsAgentCode,
-} from "../utils/userTypeHelpers.js";
+import { BUSINESS_ROLES } from "../constants/roles.js";
+import { isBusinessUser, getTenantId } from "../utils/userTypeHelpers.js";
+import userService from "../services/userService.js";
 
 class AuthController {
   // Generate JWT token with tenant info
@@ -50,87 +44,22 @@ class AuthController {
   // Register new agent (multi-tenant admin)
   async registerAgent(req, res) {
     try {
-      const {
-        fullName,
-        email,
-        phone,
-        password,
-        businessName,
-        businessCategory = "services",
-        subscriptionPlan = "basic",
-        userType = "agent", // Default to agent, but allow other agent types
-        tenantId, // For creating subordinate agents
-      } = req.body;
-
-      // Check if user already exists
-      const existingUser = await User.findOne({ email });
-      if (existingUser) {
-        logger.warn(`Agent registration attempt with existing email: ${email}`);
-        return res.status(400).json({
-          success: false,
-          message: "User already exists with this email",
-        });
-      }
-
-      // Validate userType
-      if (!isBusinessUser(userType)) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Invalid user type. Must be agent, super_agent, dealer, or super_dealer",
-        });
-      }
-
-      // Check signup approval setting
-      const requireApproval = await settingsService.getSignupApprovalSetting();
-      const userStatus = requireApproval ? "pending" : "active";
-
-      // Create agent document with temporary agent code and temporary tenantId
-      const agent = new User({
-        fullName,
-        email,
-        phone,
-        password,
-        userType,
-        businessName,
-        businessCategory,
-        subscriptionPlan,
-        subscriptionStatus: "active",
-        isVerified: true, // Auto-verify
-        status: userStatus, // Set based on approval setting
-        agentCode: "TEMP", // Temporary code to pass validation
-        tenantId: new mongoose.Types.ObjectId(), // Temporary ID to pass validation
-      });
-
-      // Save to get the _id
-      await agent.save();
-
-      // Set tenantId to provided value or self-reference for standalone agents
-      agent.tenantId = tenantId || agent._id;
-
-      // Generate and set the real agent code using the new randomized format
-      const agentCode = await this.generateAgentCode(req.appContext?.appId);
-      agent.agentCode = agentCode;
-      await agent.save();
-
-      logger.info(
-        `${userType} registered successfully: ${email} - Business: ${businessName} - Agent Code: ${agentCode}`,
-      );
-
-      // Always return success message - user must login manually
+      const result = await userService.registerAgent(req.body, req.appContext);
       res.status(201).json({
         success: true,
-        message: requireApproval
-          ? `${userType} account created successfully. Your account is pending approval by a super admin.`
-          : `${userType} account created successfully. You can now log in.`,
-        agentCode: agentCode,
-        userType: userType,
+        message:
+          result.userStatus === "pending"
+            ? `${result.userType} account created successfully. Your account is pending approval by a super admin.`
+            : `${result.userType} account created successfully. You can now log in.`,
+        agentCode: result.agentCode,
+        userType: result.userType,
       });
     } catch (error) {
       logger.error(`Agent registration error: ${error.message}`);
-      res.status(500).json({
+      res.status(error.statusCode || 500).json({
         success: false,
-        message: "Agent registration failed. Please try again.",
+        message:
+          error.message || "Agent registration failed. Please try again.",
       });
     }
   }
@@ -192,12 +121,7 @@ class AuthController {
       user.refreshToken = refreshToken;
 
       // Ensure tenantId is set for agent-type users before saving
-      if (
-        ["agent", "super_agent", "dealer", "super_dealer"].includes(
-          user.userType,
-        ) &&
-        !user.tenantId
-      ) {
+      if (BUSINESS_ROLES.includes(user.userType) && !user.tenantId) {
         // For agents, they are their own tenant. For others, use their own ID as fallback
         user.tenantId = user._id;
       }
@@ -246,6 +170,7 @@ class AuthController {
       res.json({
         success: true,
         user: userData,
+        requiresPinSetup: user.requiresPinSetup,
         token: accessToken,
         refreshToken: refreshToken, // Also send in response for frontend storage
         dashboardUrl:
@@ -263,44 +188,19 @@ class AuthController {
   // Get agent dashboard data
   async getAgentDashboard(req, res) {
     try {
-      const agentId = req.user.userId;
-
-      // Get agent's subordinates count
-      const subordinateCount = await User.countDocuments({
-        tenantId: agentId,
-        userType: { $in: getBusinessUserTypes() },
-      });
-
-      // Get recent subordinates (last 10)
-      const recentSubordinates = await User.find({
-        tenantId: agentId,
-        userType: { $in: getBusinessUserTypes() },
-      })
-        .select("fullName email phone createdAt isVerified userType")
-        .sort({ createdAt: -1 })
-        .limit(10);
-
-      const dashboardData = {
-        totalSubordinates: subordinateCount,
-        recentSubordinates,
-        businessInfo: {
-          businessName: req.user.businessName,
-          businessCategory: req.user.businessCategory,
-          subscriptionPlan: req.user.subscriptionPlan,
-          subscriptionStatus: req.user.subscriptionStatus,
-        },
-      };
-
-      res.json({
-        success: true,
-        data: dashboardData,
-      });
+      const data = await userService.getAgentDashboard(
+        req.user.userId,
+        req.user,
+      );
+      res.json({ success: true, data });
     } catch (error) {
       logger.error(`Agent dashboard error: ${error.message}`);
-      res.status(500).json({
-        success: false,
-        message: "Failed to load dashboard data",
-      });
+      res
+        .status(500)
+        .json({
+          success: false,
+          message: error.message || "Failed to load dashboard data",
+        });
     }
   }
 
@@ -407,77 +307,73 @@ class AuthController {
       });
     }
   }
-
-  // Forgot password[1]
-  async forgotPassword(req, res) {
+  // Set up security PIN
+  async setupPin(req, res) {
     try {
-      const { email } = req.body;
+      const { pin } = req.body;
+      const userId = req.user._id;
 
-      const user = await User.findOne({ email });
-      if (!user) {
-        logger.warn(`Password reset request for non-existent user: ${email}`);
-        return res.status(404).json({
-          success: false,
-          message: "User not found with this email",
-        });
-      }
+      await authService.setupPin(userId, pin);
 
-      // Generate reset token
-      const resetToken = crypto.randomBytes(32).toString("hex");
-      user.resetPasswordToken = resetToken;
-      user.resetPasswordExpires = Date.now() + 3600000; // 1 hour
-      await user.save();
-
-      // Send reset email
-      await emailService.sendPasswordResetEmail(email, resetToken);
-
-      logger.info(`Password reset email sent to: ${email}`);
+      logger.info(`Security PIN setup successfully for user: ${userId}`);
       res.json({
         success: true,
-        message: "Password reset email sent successfully",
+        message: "Security PIN configured successfully",
       });
     } catch (error) {
-      logger.error(`Forgot password error: ${error.message}`);
-      res.status(500).json({
+      logger.error(`Setup PIN error: ${error.message}`);
+      res.status(error.statusCode || 500).json({
         success: false,
-        message: "Failed to send password reset email",
+        message: error.message || "Failed to setup Security PIN",
       });
     }
   }
 
-  // Reset password[1]
+  // Forgot password via PIN
+  async forgotPassword(req, res) {
+    try {
+      const { identifier, pin } = req.body;
+      if (!identifier || !pin) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Identifier and PIN are required" });
+      }
+
+      const result = await authService.forgotPasswordWithPin(identifier, pin);
+
+      logger.info(`Password reset token generated via PIN for: ${identifier}`);
+      res.json({
+        success: true,
+        resetToken: result.resetToken,
+        message: result.message,
+      });
+    } catch (error) {
+      logger.error(`Forgot password via PIN error: ${error.message}`);
+      res.status(error.statusCode || 500).json({
+        success: false,
+        message: error.message || "Failed to process password reset",
+      });
+    }
+  }
+
+  // Reset password
   async resetPassword(req, res) {
     try {
       const { token, password } = req.body;
 
-      const user = await User.findOne({
-        resetPasswordToken: token,
-        resetPasswordExpires: { $gt: Date.now() },
-      });
+      await authService.resetPasswordWithToken(token, password);
 
-      if (!user) {
-        logger.warn(`Invalid or expired reset token: ${token}`);
-        return res.status(400).json({
-          success: false,
-          message: "Invalid or expired reset token",
-        });
-      }
-
-      user.password = password;
-      user.resetPasswordToken = undefined;
-      user.resetPasswordExpires = undefined;
-      await user.save();
-
-      logger.info(`Password reset successfully for user: ${user.email}`);
+      logger.info(`Password reset successfully via token`);
       res.json({
         success: true,
-        message: "Password reset successfully",
+        message:
+          "Password reset successfully. Please login with your new password.",
       });
     } catch (error) {
       logger.error(`Reset password error: ${error.message}`);
-      res.status(500).json({
+      res.status(error.statusCode || 500).json({
         success: false,
-        message: "Failed to reset password",
+        message: error.message || "Failed to reset password",
       });
     }
   }
@@ -550,6 +446,7 @@ class AuthController {
         accessToken: newAccessToken,
         refreshToken: newRefreshToken,
         user: user.toJSON(),
+        requiresPinSetup: user.requiresPinSetup,
       });
     } catch (error) {
       logger.error(`Token refresh error: ${error.message}`);
@@ -580,6 +477,7 @@ class AuthController {
         success: true,
         valid: true,
         user: user.toJSON(),
+        requiresPinSetup: user.requiresPinSetup,
       });
     } catch (error) {
       logger.error(`Token verification error: ${error.message}`);
@@ -680,15 +578,9 @@ class AuthController {
 
       // Send verification email
       if (isBusinessUser(user.userType)) {
-        // Use the stored agent code
-        const agentCode = user.agentCode;
-        await emailService.sendAgentVerificationEmail(
-          email,
-          verificationToken,
-          agentCode,
-        );
+        /* await emailService.sendAgentVerificationEmail purged */
       } else {
-        await emailService.sendVerificationEmail(email, verificationToken);
+        /* await // emailService.sendVerificationEmail(email, verificationToken); // Email purged */
       }
 
       logger.info(`Verification email resent to: ${email}`);
@@ -795,58 +687,27 @@ class AuthController {
   // List all users (super admin only)
   async listUsers(req, res) {
     try {
-      const { status, userType, search, page = 1, limit = 20 } = req.query;
-      const filter = {};
-
-      // Add status filter
-      if (status) filter.status = status;
-
-      // Add userType filter
-      if (userType) filter.userType = userType;
-
-      // Add search filter for fullName, email, or phone
-      if (search) {
-        const searchRegex = new RegExp(search, "i"); // Case-insensitive search
-        filter.$or = [
-          { fullName: searchRegex },
-          { email: searchRegex },
-          { phone: searchRegex },
-          { agentCode: searchRegex },
-        ];
-      }
-
-      // Parse pagination parameters
-      const pageNum = parseInt(page, 10) || 1;
-      const limitNum = parseInt(limit, 10) || 20;
-      const skip = (pageNum - 1) * limitNum;
-
-      // Get total count for pagination
-      const total = await User.countDocuments(filter);
-
-      // No tenantId filtering; super admin sees all users
-      const users = await User.find(filter)
-        .select("-password -refreshToken")
-        .sort({ createdAt: -1 }) // Sort by newest first
-        .skip(skip)
-        .limit(limitNum);
-
-      const totalPages = Math.ceil(total / limitNum);
-
-      res.json({
-        success: true,
-        users,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          pages: totalPages,
-        },
-      });
+      const filters = {
+        status: req.query.status,
+        userType: req.query.userType,
+        search: req.query.search,
+      };
+      const pagination = { page: req.query.page, limit: req.query.limit };
+      const result = await userService.getUsers(
+        filters,
+        pagination,
+        req.user.userType,
+        req.user.userId,
+      );
+      res.json({ success: true, ...result });
     } catch (error) {
       logger.error(`List users failed: ${error.message}`);
       res
-        .status(500)
-        .json({ success: false, message: "Failed to fetch users" });
+        .status(error.statusCode || 500)
+        .json({
+          success: false,
+          message: error.message || "Failed to fetch users",
+        });
     }
   }
 
@@ -854,31 +715,20 @@ class AuthController {
   async updateAgentStatus(req, res) {
     try {
       const { id } = req.params;
-      const { status } = req.body; // 'active' or 'rejected'
-      if (!["active", "rejected"].includes(status)) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Invalid status" });
-      }
-      const user = await User.findById(id);
-      if (
-        !user ||
-        !["agent", "super_agent", "dealer", "super_dealer"].includes(
-          user.userType,
-        )
-      ) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Agent not found" });
-      }
-      user.status = status;
-      await user.save();
-      res.json({ success: true, message: `Agent status updated to ${status}` });
+      const { status } = req.body;
+      const updated = await userService.updateUserStatus(id, { status });
+      res.json({
+        success: true,
+        message: `Agent status updated to ${updated.status}`,
+      });
     } catch (error) {
       logger.error(`Update agent status failed: ${error.message}`);
       res
-        .status(500)
-        .json({ success: false, message: "Failed to update agent status" });
+        .status(error.statusCode || 500)
+        .json({
+          success: false,
+          message: error.message || "Failed to update agent status",
+        });
     }
   }
 
@@ -886,16 +736,20 @@ class AuthController {
   async getUserById(req, res) {
     try {
       const { id } = req.params;
-      const user = await User.findById(id).select("-password -refreshToken");
-      if (!user) {
+      const user = await userService.getUserById(id);
+      if (!user)
         return res
           .status(404)
           .json({ success: false, message: "User not found" });
-      }
       res.json({ success: true, user });
     } catch (error) {
       logger.error(`Get user by ID failed: ${error.message}`);
-      res.status(500).json({ success: false, message: "Failed to fetch user" });
+      res
+        .status(error.statusCode || 500)
+        .json({
+          success: false,
+          message: error.message || "Failed to fetch user",
+        });
     }
   }
 
@@ -903,39 +757,16 @@ class AuthController {
   async updateUser(req, res) {
     try {
       const { id } = req.params;
-      const updates = req.body;
-      // Only allow certain fields to be updated
-      const allowedFields = [
-        "fullName",
-        "email",
-        "phone",
-        "userType",
-        "businessName",
-        "businessCategory",
-        "subscriptionPlan",
-        "subscriptionStatus",
-        "isActive",
-        "status",
-      ];
-      const updateData = {};
-      for (const key of allowedFields) {
-        if (updates[key] !== undefined) updateData[key] = updates[key];
-      }
-      const user = await User.findByIdAndUpdate(id, updateData, {
-        new: true,
-        runValidators: true,
-      }).select("-password -refreshToken");
-      if (!user) {
-        return res
-          .status(404)
-          .json({ success: false, message: "User not found" });
-      }
-      res.json({ success: true, user });
+      const updated = await userService.updateUser(id, req.body);
+      res.json({ success: true, user: updated });
     } catch (error) {
       logger.error(`Update user failed: ${error.message}`);
       res
-        .status(500)
-        .json({ success: false, message: "Failed to update user" });
+        .status(error.statusCode || 500)
+        .json({
+          success: false,
+          message: error.message || "Failed to update user",
+        });
     }
   }
 
@@ -943,27 +774,16 @@ class AuthController {
   async resetUserPassword(req, res) {
     try {
       const { id } = req.params;
-      const { newPassword } = req.body;
-      if (!newPassword || newPassword.length < 6) {
-        return res.status(400).json({
-          success: false,
-          message: "Password must be at least 6 characters.",
-        });
-      }
-      const user = await User.findById(id);
-      if (!user) {
-        return res
-          .status(404)
-          .json({ success: false, message: "User not found" });
-      }
-      user.password = newPassword;
-      await user.save();
+      await userService.resetUserPassword(id, req.body.newPassword);
       res.json({ success: true, message: "Password reset successfully" });
     } catch (error) {
       logger.error(`Reset user password failed: ${error.message}`);
       res
-        .status(500)
-        .json({ success: false, message: "Failed to reset password" });
+        .status(error.statusCode || 500)
+        .json({
+          success: false,
+          message: error.message || "Failed to reset password",
+        });
     }
   }
 
@@ -971,18 +791,16 @@ class AuthController {
   async deleteUser(req, res) {
     try {
       const { id } = req.params;
-      const user = await User.findByIdAndDelete(id);
-      if (!user) {
-        return res
-          .status(404)
-          .json({ success: false, message: "User not found" });
-      }
+      await userService.deleteUser(id);
       res.json({ success: true, message: "User deleted successfully" });
     } catch (error) {
       logger.error(`Delete user failed: ${error.message}`);
       res
-        .status(500)
-        .json({ success: false, message: "Failed to delete user" });
+        .status(error.statusCode || 500)
+        .json({
+          success: false,
+          message: error.message || "Failed to delete user",
+        });
     }
   }
 
@@ -1072,6 +890,7 @@ export default {
   verifyAccount: authController.verifyAccount.bind(authController),
   forgotPassword: authController.forgotPassword.bind(authController),
   resetPassword: authController.resetPassword.bind(authController),
+  setupPin: authController.setupPin.bind(authController),
   verifyToken: authController.verifyToken.bind(authController),
   logout: authController.logout.bind(authController),
   refreshToken: authController.refreshToken.bind(authController),
