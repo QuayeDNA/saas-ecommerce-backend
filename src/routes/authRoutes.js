@@ -8,6 +8,9 @@ import { apiEndpointLimits } from "../middlewares/advancedRateLimit.js";
 import {
   registerAgentValidation,
   registerSuperAdminValidation,
+  forgotPasswordValidation,
+  resetPasswordValidation,
+  setupPinValidation,
 } from "../validators/authValidator.js";
 
 const router = express.Router();
@@ -15,6 +18,9 @@ const router = express.Router();
 // Create validation middlewares (same pattern as product routes)
 const validateRegisterAgent = validate(registerAgentValidation);
 const validateRegisterSuperAdmin = validate(registerSuperAdminValidation);
+const validateForgotPassword = validate(forgotPasswordValidation);
+const validateResetPassword = validate(resetPasswordValidation);
+const validateSetupPin = validate(setupPinValidation);
 // Public routes
 router.post("/login", authController.login);
 router.post("/refresh", authController.refreshToken);
@@ -32,14 +38,24 @@ router.post("/verify-account", authController.verifyAccount);
 router.post("/resend-verification", authController.resendVerification);
 router.post(
   "/forgot-password",
+  validateForgotPassword,
   // Apply low-frequency rate limiting to protect PIN brute-force
   apiEndpointLimits.lowFrequency,
   authController.forgotPassword,
 );
-router.post("/reset-password", authController.resetPassword);
+router.post(
+  "/reset-password",
+  validateResetPassword,
+  authController.resetPassword,
+);
 
 // Protected routes
-router.post("/setup-pin", authenticate, authController.setupPin);
+router.post(
+  "/setup-pin",
+  authenticate,
+  validateSetupPin,
+  authController.setupPin,
+);
 router.post("/verify-token", authenticate, authController.verifyToken);
 router.post("/logout", authenticate, authController.logout);
 router.post(

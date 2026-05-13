@@ -7,7 +7,47 @@ import { BUSINESS_ROLES } from "../constants/roles.js";
 import { isBusinessUser, getTenantId } from "../utils/userTypeHelpers.js";
 import userService from "../services/userService.js";
 
+const AUTH_STATUS_CODE_FALLBACK = {
+  400: "AUTH_BAD_REQUEST",
+  401: "AUTH_UNAUTHORIZED",
+  403: "AUTH_FORBIDDEN",
+  404: "AUTH_NOT_FOUND",
+  409: "AUTH_CONFLICT",
+  429: "AUTH_RATE_LIMITED",
+  500: "AUTH_INTERNAL_ERROR",
+};
+
 class AuthController {
+  sendAuthError(
+    res,
+    error,
+    fallbackCode,
+    fallbackMessage,
+    fallbackStatus = 500,
+  ) {
+    const status = error?.statusCode || fallbackStatus;
+    const code =
+      error?.code ||
+      fallbackCode ||
+      AUTH_STATUS_CODE_FALLBACK[status] ||
+      AUTH_STATUS_CODE_FALLBACK[500];
+    const message = error?.message || fallbackMessage;
+
+    return res.status(status).json({
+      success: false,
+      code,
+      message,
+    });
+  }
+
+  sendAuthErrorByCode(res, status, code, message) {
+    return res.status(status).json({
+      success: false,
+      code,
+      message,
+    });
+  }
+
   // Generate JWT token with tenant info
   generateToken(userId, userType, tenantId = null) {
     return jwt.sign({ userId, userType, tenantId }, process.env.JWTSECRET, {
@@ -56,11 +96,12 @@ class AuthController {
       });
     } catch (error) {
       logger.error(`Agent registration error: ${error.message}`);
-      res.status(error.statusCode || 500).json({
-        success: false,
-        message:
-          error.message || "Agent registration failed. Please try again.",
-      });
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_REGISTER_AGENT_FAILED",
+        "Agent registration failed. Please try again.",
+      );
     }
   }
 
@@ -73,20 +114,24 @@ class AuthController {
       const user = await User.findOne({ email });
       if (!user) {
         logger.warn(`Login attempt for non-existent user: ${email}`);
-        return res.status(401).json({
-          success: false,
-          message: "Invalid email or password",
-        });
+        return this.sendAuthErrorByCode(
+          res,
+          401,
+          "AUTH_INVALID_CREDENTIALS",
+          "Invalid email or password",
+        );
       }
 
       // Check password
       const isMatch = await user.comparePassword(password);
       if (!isMatch) {
         logger.warn(`Invalid password for user: ${email}`);
-        return res.status(401).json({
-          success: false,
-          message: "Invalid email or password",
-        });
+        return this.sendAuthErrorByCode(
+          res,
+          401,
+          "AUTH_INVALID_CREDENTIALS",
+          "Invalid email or password",
+        );
       }
 
       // Email verification is no longer required - all users are auto-verified
@@ -97,15 +142,19 @@ class AuthController {
         logger.warn(
           `Login attempt for user with status '${user.status}' or inactive: ${email}`,
         );
-        return res.status(401).json({
-          success: false,
-          message:
-            user.isActive === false
-              ? "Your account has been deactivated by an administrator."
-              : user.status === "pending"
-                ? "Your account is pending approval by a super admin."
-                : "Your account has been rejected. Please contact support.",
-        });
+        const message =
+          user.isActive === false
+            ? "Your account has been deactivated by an administrator."
+            : user.status === "pending"
+              ? "Your account is pending approval by a super admin."
+              : "Your account has been rejected. Please contact support.";
+        const code =
+          user.isActive === false
+            ? "AUTH_ACCOUNT_DEACTIVATED"
+            : user.status === "pending"
+              ? "AUTH_ACCOUNT_PENDING_APPROVAL"
+              : "AUTH_ACCOUNT_REJECTED";
+        return this.sendAuthErrorByCode(res, 401, code, message);
       }
 
       // Generate tokens
@@ -178,10 +227,12 @@ class AuthController {
       });
     } catch (error) {
       logger.error(`Login error: ${error.message}`);
-      res.status(500).json({
-        success: false,
-        message: "Login failed. Please try again.",
-      });
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_LOGIN_FAILED",
+        "Login failed. Please try again.",
+      );
     }
   }
 
@@ -195,12 +246,12 @@ class AuthController {
       res.json({ success: true, data });
     } catch (error) {
       logger.error(`Agent dashboard error: ${error.message}`);
-      res
-        .status(500)
-        .json({
-          success: false,
-          message: error.message || "Failed to load dashboard data",
-        });
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_DASHBOARD_LOAD_FAILED",
+        "Failed to load dashboard data",
+      );
     }
   }
 
@@ -215,10 +266,12 @@ class AuthController {
 
       if (!token) {
         logger.warn("No token provided in request body");
-        return res.status(400).json({
-          success: false,
-          message: "Verification token is required",
-        });
+        return this.sendAuthErrorByCode(
+          res,
+          400,
+          "AUTH_VERIFY_TOKEN_REQUIRED",
+          "Verification token is required",
+        );
       }
 
       // Verify the JWT token
@@ -247,6 +300,7 @@ class AuthController {
 
         return res.status(400).json({
           success: false,
+          code: "AUTH_VERIFY_TOKEN_INVALID",
           message:
             "Invalid or expired verification token, or account already verified",
         });
@@ -278,33 +332,44 @@ class AuthController {
         ? "Account verified successfully. Your account is pending approval by a super admin. You will be notified once approved."
         : "Account verified successfully. You can now log in.";
 
+      // Fetch updated user to return to client for state refresh
+      const updatedUser = await User.findById(user._id).select(
+        "-password -refreshToken",
+      );
+
       res.json({
         success: true,
         message,
         userType: user.userType,
         status: user.status,
+        user: updatedUser,
       });
     } catch (error) {
       logger.error(`Account verification error: ${error.message}`);
 
       // Handle JWT errors specifically
       if (error.name === "JsonWebTokenError") {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid verification token format",
-        });
+        return this.sendAuthErrorByCode(
+          res,
+          400,
+          "AUTH_VERIFY_TOKEN_FORMAT_INVALID",
+          "Invalid verification token format",
+        );
       } else if (error.name === "TokenExpiredError") {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Verification token has expired. Please request a new verification email.",
-        });
+        return this.sendAuthErrorByCode(
+          res,
+          400,
+          "AUTH_VERIFY_TOKEN_EXPIRED",
+          "Verification token has expired. Please request a new verification email.",
+        );
       }
 
-      res.status(400).json({
-        success: false,
-        message: "Invalid or expired verification token",
-      });
+      return this.sendAuthErrorByCode(
+        res,
+        400,
+        "AUTH_VERIFY_TOKEN_INVALID",
+        "Invalid or expired verification token",
+      );
     }
   }
   // Set up security PIN
@@ -316,16 +381,24 @@ class AuthController {
       await authService.setupPin(userId, pin);
 
       logger.info(`Security PIN setup successfully for user: ${userId}`);
+      // Fetch updated user data to return to client so frontends can refresh their cached user
+      const updatedUser = await User.findById(userId).select(
+        "-password -refreshToken",
+      );
+
       res.json({
         success: true,
         message: "Security PIN configured successfully",
+        user: updatedUser,
       });
     } catch (error) {
       logger.error(`Setup PIN error: ${error.message}`);
-      res.status(error.statusCode || 500).json({
-        success: false,
-        message: error.message || "Failed to setup Security PIN",
-      });
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_SETUP_PIN_FAILED",
+        "Failed to setup Security PIN",
+      );
     }
   }
 
@@ -334,9 +407,12 @@ class AuthController {
     try {
       const { identifier, pin } = req.body;
       if (!identifier || !pin) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Identifier and PIN are required" });
+        return this.sendAuthErrorByCode(
+          res,
+          400,
+          "AUTH_IDENTIFIER_PIN_REQUIRED",
+          "Identifier and PIN are required",
+        );
       }
 
       const result = await authService.forgotPasswordWithPin(identifier, pin);
@@ -349,10 +425,12 @@ class AuthController {
       });
     } catch (error) {
       logger.error(`Forgot password via PIN error: ${error.message}`);
-      res.status(error.statusCode || 500).json({
-        success: false,
-        message: error.message || "Failed to process password reset",
-      });
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_FORGOT_PASSWORD_FAILED",
+        "Failed to process password reset",
+      );
     }
   }
 
@@ -371,10 +449,12 @@ class AuthController {
       });
     } catch (error) {
       logger.error(`Reset password error: ${error.message}`);
-      res.status(error.statusCode || 500).json({
-        success: false,
-        message: error.message || "Failed to reset password",
-      });
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_RESET_PASSWORD_FAILED",
+        "Failed to reset password",
+      );
     }
   }
 
@@ -388,10 +468,12 @@ class AuthController {
       const token = refreshToken || cookieRefreshToken;
 
       if (!token) {
-        return res.status(401).json({
-          success: false,
-          message: "Refresh token not provided",
-        });
+        return this.sendAuthErrorByCode(
+          res,
+          401,
+          "AUTH_REFRESH_TOKEN_REQUIRED",
+          "Refresh token not provided",
+        );
       }
 
       // Verify refresh token
@@ -401,19 +483,36 @@ class AuthController {
       );
 
       if (decoded.type !== "refresh") {
-        return res.status(401).json({
-          success: false,
-          message: "Invalid token type",
-        });
+        return this.sendAuthErrorByCode(
+          res,
+          401,
+          "AUTH_REFRESH_TOKEN_TYPE_INVALID",
+          "Invalid token type",
+        );
       }
 
       // Find user and verify refresh token
       const user = await User.findById(decoded.userId);
       if (!user || user.refreshToken !== token) {
-        return res.status(401).json({
-          success: false,
-          message: "Invalid refresh token",
-        });
+        return this.sendAuthErrorByCode(
+          res,
+          401,
+          "AUTH_REFRESH_TOKEN_INVALID",
+          "Invalid refresh token",
+        );
+      }
+
+      if (
+        user.passwordChangedAt &&
+        decoded.iat &&
+        decoded.iat * 1000 < new Date(user.passwordChangedAt).getTime()
+      ) {
+        return this.sendAuthErrorByCode(
+          res,
+          401,
+          "AUTH_SESSION_EXPIRED",
+          "Session expired. Please log in again.",
+        );
       }
 
       // Generate new tokens
@@ -450,10 +549,13 @@ class AuthController {
       });
     } catch (error) {
       logger.error(`Token refresh error: ${error.message}`);
-      res.status(401).json({
-        success: false,
-        message: "Invalid refresh token",
-      });
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_REFRESH_TOKEN_INVALID",
+        "Invalid refresh token",
+        401,
+      );
     }
   }
 
@@ -469,6 +571,7 @@ class AuthController {
         return res.status(401).json({
           success: false,
           valid: false,
+          code: "AUTH_USER_NOT_FOUND",
           message: "User not found",
         });
       }
@@ -481,9 +584,10 @@ class AuthController {
       });
     } catch (error) {
       logger.error(`Token verification error: ${error.message}`);
-      res.status(401).json({
+      return res.status(401).json({
         success: false,
         valid: false,
+        code: error?.code || "AUTH_TOKEN_INVALID",
         message: "Invalid token",
       });
     }
@@ -513,10 +617,12 @@ class AuthController {
       });
     } catch (error) {
       logger.error(`Logout error: ${error.message}`);
-      res.status(500).json({
-        success: false,
-        message: "Logout failed",
-      });
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_LOGOUT_FAILED",
+        "Logout failed",
+      );
     }
   }
 
@@ -526,10 +632,12 @@ class AuthController {
       const { email } = req.body;
 
       if (!email) {
-        return res.status(400).json({
-          success: false,
-          message: "Email is required",
-        });
+        return this.sendAuthErrorByCode(
+          res,
+          400,
+          "AUTH_EMAIL_REQUIRED",
+          "Email is required",
+        );
       }
 
       // Find user by email
@@ -541,6 +649,7 @@ class AuthController {
         );
         return res.status(404).json({
           success: false,
+          code: "AUTH_EMAIL_NOT_FOUND",
           message: "No account found with this email address",
         });
       }
@@ -552,6 +661,7 @@ class AuthController {
         );
         return res.status(400).json({
           success: false,
+          code: "AUTH_ACCOUNT_ALREADY_VERIFIED",
           message: "This account is already verified",
         });
       }
@@ -561,6 +671,7 @@ class AuthController {
         logger.warn(`Multiple verification resend attempts for: ${email}`);
         return res.status(400).json({
           success: false,
+          code: "AUTH_VERIFICATION_RESEND_LIMIT_REACHED",
           message:
             "Verification email has already been resent. Please register again if you still cannot verify your account.",
         });
@@ -590,10 +701,12 @@ class AuthController {
       });
     } catch (error) {
       logger.error(`Resend verification error: ${error.message}`);
-      res.status(500).json({
-        success: false,
-        message: "Failed to resend verification email. Please try again.",
-      });
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_RESEND_VERIFICATION_FAILED",
+        "Failed to resend verification email. Please try again.",
+      );
     }
   }
 
@@ -608,16 +721,25 @@ class AuthController {
       });
 
       logger.info(`First-time flag updated for user: ${req.user.email}`);
+
+      // Fetch updated user data to return to client for state refresh
+      const updatedUser = await User.findById(userId).select(
+        "-password -refreshToken",
+      );
+
       res.json({
         success: true,
         message: "User preferences updated successfully",
+        user: updatedUser,
       });
     } catch (error) {
       logger.error(`Error updating first-time flag: ${error.message}`);
-      res.status(500).json({
-        success: false,
-        message: "Failed to update user preferences",
-      });
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_UPDATE_PREFERENCES_FAILED",
+        "Failed to update user preferences",
+      );
     }
   }
 
@@ -632,10 +754,12 @@ class AuthController {
         logger.warn(
           `Super admin registration attempt with existing email: ${email}`,
         );
-        return res.status(400).json({
-          success: false,
-          message: "User already exists with this email",
-        });
+        return this.sendAuthErrorByCode(
+          res,
+          400,
+          "AUTH_EMAIL_ALREADY_EXISTS",
+          "User already exists with this email",
+        );
       }
 
       // Create super admin user
@@ -677,10 +801,12 @@ class AuthController {
       });
     } catch (error) {
       logger.error(`Super admin registration error: ${error.message}`);
-      res.status(500).json({
-        success: false,
-        message: "Super admin registration failed. Please try again.",
-      });
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_REGISTER_SUPER_ADMIN_FAILED",
+        "Super admin registration failed. Please try again.",
+      );
     }
   }
 
@@ -702,12 +828,12 @@ class AuthController {
       res.json({ success: true, ...result });
     } catch (error) {
       logger.error(`List users failed: ${error.message}`);
-      res
-        .status(error.statusCode || 500)
-        .json({
-          success: false,
-          message: error.message || "Failed to fetch users",
-        });
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_LIST_USERS_FAILED",
+        "Failed to fetch users",
+      );
     }
   }
 
@@ -723,12 +849,12 @@ class AuthController {
       });
     } catch (error) {
       logger.error(`Update agent status failed: ${error.message}`);
-      res
-        .status(error.statusCode || 500)
-        .json({
-          success: false,
-          message: error.message || "Failed to update agent status",
-        });
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_UPDATE_AGENT_STATUS_FAILED",
+        "Failed to update agent status",
+      );
     }
   }
 
@@ -738,18 +864,21 @@ class AuthController {
       const { id } = req.params;
       const user = await userService.getUserById(id);
       if (!user)
-        return res
-          .status(404)
-          .json({ success: false, message: "User not found" });
+        return this.sendAuthErrorByCode(
+          res,
+          404,
+          "AUTH_USER_NOT_FOUND",
+          "User not found",
+        );
       res.json({ success: true, user });
     } catch (error) {
       logger.error(`Get user by ID failed: ${error.message}`);
-      res
-        .status(error.statusCode || 500)
-        .json({
-          success: false,
-          message: error.message || "Failed to fetch user",
-        });
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_GET_USER_FAILED",
+        "Failed to fetch user",
+      );
     }
   }
 
@@ -761,12 +890,12 @@ class AuthController {
       res.json({ success: true, user: updated });
     } catch (error) {
       logger.error(`Update user failed: ${error.message}`);
-      res
-        .status(error.statusCode || 500)
-        .json({
-          success: false,
-          message: error.message || "Failed to update user",
-        });
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_UPDATE_USER_FAILED",
+        "Failed to update user",
+      );
     }
   }
 
@@ -778,12 +907,12 @@ class AuthController {
       res.json({ success: true, message: "Password reset successfully" });
     } catch (error) {
       logger.error(`Reset user password failed: ${error.message}`);
-      res
-        .status(error.statusCode || 500)
-        .json({
-          success: false,
-          message: error.message || "Failed to reset password",
-        });
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_RESET_USER_PASSWORD_FAILED",
+        "Failed to reset password",
+      );
     }
   }
 
@@ -795,12 +924,12 @@ class AuthController {
       res.json({ success: true, message: "User deleted successfully" });
     } catch (error) {
       logger.error(`Delete user failed: ${error.message}`);
-      res
-        .status(error.statusCode || 500)
-        .json({
-          success: false,
-          message: error.message || "Failed to delete user",
-        });
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_DELETE_USER_FAILED",
+        "Failed to delete user",
+      );
     }
   }
 
@@ -810,17 +939,22 @@ class AuthController {
       const { id } = req.params;
       const user = await User.findById(id);
       if (!user) {
-        return res
-          .status(404)
-          .json({ success: false, message: "User not found" });
+        return this.sendAuthErrorByCode(
+          res,
+          404,
+          "AUTH_USER_NOT_FOUND",
+          "User not found",
+        );
       }
 
       // Only allow impersonation of non-super_admin users
       if (user.userType === "super_admin") {
-        return res.status(403).json({
-          success: false,
-          message: "Cannot impersonate another super admin",
-        });
+        return this.sendAuthErrorByCode(
+          res,
+          403,
+          "AUTH_IMPERSONATION_FORBIDDEN",
+          "Cannot impersonate another super admin",
+        );
       }
 
       // Generate short-lived access token for impersonated user
@@ -849,9 +983,12 @@ class AuthController {
       });
     } catch (error) {
       logger.error(`Impersonate user failed: ${error.message}`);
-      res
-        .status(500)
-        .json({ success: false, message: "Failed to impersonate user" });
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_IMPERSONATION_FAILED",
+        "Failed to impersonate user",
+      );
     }
   }
 
@@ -874,10 +1011,12 @@ class AuthController {
       });
     } catch (error) {
       logger.error(`Debug user error: ${error.message}`);
-      res.status(500).json({
-        success: false,
-        message: "Debug failed",
-      });
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_DEBUG_FAILED",
+        "Debug failed",
+      );
     }
   }
 }

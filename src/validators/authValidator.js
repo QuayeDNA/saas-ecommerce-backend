@@ -72,10 +72,16 @@ export const loginValidation = [
 ];
 
 export const forgotPasswordValidation = [
-  body("email")
-    .isEmail()
-    .normalizeEmail()
-    .withMessage("Please provide a valid email"),
+  body("identifier")
+    .trim()
+    .notEmpty()
+    .withMessage("Phone number, email, or agent code is required"),
+
+  body("pin")
+    .isLength({ min: 4, max: 6 })
+    .withMessage("Security PIN must be 4 to 6 digits")
+    .matches(/^\d+$/)
+    .withMessage("Security PIN must contain digits only"),
 ];
 
 export const resetPasswordValidation = [
@@ -88,6 +94,14 @@ export const resetPasswordValidation = [
     .withMessage(
       "Password must contain at least one uppercase letter, one lowercase letter, and one number",
     ),
+];
+
+export const setupPinValidation = [
+  body("pin")
+    .isLength({ min: 4, max: 6 })
+    .withMessage("Security PIN must be 4 to 6 digits")
+    .matches(/^\d+$/)
+    .withMessage("Security PIN must contain digits only"),
 ];
 
 export const registerSuperAdminValidation = [

@@ -9,6 +9,13 @@ const isValidPin = (pin) => {
   return typeof pin === "string" && /^\d{4,6}$/.test(pin);
 };
 
+const createAuthError = (message, statusCode, code) => {
+  const err = new Error(message);
+  err.statusCode = statusCode;
+  err.code = code;
+  return err;
+};
+
 export const authService = {
   generateToken(userId, userType, tenantId = null) {
     return jwt.sign({ userId, userType, tenantId }, process.env.JWTSECRET, {
@@ -35,9 +42,11 @@ export const authService = {
    */
   async setupPin(userId, pin) {
     if (!isValidPin(pin)) {
-      const err = new Error("PIN must be 4 to 6 digits");
-      err.statusCode = 400;
-      throw err;
+      throw createAuthError(
+        "PIN must be 4 to 6 digits",
+        400,
+        "AUTH_INVALID_PIN_FORMAT",
+      );
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -45,9 +54,7 @@ export const authService = {
 
     const user = await User.findById(userId);
     if (!user) {
-      const err = new Error("User not found");
-      err.statusCode = 404;
-      throw err;
+      throw createAuthError("User not found", 404, "AUTH_USER_NOT_FOUND");
     }
 
     user.securityPin = hashedPin;
@@ -63,9 +70,11 @@ export const authService = {
    */
   async forgotPasswordWithPin(identifier, pin) {
     if (!isValidPin(pin)) {
-      const err = new Error("Invalid PIN format");
-      err.statusCode = 400;
-      throw err;
+      throw createAuthError(
+        "Invalid PIN format",
+        400,
+        "AUTH_INVALID_PIN_FORMAT",
+      );
     }
 
     // Try finding by phone or agentCode or email
@@ -78,26 +87,26 @@ export const authService = {
     });
 
     if (!user) {
-      const err = new Error("No user found with this identifier");
-      err.statusCode = 404;
-      throw err;
+      throw createAuthError(
+        "No user found with this identifier",
+        404,
+        "AUTH_IDENTIFIER_NOT_FOUND",
+      );
     }
 
     if (user.requiresPinSetup || !user.securityPin) {
-      const err = new Error(
+      throw createAuthError(
         "Security PIN has not been set up. Please contact support.",
+        400,
+        "AUTH_PIN_NOT_CONFIGURED",
       );
-      err.statusCode = 400;
-      throw err;
     }
 
     // Validate PIN
     const isPinMatch = await bcrypt.compare(pin, user.securityPin);
     if (!isPinMatch) {
       logger.warn(`Invalid PIN attempt for forgot password: ${identifier}`);
-      const err = new Error("Invalid Security PIN");
-      err.statusCode = 401;
-      throw err;
+      throw createAuthError("Invalid Security PIN", 400, "AUTH_INVALID_PIN");
     }
 
     // Generate temporary 32-byte hex token instead of using JWT to ensure it's single-use
@@ -125,9 +134,11 @@ export const authService = {
    */
   async resetPasswordWithToken(resetToken, newPassword) {
     if (!resetToken || !newPassword || newPassword.length < 6) {
-      const err = new Error("Invalid request payload");
-      err.statusCode = 400;
-      throw err;
+      throw createAuthError(
+        "Invalid request payload",
+        400,
+        "AUTH_INVALID_RESET_PAYLOAD",
+      );
     }
 
     try {
@@ -138,23 +149,24 @@ export const authService = {
 
       const user = await User.findById(decoded.userId);
       if (!user) {
-        const err = new Error("User not found");
-        err.statusCode = 404;
-        throw err;
+        throw createAuthError("User not found", 404, "AUTH_USER_NOT_FOUND");
       }
 
       user.password = newPassword; // Pre-save hook will hash it
       user.forcePasswordChange = false; // Reset the flag if it was set
+      user.passwordChangedAt = new Date();
 
-      // Invalidate all existing sessions by regenerating a refresh token explicitly or wiping it
+      // Invalidate all existing sessions so old refresh/access tokens stop working
       user.refreshToken = null;
 
       await user.save();
       return true;
     } catch {
-      const err = new Error("Invalid or expired reset token");
-      err.statusCode = 401;
-      throw err;
+      throw createAuthError(
+        "Invalid or expired reset token",
+        401,
+        "AUTH_INVALID_RESET_TOKEN",
+      );
     }
   },
 };

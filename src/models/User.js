@@ -134,6 +134,10 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  passwordChangedAt: {
+    type: Date,
+    default: null,
+  },
   refreshToken: String,
   createdAt: {
     type: Date,

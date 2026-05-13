@@ -541,7 +541,14 @@ class UserService {
         err.statusCode = 404;
         throw err;
       }
+
       user.password = newPassword;
+      // Invalidate all active sessions globally
+      user.passwordChangedAt = new Date();
+      // Wipe the forgotten PIN so they are forced to set it up again
+      user.securityPin = undefined;
+      user.requiresPinSetup = true;
+
       await user.save();
       return true;
     } catch (error) {

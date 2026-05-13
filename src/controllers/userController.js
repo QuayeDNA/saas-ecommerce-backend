@@ -10,6 +10,10 @@ import {
 import notificationService from "../services/notificationService.js";
 import websocketService from "../services/websocketService.js";
 import pushNotificationService from "../services/pushNotificationService.js";
+import {
+  respondWithError,
+  respondWithSuccess,
+} from "../utils/errorResponse.js";
 
 class UserController {
   // Get current user profile
@@ -89,19 +93,13 @@ class UserController {
 
       const user = await User.findById(userId);
       if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: "User not found",
-        });
+        return respondWithError(res, "USR_NOT_FOUND");
       }
 
       // Verify current password
       const isMatch = await user.comparePassword(currentPassword);
       if (!isMatch) {
-        return res.status(400).json({
-          success: false,
-          message: "Current password is incorrect",
-        });
+        return respondWithError(res, "AUTH_INVALID_PASSWORD");
       }
 
       // Update password
@@ -109,16 +107,14 @@ class UserController {
       await user.save();
 
       logger.info(`Password changed for user: ${user.email}`);
-      res.json({
-        success: true,
-        message: "Password changed successfully",
-      });
+      return respondWithSuccess(res, null, "Password changed successfully");
     } catch (error) {
       logger.error(`Change password error: ${error.message}`);
-      res.status(500).json({
-        success: false,
-        message: "Failed to change password",
-      });
+      return respondWithError(
+        res,
+        "INTERNAL_SERVER_ERROR",
+        "Failed to change password",
+      );
     }
   }
 
