@@ -2314,6 +2314,12 @@ class AnalyticsService {
     const dateRange = this.getDateRange(timeframe);
     const { startDate, endDate } = dateRange;
 
+    // Determine grouping format based on timeframe
+    let dateFormat = "%Y-%m-%d";
+    if (timeframe === "365d" || timeframe === "all" || timeframe === "yearly") {
+      dateFormat = "%Y-%m"; // Group by month for long periods
+    }
+
     const dailyData = await Order.aggregate([
       {
         $match: {
@@ -2328,7 +2334,7 @@ class AnalyticsService {
       {
         $group: {
           _id: {
-            $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+            $dateToString: { format: dateFormat, date: "$createdAt" },
           },
           orders: { $sum: 1 },
           revenue: {
