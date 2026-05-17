@@ -345,6 +345,13 @@ class UserService {
         user.userType = statusUpdates.userType;
       }
 
+      if (
+        statusUpdates.status &&
+        ["pending", "active", "rejected"].includes(statusUpdates.status)
+      ) {
+        user.status = statusUpdates.status;
+      }
+
       await user.save();
 
       logger.info(`User status updated: ${user.email}`);
@@ -370,6 +377,8 @@ class UserService {
       // Soft delete by marking as suspended
       user.subscriptionStatus = "suspended";
       user.isVerified = false;
+      user.isActive = false;
+      user.status = "rejected";
       await user.save();
 
       logger.info(`User deleted: ${user.email}`);

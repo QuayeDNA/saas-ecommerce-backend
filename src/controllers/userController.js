@@ -381,7 +381,7 @@ class UserController {
   async updateUserStatus(req, res) {
     try {
       const { id } = req.params;
-      const { isVerified, subscriptionStatus, userType } = req.body;
+      const { isVerified, subscriptionStatus, userType, status } = req.body;
       const { userType: requestUserType } = req.user;
 
       if (requestUserType !== "super_admin") {
@@ -403,6 +403,7 @@ class UserController {
         isVerified: user.isVerified,
         subscriptionStatus: user.subscriptionStatus,
         userType: user.userType,
+        status: user.status,
       };
 
       // Update allowed status fields
@@ -419,6 +420,10 @@ class UserController {
         user.userType = userType;
       }
 
+      if (status && ["pending", "active", "rejected"].includes(status)) {
+        user.status = status;
+      }
+
       await user.save();
 
       await this.logAudit(req, {
@@ -433,6 +438,7 @@ class UserController {
             isVerified: user.isVerified,
             subscriptionStatus: user.subscriptionStatus,
             userType: user.userType,
+            status: user.status,
           },
         },
         metadata: {
@@ -485,10 +491,10 @@ class UserController {
         });
       }
 
-      // For now, we'll just mark the user as inactive
-      // In a real app, you might want to implement soft delete
       user.subscriptionStatus = "suspended";
       user.isVerified = false;
+      user.isActive = false;
+      user.status = "rejected";
       await user.save();
 
       logger.info(`User deleted: ${user.email} by ${req.user.email}`);
