@@ -7,6 +7,12 @@ import settingsService from "../services/settingsService.js";
 import logger from "../utils/logger.js";
 import PaystackVerificationTask from "../models/PaystackVerificationTask.js";
 import { isBusinessUser } from "../utils/userTypeHelpers.js";
+import { logAuditAction } from "../utils/auditLogger.js";
+import {
+  AUDIT_ACTIONS,
+  AUDIT_CATEGORIES,
+  AUDIT_SEVERITIES,
+} from "../constants/audit.js";
 
 // ─── Shared Helpers ───────────────────────────────────────────────────────────
 
@@ -143,6 +149,21 @@ class WalletController {
         parseFloat(amount),
         description,
       );
+
+      await logAuditAction(req, {
+        userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.WALLET_TOPUP_REQUESTED,
+        category: AUDIT_CATEGORIES.WALLET,
+        resource: { transactionId: transaction?._id || null },
+        metadata: {
+          source: "walletController.requestWalletTopUp",
+          amount: parseFloat(amount),
+          description: description || null,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
+
       res.status(201).json({
         success: true,
         message: "Top-up request created successfully",
@@ -206,6 +227,20 @@ class WalletController {
         parseFloat(amount),
         returnUrl || null,
       );
+
+      await logAuditAction(req, {
+        userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.WALLET_PAYSTACK_INITIATED,
+        category: AUDIT_CATEGORIES.WALLET,
+        resource: { userId },
+        metadata: {
+          source: "walletController.initiatePaystackTopUp",
+          amount: parseFloat(amount),
+          reference: result?.reference || null,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
 
       res.json({
         success: true,
@@ -281,6 +316,18 @@ class WalletController {
       await walletService.processPaystackWebhook({
         event: "charge.success",
         data: paystackData,
+      });
+
+      await logAuditAction(req, {
+        userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.WALLET_PAYSTACK_VERIFIED,
+        category: AUDIT_CATEGORIES.WALLET,
+        resource: { userId, reference },
+        metadata: {
+          source: "walletController.verifyPaystackTransaction",
+        },
+        severity: AUDIT_SEVERITIES.INFO,
       });
 
       // Mark any background retry task as completed
@@ -361,6 +408,21 @@ class WalletController {
         { adminAction: true },
       );
 
+      await logAuditAction(req, {
+        userId: adminId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.WALLET_CREDITED,
+        category: AUDIT_CATEGORIES.WALLET,
+        resource: { userId },
+        metadata: {
+          source: "walletController.topUpWallet",
+          amount: parseFloat(amount),
+          description: description || "Wallet top-up by admin",
+          approvedBy: adminId,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
+
       res.json({
         success: true,
         message: "Wallet topped up successfully",
@@ -385,6 +447,21 @@ class WalletController {
         Boolean(approve),
         adminId,
       );
+
+      await logAuditAction(req, {
+        userId: adminId,
+        userType: req.user?.userType,
+        action: approve
+          ? AUDIT_ACTIONS.WALLET_TOPUP_APPROVED
+          : AUDIT_ACTIONS.WALLET_TOPUP_REJECTED,
+        category: AUDIT_CATEGORIES.WALLET,
+        resource: { transactionId },
+        metadata: {
+          source: "walletController.processTopUpRequest",
+          approve: Boolean(approve),
+        },
+        severity: approve ? AUDIT_SEVERITIES.INFO : AUDIT_SEVERITIES.WARNING,
+      });
 
       res.json({
         success: true,
@@ -461,6 +538,21 @@ class WalletController {
         null,
         { debitedBy: adminId },
       );
+
+      await logAuditAction(req, {
+        userId: adminId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.WALLET_DEBITED,
+        category: AUDIT_CATEGORIES.WALLET,
+        resource: { userId },
+        metadata: {
+          source: "walletController.adminDebitWallet",
+          amount: Number(amount),
+          description: description || "Wallet debit by admin",
+          debitedBy: adminId,
+        },
+        severity: AUDIT_SEVERITIES.WARNING,
+      });
 
       const updatedUser = await User.findById(userId).select(
         "walletBalance fullName email",
@@ -581,13 +673,11 @@ class WalletController {
         parseFloat(amount),
         phoneNumber,
       );
-      res
-        .status(202)
-        .json({
-          success: true,
-          message: "Payment request sent to your phone. Please approve it.",
-          referenceId: result.referenceId,
-        });
+      res.status(202).json({
+        success: true,
+        message: "Payment request sent to your phone. Please approve it.",
+        referenceId: result.referenceId,
+      });
     } catch (err) {
       logger.error(`[initiateMomoTopUp] ${err.message}`);
       res.status(400).json({ success: false, message: err.message });

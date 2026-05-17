@@ -33,8 +33,10 @@ import pushNotificationRoutes from "./src/routes/pushNotificationRoutes.js";
 import announcementRoutes from "./src/routes/announcementRoutes.js";
 import storefrontRoutes from "./src/routes/storefrontRoutes.js";
 import paystackRoutes from "./src/routes/paystackRoutes.js";
+import auditLogRoutes from "./src/routes/auditLogRoutes.js";
 import appContextMiddleware from "./src/middlewares/appContext.js";
 import requestContextMiddleware from "./src/middlewares/requestContext.js";
+import auditLogger from "./src/middlewares/auditLogger.js";
 import { buildManifestForApp } from "./src/utils/appContextResolver.js";
 
 // ─── App & Server ─────────────────────────────────────────────────────────────
@@ -137,6 +139,7 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(appContextMiddleware());
 app.use(requestContextMiddleware());
+app.use(auditLogger());
 
 // ─── Request Logging ──────────────────────────────────────────────────────────
 
@@ -230,6 +233,7 @@ app.use("/api/packages", packageRoutes);
 app.use("/api/bundles", bundleRoutes);
 app.use("/api/storefront", storefrontRoutes);
 app.use("/api/webhooks/paystack", paystackRoutes);
+app.use("/api/audit-logs", auditLogRoutes);
 app.use("/api", publicRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────────────────────

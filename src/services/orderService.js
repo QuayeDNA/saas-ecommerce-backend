@@ -19,6 +19,12 @@ import { parseBulkOrderRow } from "../utils/parseBulkOrderRow.js";
 import { saveOrderWithRetry } from "../utils/orderSaveHelper.js";
 import { isBusinessUser } from "../utils/userTypeHelpers.js";
 import { getPriceForUserType } from "../utils/pricingHelpers.js";
+import { logAuditAction } from "../utils/auditLogger.js";
+import {
+  AUDIT_ACTIONS,
+  AUDIT_CATEGORIES,
+  AUDIT_SEVERITIES,
+} from "../constants/audit.js";
 
 class OrderService {
   // ─── Navigation Helper ────────────────────────────────────────────────────────
@@ -510,6 +516,19 @@ class OrderService {
       logger.error(`Order creation notification failed: ${err.message}`);
     }
 
+    await logAuditAction(null, {
+      userId,
+      action: AUDIT_ACTIONS.ORDER_CREATED,
+      category: AUDIT_CATEGORIES.ORDER,
+      resource: { orderId: result.order?._id || null, orderNumber: result.order?.orderNumber || null },
+      metadata: {
+        source: "orderService.createSingleOrder",
+        orderType: "single",
+        paymentStatus: result.paymentStatus,
+      },
+      severity: AUDIT_SEVERITIES.INFO,
+    });
+
     return result.order;
   }
 
@@ -721,6 +740,21 @@ class OrderService {
           navigationLink: this.getNavigationLink(user.userType, "orders"),
         },
       );
+
+      await logAuditAction(null, {
+        userId,
+        action: AUDIT_ACTIONS.ORDER_CREATED,
+        category: AUDIT_CATEGORIES.ORDER,
+        resource: { orderIds: result.orders || [] },
+        metadata: {
+          source: "orderService.createBulkOrders",
+          orderType: "bulk",
+          successCount: result.successCount || 0,
+          failedCount: result.failedCount || 0,
+          totalAmount,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
     } catch (err) {
       logger.error(`Bulk order notification failed: ${err.message}`);
     }
@@ -1789,6 +1823,20 @@ class OrderService {
       logger.error(`Order cancellation notification failed: ${err.message}`);
     }
 
+    await logAuditAction(null, {
+      userId,
+      action: AUDIT_ACTIONS.ORDER_CANCELLED,
+      category: AUDIT_CATEGORIES.ORDER,
+      resource: { orderId: result.order?._id || null, orderNumber: result.order?.orderNumber || null },
+      metadata: {
+        source: "orderService.cancelOrder",
+        reason: reason || null,
+        refundAmount: result.refundAmount || 0,
+        refundMethod: result.refundMethod || null,
+      },
+      severity: AUDIT_SEVERITIES.WARNING,
+    });
+
     return result.order || result;
   }
 
@@ -1842,6 +1890,19 @@ class OrderService {
     } catch (err) {
       logger.error(`Delivery report notification failed: ${err.message}`);
     }
+
+    await logAuditAction(null, {
+      userId,
+      action: AUDIT_ACTIONS.ORDER_REPORTED,
+      category: AUDIT_CATEGORIES.ORDER,
+      resource: { orderId: order._id, orderNumber: order.orderNumber },
+      metadata: {
+        source: "orderService.reportOrder",
+        description,
+        reportId: reportId.toString(),
+      },
+      severity: AUDIT_SEVERITIES.WARNING,
+    });
 
     return {
       order: order.toObject(),
@@ -1915,6 +1976,21 @@ class OrderService {
             type: "reception_status_update",
           },
         );
+
+        await logAuditAction(null, {
+          userId: adminId,
+          action: AUDIT_ACTIONS.ORDER_STATUS_UPDATED,
+          category: AUDIT_CATEGORIES.ORDER,
+          resource: { orderId: order._id, orderNumber: order.orderNumber },
+          changes: {
+            before: { receptionStatus: oldStatus },
+            after: { receptionStatus },
+          },
+          metadata: {
+            source: "orderService.updateReceptionStatus",
+          },
+          severity: AUDIT_SEVERITIES.INFO,
+        });
       } catch (err) {
         logger.error(`Reception status notification failed: ${err.message}`);
       }

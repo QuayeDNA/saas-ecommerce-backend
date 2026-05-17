@@ -16,6 +16,12 @@ import notificationService from "./notificationService.js";
 import settingsService from "./settingsService.js";
 import logger from "../utils/logger.js";
 import { getFeeConfig } from "../utils/paystackHelpers.js";
+import { logAuditAction } from "../utils/auditLogger.js";
+import {
+  AUDIT_ACTIONS,
+  AUDIT_CATEGORIES,
+  AUDIT_SEVERITIES,
+} from "../constants/audit.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -531,6 +537,19 @@ class PayoutService {
         autoPayoutEnabled,
       });
 
+      await logAuditAction(null, {
+        userId,
+        action: AUDIT_ACTIONS.PAYOUT_REQUESTED,
+        category: AUDIT_CATEGORIES.PAYOUT,
+        resource: { payoutId: payout._id },
+        metadata: {
+          source: "payoutService.requestPayout",
+          amount,
+          mode: autoPayoutEnabled ? "auto" : "semi_auto",
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
+
       // Notify admins only when they need to take action (semi-auto / manual)
       if (!autoPayoutEnabled) {
         const admins = await User.find({
@@ -709,6 +728,18 @@ class PayoutService {
         transferReference,
       });
 
+      await logAuditAction(null, {
+        userId: adminId,
+        action: AUDIT_ACTIONS.PAYOUT_APPROVED,
+        category: AUDIT_CATEGORIES.PAYOUT,
+        resource: { payoutId },
+        metadata: {
+          source: "payoutService.approvePayout",
+          transferReference,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
+
       const msg = transferReference
         ? `Your payout of GHS ${payout.amount.toFixed(2)} has been approved and completed. Reference: ${transferReference}`
         : `Your payout request of GHS ${payout.amount.toFixed(2)} has been approved. Transfer in progress.`;
@@ -838,6 +869,18 @@ class PayoutService {
       transferReference,
     });
 
+    await logAuditAction(null, {
+      userId: adminId,
+      action: AUDIT_ACTIONS.PAYOUT_COMPLETED,
+      category: AUDIT_CATEGORIES.PAYOUT,
+      resource: { payoutId },
+      metadata: {
+        source: "payoutService.markManuallyCompleted",
+        transferReference: transferReference || null,
+      },
+      severity: AUDIT_SEVERITIES.INFO,
+    });
+
     const ref = transferReference ? ` Reference: ${transferReference}` : "";
     await notifyAgent(
       payout.user._id,
@@ -886,6 +929,18 @@ class PayoutService {
     await payout.save();
 
     logger.info("[Payout] Rejected", { payoutId, userId: payout.user._id });
+
+    await logAuditAction(null, {
+      userId: adminId,
+      action: AUDIT_ACTIONS.PAYOUT_REJECTED,
+      category: AUDIT_CATEGORIES.PAYOUT,
+      resource: { payoutId },
+      metadata: {
+        source: "payoutService.rejectPayout",
+        reason: payout.rejectionReason,
+      },
+      severity: AUDIT_SEVERITIES.WARNING,
+    });
 
     await notifyAgent(
       payout.user._id,
@@ -941,6 +996,19 @@ class PayoutService {
         amount: payout.amount,
       });
 
+      await logAuditAction(null, {
+        userId: payout.user._id,
+        action: AUDIT_ACTIONS.PAYOUT_COMPLETED,
+        category: AUDIT_CATEGORIES.PAYOUT,
+        resource: { payoutId: payout._id },
+        metadata: {
+          source: "payoutService.handleTransferWebhook",
+          event: "transfer.success",
+          reference,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
+
       await notifyAgent(
         payout.user._id,
         "Payout Completed",
@@ -967,6 +1035,20 @@ class PayoutService {
       logger.error("[Payout Webhook] Transfer failed", {
         payoutId: payout._id,
         reason,
+      });
+
+      await logAuditAction(null, {
+        userId: payout.user._id,
+        action: AUDIT_ACTIONS.PAYOUT_FAILED,
+        category: AUDIT_CATEGORIES.PAYOUT,
+        resource: { payoutId: payout._id },
+        metadata: {
+          source: "payoutService.handleTransferWebhook",
+          event: "transfer.failed",
+          reference,
+          reason,
+        },
+        severity: AUDIT_SEVERITIES.WARNING,
       });
 
       // Refund earnings — agent can re-request

@@ -4,6 +4,12 @@ import payoutService from "../services/payoutService.js";
 import settingsService from "../services/settingsService.js";
 import paystackService from "../services/paystackService.js";
 import logger from "../utils/logger.js";
+import { logAuditAction } from "../utils/auditLogger.js";
+import {
+  AUDIT_ACTIONS,
+  AUDIT_CATEGORIES,
+  AUDIT_SEVERITIES,
+} from "../constants/audit.js";
 
 // ─── Small Helpers ────────────────────────────────────────────────────────────
 
@@ -84,6 +90,20 @@ class PayoutController {
           Number(amount),
           destination,
         );
+
+      await logAuditAction(req, {
+        userId: req.user?.userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.PAYOUT_REQUESTED,
+        category: AUDIT_CATEGORIES.PAYOUT,
+        resource: { payoutId: payout?._id || null },
+        metadata: {
+          source: "payoutController.requestPayout",
+          amount: Number(amount),
+          mode,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
 
       if (autoPayoutEnabled) {
         // Fire-and-forget — return 201 immediately, transfer runs in background
@@ -178,6 +198,19 @@ class PayoutController {
         req.body?.transferReference || null,
       );
 
+      await logAuditAction(req, {
+        userId: req.user?.userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.PAYOUT_APPROVED,
+        category: AUDIT_CATEGORIES.PAYOUT,
+        resource: { payoutId: id },
+        metadata: {
+          source: "payoutController.approvePayout",
+          transferReference: req.body?.transferReference || null,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
+
       const message = req.body?.transferReference
         ? "Payout approved and marked as completed."
         : 'Payout approved. Use "Process via Paystack" to send the transfer.';
@@ -223,6 +256,19 @@ class PayoutController {
         req.user.userId,
         req.body?.reason,
       );
+
+      await logAuditAction(req, {
+        userId: req.user?.userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.PAYOUT_REJECTED,
+        category: AUDIT_CATEGORIES.PAYOUT,
+        resource: { payoutId: id },
+        metadata: {
+          source: "payoutController.rejectPayout",
+          reason: req.body?.reason || null,
+        },
+        severity: AUDIT_SEVERITIES.WARNING,
+      });
       return res.json({
         success: true,
         message: "Payout rejected.",
@@ -248,6 +294,19 @@ class PayoutController {
         req.user.userId,
         req.body?.transferReference,
       );
+
+      await logAuditAction(req, {
+        userId: req.user?.userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.PAYOUT_COMPLETED,
+        category: AUDIT_CATEGORIES.PAYOUT,
+        resource: { payoutId: id },
+        metadata: {
+          source: "payoutController.markManuallyCompleted",
+          transferReference: req.body?.transferReference || null,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
       return res.json({
         success: true,
         message: "Payout marked as completed.",

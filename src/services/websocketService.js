@@ -7,20 +7,40 @@ class WebSocketService {
   constructor() {
     this.wss = null;
     this.clients = new Map(); // Map of userId -> WebSocket connection
+    this.clientMetadata = new Map(); // Map of userId -> metadata
   }
 
   initialize(server) {
     this.wss = new WebSocketServer({ server });
 
-    this.wss.on("connection", (ws, req) => {
+    this.wss.on("connection", async (ws, req) => {
       logger.info("WebSocket client connected");
 
       // Extract user ID from query params or headers
       const url = new URL(req.url, "http://localhost");
       const userId = url.searchParams.get("userId");
+      let userType =
+        url.searchParams.get("userType") || req.headers["x-user-type"];
 
       if (userId) {
         this.clients.set(userId, ws);
+
+        if (!userType) {
+          try {
+            const User = (await import("../models/User.js")).default;
+            const user = await User.findById(userId).select("userType").lean();
+            userType = user?.userType || null;
+          } catch (error) {
+            logger.warn(
+              `Failed to resolve WebSocket userType for ${userId}: ${error.message}`,
+            );
+          }
+        }
+
+        this.clientMetadata.set(userId, {
+          userType: userType || null,
+        });
+
         logger.info(`WebSocket client registered for user: ${userId}`);
         console.log(
           `📡 WebSocket registered: userId=${userId}, Total clients: ${this.clients.size}`,
@@ -34,6 +54,7 @@ class WebSocketService {
         for (const [clientUserId, clientWs] of this.clients.entries()) {
           if (clientWs === ws) {
             this.clients.delete(clientUserId);
+            this.clientMetadata.delete(clientUserId);
             logger.info(
               `WebSocket client disconnected for user: ${clientUserId}`,
             );
@@ -279,6 +300,34 @@ class WebSocketService {
         }
       }
     });
+  }
+
+  // Broadcast a new audit log event to all connected super admins
+  sendAuditLogToAdmins(auditLog) {
+    let delivered = 0;
+
+    this.clients.forEach((ws, userId) => {
+      const userMeta = this.clientMetadata.get(userId);
+      if (userMeta?.userType !== "super_admin") {
+        return;
+      }
+
+      if (ws.readyState === 1) {
+        try {
+          ws.send(
+            JSON.stringify({
+              type: "audit_log",
+              data: auditLog,
+            }),
+          );
+          delivered += 1;
+        } catch (error) {
+          logger.error(`Failed to send audit log to admin ${userId}:`, error);
+        }
+      }
+    });
+
+    logger.info(`Audit log broadcast delivered to ${delivered} admin clients`);
   }
 
   // Get connected clients count

@@ -21,6 +21,12 @@ import {
 import logger from "../utils/logger.js";
 import websocketService from "./websocketService.js";
 import PaystackVerificationTask from "../models/PaystackVerificationTask.js";
+import { logAuditAction } from "../utils/auditLogger.js";
+import {
+  AUDIT_ACTIONS,
+  AUDIT_CATEGORIES,
+  AUDIT_SEVERITIES,
+} from "../constants/audit.js";
 
 class StorefrontService {
   // =========================================================================
@@ -84,6 +90,18 @@ class StorefrontService {
 
     const saved = await storefront.save();
 
+    await logAuditAction(null, {
+      userId,
+      action: AUDIT_ACTIONS.STOREFRONT_CREATED,
+      category: AUDIT_CATEGORIES.STOREFRONT,
+      resource: { storefrontId: saved._id },
+      metadata: {
+        source: "storefrontService.createStorefront",
+        autoApprove,
+      },
+      severity: AUDIT_SEVERITIES.INFO,
+    });
+
     try {
       const admins = await User.find({
         userType: "super_admin",
@@ -130,7 +148,20 @@ class StorefrontService {
     delete updateData.agentId;
 
     Object.assign(storefront, updateData);
-    return storefront.save();
+    const saved = await storefront.save();
+
+    await logAuditAction(null, {
+      userId,
+      action: AUDIT_ACTIONS.STOREFRONT_UPDATED,
+      category: AUDIT_CATEGORIES.STOREFRONT,
+      resource: { storefrontId: saved._id },
+      metadata: {
+        source: "storefrontService.updateStorefront",
+      },
+      severity: AUDIT_SEVERITIES.INFO,
+    });
+
+    return saved;
   }
 
   async deactivateStorefront(storefrontId, userId) {
@@ -358,6 +389,19 @@ class StorefrontService {
         results.disabled++;
       }
     }
+
+    await logAuditAction(null, {
+      userId: (storefront.agentId && storefront.agentId._id) || storefront.agentId,
+      action: AUDIT_ACTIONS.STOREFRONT_PRICING_UPDATED,
+      category: AUDIT_CATEGORIES.STOREFRONT,
+      resource: { storefrontId },
+      metadata: {
+        source: "storefrontService.toggleBundles",
+        enabled: results.enabled,
+        disabled: results.disabled,
+      },
+      severity: AUDIT_SEVERITIES.INFO,
+    });
 
     return results;
   }
@@ -993,6 +1037,18 @@ class StorefrontService {
       `[StorefrontService] Paystack payment confirmed — Order ${order.orderNumber}, GH₵${customerTotal}, ref: ${reference}`,
     );
 
+    await logAuditAction(null, {
+      userId: agentId,
+      action: AUDIT_ACTIONS.STOREFRONT_PAYMENT_VERIFIED,
+      category: AUDIT_CATEGORIES.STOREFRONT,
+      resource: { orderId: order._id, orderNumber: order.orderNumber },
+      metadata: {
+        source: "storefrontService.processPaystackPayment",
+        reference,
+      },
+      severity: AUDIT_SEVERITIES.INFO,
+    });
+
     // ── 12. Real-time & in-app notifications (non-critical) ───────────────────
     await this._notifyAgent(
       agentId,
@@ -1164,6 +1220,18 @@ class StorefrontService {
     order.status = "pending"; // enters admin processing queue
 
     await order.save();
+
+    await logAuditAction(null, {
+      userId,
+      action: AUDIT_ACTIONS.STOREFRONT_PAYMENT_VERIFIED,
+      category: AUDIT_CATEGORIES.STOREFRONT,
+      resource: { orderId: order._id, orderNumber: order.orderNumber },
+      metadata: {
+        source: "storefrontService.verifyManualPayment",
+        storefrontId: storefront._id,
+      },
+      severity: AUDIT_SEVERITIES.INFO,
+    });
 
     try {
       const admins = await User.find({

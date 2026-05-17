@@ -6,6 +6,12 @@ import { validationResult } from "express-validator";
 import logger from "../utils/logger.js";
 import Order from "../models/Order.js";
 import PaystackVerificationTask from "../models/PaystackVerificationTask.js";
+import { logAuditAction } from "../utils/auditLogger.js";
+import {
+  AUDIT_ACTIONS,
+  AUDIT_CATEGORIES,
+  AUDIT_SEVERITIES,
+} from "../constants/audit.js";
 
 // ─── Small helpers ────────────────────────────────────────────────────────────
 
@@ -83,6 +89,23 @@ class StorefrontController {
         businessName,
         orderData,
       );
+
+      await logAuditAction(req, {
+        userId: req.user?.userId || null,
+        userType: req.user?.userType || null,
+        action: AUDIT_ACTIONS.STOREFRONT_ORDER_CREATED,
+        category: AUDIT_CATEGORIES.STOREFRONT,
+        resource: {
+          orderId: order?._id || null,
+          orderNumber: order?.orderNumber || null,
+        },
+        metadata: {
+          source: "storefrontController.createStorefrontOrder",
+          paymentMethod: orderData.paymentMethod?.type || null,
+          businessName,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
 
       // ── Paystack inline checkout ─────────────────────────────────────────────
       if (orderData.paymentMethod?.type === "paystack") {
@@ -340,6 +363,17 @@ class StorefrontController {
         req.user.userId,
         req.body,
       );
+      await logAuditAction(req, {
+        userId: req.user?.userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.STOREFRONT_CREATED,
+        category: AUDIT_CATEGORIES.STOREFRONT,
+        resource: { storefrontId: storefront?._id || null },
+        metadata: {
+          source: "storefrontController.createStorefront",
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
       const message = storefront.isApproved
         ? "Storefront created and auto-approved. Your store is now live."
         : "Storefront created. Awaiting admin approval.";
@@ -389,6 +423,15 @@ class StorefrontController {
         req.body,
         req.user.userId,
       );
+      await logAuditAction(req, {
+        userId: req.user?.userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.STOREFRONT_UPDATED,
+        category: AUDIT_CATEGORIES.STOREFRONT,
+        resource: { storefrontId: sf._id },
+        metadata: { source: "storefrontController.updateStorefront" },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
       res.json({
         success: true,
         message: "Storefront updated successfully",
@@ -512,6 +555,19 @@ class StorefrontController {
         sf._id,
         req.body.pricing,
       );
+      await logAuditAction(req, {
+        userId: req.user?.userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.STOREFRONT_PRICING_UPDATED,
+        category: AUDIT_CATEGORIES.STOREFRONT,
+        resource: { storefrontId: sf._id },
+        metadata: {
+          source: "storefrontController.setPricing",
+          created: results.created,
+          updated: results.updated,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
       res.json({
         success: true,
         message: `Pricing updated: ${results.created} created, ${results.updated} updated`,
@@ -536,6 +592,19 @@ class StorefrontController {
         req.body.bundles,
         req.user.userId,
       );
+      await logAuditAction(req, {
+        userId: req.user?.userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.STOREFRONT_PRICING_UPDATED,
+        category: AUDIT_CATEGORIES.STOREFRONT,
+        resource: { storefrontId: sf._id },
+        metadata: {
+          source: "storefrontController.toggleBundles",
+          enabled: results.enabled,
+          disabled: results.disabled,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
       res.json({
         success: true,
         message: `Bundles updated: ${results.enabled} enabled, ${results.disabled} disabled`,
@@ -593,6 +662,18 @@ class StorefrontController {
         { notes: req.body.notes },
         req.user.userId,
       );
+      await logAuditAction(req, {
+        userId: req.user?.userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.STOREFRONT_PAYMENT_VERIFIED,
+        category: AUDIT_CATEGORIES.STOREFRONT,
+        resource: {
+          orderId: order?._id || req.params.orderId,
+          orderNumber: order?.orderNumber || null,
+        },
+        metadata: { source: "storefrontController.verifyPayment" },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
       res.json({
         success: true,
         message: "Payment verified. Order queued for admin processing.",
@@ -701,6 +782,15 @@ class StorefrontController {
         req.params.storefrontId,
         req.user.userId,
       );
+      await logAuditAction(req, {
+        userId: req.user?.userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.STOREFRONT_APPROVED,
+        category: AUDIT_CATEGORIES.STOREFRONT,
+        resource: { storefrontId: req.params.storefrontId },
+        metadata: { source: "storefrontController.approveStorefront" },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
       res.json({
         success: true,
         message: "Storefront approved successfully",
@@ -719,6 +809,18 @@ class StorefrontController {
         req.user.userId,
         req.body.reason,
       );
+      await logAuditAction(req, {
+        userId: req.user?.userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.STOREFRONT_SUSPENDED,
+        category: AUDIT_CATEGORIES.STOREFRONT,
+        resource: { storefrontId: req.params.storefrontId },
+        metadata: {
+          source: "storefrontController.adminSuspendStorefront",
+          reason: req.body.reason || null,
+        },
+        severity: AUDIT_SEVERITIES.WARNING,
+      });
       res.json({
         success: true,
         message: "Storefront suspended successfully",

@@ -12,6 +12,12 @@ import {
 } from "../utils/paystackHelpers.js";
 import paystackService from "./paystackService.js";
 import mtnMomoService from "./mtnMomoService.js";
+import { logAuditAction } from "../utils/auditLogger.js";
+import {
+  AUDIT_ACTIONS,
+  AUDIT_CATEGORIES,
+  AUDIT_SEVERITIES,
+} from "../constants/audit.js";
 
 function normalizeGhanaPhoneNumber(phoneNumber) {
   if (!phoneNumber) return "";
@@ -156,6 +162,18 @@ class WalletService {
     logger.info(
       `[WalletService] Credited GH₵${amount} to user ${userId}. Balance: GH₵${user.walletBalance}`,
     );
+    await logAuditAction(null, {
+      userId,
+      action: AUDIT_ACTIONS.WALLET_CREDITED,
+      category: AUDIT_CATEGORIES.WALLET,
+      resource: { userId },
+      metadata: {
+        source: "walletService.creditWallet",
+        amount,
+        approvedBy,
+      },
+      severity: AUDIT_SEVERITIES.INFO,
+    });
     await this._notifyUser(
       userId,
       user.walletBalance,
@@ -233,6 +251,18 @@ class WalletService {
     logger.info(
       `[WalletService] Debited GH₵${amount} from user ${userId}. Balance: GH₵${user.walletBalance}`,
     );
+    await logAuditAction(null, {
+      userId,
+      action: AUDIT_ACTIONS.WALLET_DEBITED,
+      category: AUDIT_CATEGORIES.WALLET,
+      resource: { userId, relatedOrder },
+      metadata: {
+        source: "walletService.debitWallet",
+        amount,
+        relatedOrder,
+      },
+      severity: AUDIT_SEVERITIES.WARNING,
+    });
     await this._notifyUser(
       userId,
       user.walletBalance,
@@ -559,6 +589,17 @@ class WalletService {
       logger.info(
         `[WalletService] Paystack top-up complete: GH₵${amountGhs} for user ${userId}, ref: ${reference}`,
       );
+      await logAuditAction(null, {
+        userId,
+        action: AUDIT_ACTIONS.WALLET_PAYSTACK_VERIFIED,
+        category: AUDIT_CATEGORIES.WALLET,
+        resource: { userId, reference },
+        metadata: {
+          source: "walletService.processPaystackWebhook",
+          transactionId: data.id,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
 
       // ── 7. Notify user (non-critical — never let this break the response) ────
       await this._notifyUser(

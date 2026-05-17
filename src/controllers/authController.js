@@ -6,6 +6,11 @@ import logger from "../utils/logger.js";
 import { BUSINESS_ROLES } from "../constants/roles.js";
 import { isBusinessUser, getTenantId } from "../utils/userTypeHelpers.js";
 import userService from "../services/userService.js";
+import {
+  AUDIT_ACTIONS,
+  AUDIT_CATEGORIES,
+  AUDIT_SEVERITIES,
+} from "../constants/audit.js";
 
 const AUTH_STATUS_CODE_FALLBACK = {
   400: "AUTH_BAD_REQUEST",
@@ -81,10 +86,60 @@ class AuthController {
     return await generateUniqueAgentCode(appId);
   }
 
+  async logAudit(req, payload) {
+    try {
+      if (!req?.logAuditAction) return;
+      await req.logAuditAction(payload);
+    } catch (error) {
+      logger.warn(`Audit logging failed: ${error.message}`);
+    }
+  }
+
   // Register new agent (multi-tenant admin)
   async registerAgent(req, res) {
     try {
       const result = await userService.registerAgent(req.body, req.appContext);
+
+      await this.logAudit(req, {
+        userId: req.user?.userId || null,
+        userType: req.user?.userType || null,
+        action: AUDIT_ACTIONS.AUTH_REGISTER,
+        category: AUDIT_CATEGORIES.AUTH,
+        resource: {
+          createdUserId: result.agent?._id,
+          createdUserType: result.userType,
+        },
+        metadata: {
+          email: result.agent?.email,
+          agentCode: result.agentCode,
+          registrationStatus: result.userStatus,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
+
+      await this.logAudit(req, {
+        userId: req.user?.userId || result.agent?._id || null,
+        userType: req.user?.userType || result.userType,
+        action: AUDIT_ACTIONS.USER_CREATED,
+        category: AUDIT_CATEGORIES.USER,
+        resource: {
+          userId: result.agent?._id,
+        },
+        changes: {
+          before: null,
+          after: {
+            email: result.agent?.email,
+            userType: result.userType,
+            agentCode: result.agentCode,
+            status: result.userStatus,
+          },
+        },
+        metadata: {
+          source: "auth.registerAgent",
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
+
       res.status(201).json({
         success: true,
         message:
@@ -114,6 +169,13 @@ class AuthController {
       const user = await User.findOne({ email });
       if (!user) {
         logger.warn(`Login attempt for non-existent user: ${email}`);
+        await this.logAudit(req, {
+          action: AUDIT_ACTIONS.AUTH_FAILED_LOGIN,
+          category: AUDIT_CATEGORIES.AUTH,
+          resource: { email },
+          metadata: { reason: "user_not_found" },
+          severity: AUDIT_SEVERITIES.WARNING,
+        });
         return this.sendAuthErrorByCode(
           res,
           401,
@@ -126,6 +188,15 @@ class AuthController {
       const isMatch = await user.comparePassword(password);
       if (!isMatch) {
         logger.warn(`Invalid password for user: ${email}`);
+        await this.logAudit(req, {
+          userId: user._id,
+          userType: user.userType,
+          action: AUDIT_ACTIONS.AUTH_FAILED_LOGIN,
+          category: AUDIT_CATEGORIES.AUTH,
+          resource: { userId: user._id, email },
+          metadata: { reason: "invalid_password" },
+          severity: AUDIT_SEVERITIES.WARNING,
+        });
         return this.sendAuthErrorByCode(
           res,
           401,
@@ -154,6 +225,19 @@ class AuthController {
             : user.status === "pending"
               ? "AUTH_ACCOUNT_PENDING_APPROVAL"
               : "AUTH_ACCOUNT_REJECTED";
+        await this.logAudit(req, {
+          userId: user._id,
+          userType: user.userType,
+          action: AUDIT_ACTIONS.AUTH_FAILED_LOGIN,
+          category: AUDIT_CATEGORIES.AUTH,
+          resource: { userId: user._id, email },
+          metadata: {
+            reason: "account_not_active",
+            status: user.status,
+            isActive: user.isActive,
+          },
+          severity: AUDIT_SEVERITIES.WARNING,
+        });
         return this.sendAuthErrorByCode(res, 401, code, message);
       }
 
@@ -190,6 +274,19 @@ class AuthController {
       logger.info(
         `User logged in successfully: ${email} - Type: ${user.userType}`,
       );
+
+      await this.logAudit(req, {
+        userId: user._id,
+        userType: user.userType,
+        action: AUDIT_ACTIONS.AUTH_LOGIN,
+        category: AUDIT_CATEGORIES.AUTH,
+        resource: { userId: user._id, email },
+        metadata: {
+          rememberMe: Boolean(rememberMe),
+          requiresPinSetup: user.requiresPinSetup,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
 
       // Check for first-time login for business users
       if (isBusinessUser(user.userType) && user.isFirstTime) {
@@ -381,6 +478,15 @@ class AuthController {
       await authService.setupPin(userId, pin);
 
       logger.info(`Security PIN setup successfully for user: ${userId}`);
+      await this.logAudit(req, {
+        userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.AUTH_PIN_SETUP,
+        category: AUDIT_CATEGORIES.AUTH,
+        resource: { userId },
+        metadata: { source: "auth.setupPin" },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
       // Fetch updated user data to return to client so frontends can refresh their cached user
       const updatedUser = await User.findById(userId).select(
         "-password -refreshToken",
@@ -417,6 +523,19 @@ class AuthController {
 
       const result = await authService.forgotPasswordWithPin(identifier, pin);
 
+      await this.logAudit(req, {
+        userId: req.user?.userId || null,
+        userType: req.user?.userType || null,
+        action: AUDIT_ACTIONS.AUTH_PASSWORD_RESET,
+        category: AUDIT_CATEGORIES.AUTH,
+        resource: { identifier },
+        metadata: {
+          stage: "initiated",
+          message: result.message,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
+
       logger.info(`Password reset token generated via PIN for: ${identifier}`);
       res.json({
         success: true,
@@ -440,6 +559,18 @@ class AuthController {
       const { token, password } = req.body;
 
       await authService.resetPasswordWithToken(token, password);
+
+      await this.logAudit(req, {
+        userId: req.user?.userId || null,
+        userType: req.user?.userType || null,
+        action: AUDIT_ACTIONS.AUTH_PASSWORD_RESET,
+        category: AUDIT_CATEGORIES.AUTH,
+        resource: { tokenProvided: Boolean(token) },
+        metadata: {
+          stage: "completed",
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
 
       logger.info(`Password reset successfully via token`);
       res.json({
@@ -611,6 +742,15 @@ class AuthController {
       });
 
       logger.info(`User logged out: ${req.user?.email || "Unknown"}`);
+      await this.logAudit(req, {
+        userId: req.user?.userId || null,
+        userType: req.user?.userType || null,
+        action: AUDIT_ACTIONS.AUTH_LOGOUT,
+        category: AUDIT_CATEGORIES.AUTH,
+        resource: { userId: req.user?.userId || null },
+        metadata: { email: req.user?.email || null },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
       res.json({
         success: true,
         message: "Logged out successfully",
@@ -842,7 +982,34 @@ class AuthController {
     try {
       const { id } = req.params;
       const { status } = req.body;
+      const beforeUser = await userService.getUserById(id);
       const updated = await userService.updateUserStatus(id, { status });
+
+      await this.logAudit(req, {
+        userId: req.user?.userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.USER_STATUS_CHANGED,
+        category: AUDIT_CATEGORIES.USER,
+        resource: { userId: id },
+        changes: {
+          before: beforeUser
+            ? {
+                status: beforeUser.status,
+                userType: beforeUser.userType,
+              }
+            : null,
+          after: {
+            status: updated.status,
+            userType: updated.userType,
+          },
+        },
+        metadata: {
+          changedBy: req.user?.userId,
+          source: "auth.updateAgentStatus",
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
+
       res.json({
         success: true,
         message: `Agent status updated to ${updated.status}`,
@@ -886,7 +1053,26 @@ class AuthController {
   async updateUser(req, res) {
     try {
       const { id } = req.params;
+      const beforeUser = await userService.getUserById(id);
       const updated = await userService.updateUser(id, req.body);
+
+      await this.logAudit(req, {
+        userId: req.user?.userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.USER_UPDATED,
+        category: AUDIT_CATEGORIES.USER,
+        resource: { userId: id },
+        changes: {
+          before: beforeUser,
+          after: updated,
+        },
+        metadata: {
+          changedFields: Object.keys(req.body || {}),
+          changedBy: req.user?.userId,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
+
       res.json({ success: true, user: updated });
     } catch (error) {
       logger.error(`Update user failed: ${error.message}`);
@@ -904,6 +1090,20 @@ class AuthController {
     try {
       const { id } = req.params;
       await userService.resetUserPassword(id, req.body.newPassword);
+
+      await this.logAudit(req, {
+        userId: req.user?.userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.AUTH_PASSWORD_CHANGE,
+        category: AUDIT_CATEGORIES.AUTH,
+        resource: { userId: id },
+        metadata: {
+          changedByAdmin: true,
+          changedBy: req.user?.userId,
+        },
+        severity: AUDIT_SEVERITIES.WARNING,
+      });
+
       res.json({ success: true, message: "Password reset successfully" });
     } catch (error) {
       logger.error(`Reset user password failed: ${error.message}`);
@@ -920,7 +1120,25 @@ class AuthController {
   async deleteUser(req, res) {
     try {
       const { id } = req.params;
+      const targetUser = await userService.getUserById(id);
       await userService.deleteUser(id);
+
+      await this.logAudit(req, {
+        userId: req.user?.userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.USER_DELETED,
+        category: AUDIT_CATEGORIES.USER,
+        resource: { userId: id },
+        changes: {
+          before: targetUser,
+          after: null,
+        },
+        metadata: {
+          deletedBy: req.user?.userId,
+        },
+        severity: AUDIT_SEVERITIES.WARNING,
+      });
+
       res.json({ success: true, message: "User deleted successfully" });
     } catch (error) {
       logger.error(`Delete user failed: ${error.message}`);
@@ -975,6 +1193,21 @@ class AuthController {
       res.cookie("refreshToken", refreshToken, cookieOptions);
 
       // Return both tokens so frontend can persist admin tokens and set impersonated cookies
+      await this.logAudit(req, {
+        userId: req.user?.userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.USER_IMPERSONATED,
+        category: AUDIT_CATEGORIES.USER,
+        resource: {
+          impersonatedUserId: user._id,
+        },
+        metadata: {
+          impersonatedUserType: user.userType,
+          impersonatedBy: req.user?.userId,
+        },
+        severity: AUDIT_SEVERITIES.CRITICAL,
+      });
+
       res.json({
         success: true,
         token: accessToken,

@@ -14,8 +14,22 @@ import {
   respondWithError,
   respondWithSuccess,
 } from "../utils/errorResponse.js";
+import {
+  AUDIT_ACTIONS,
+  AUDIT_CATEGORIES,
+  AUDIT_SEVERITIES,
+} from "../constants/audit.js";
 
 class UserController {
+  async logAudit(req, payload) {
+    try {
+      if (!req?.logAuditAction) return;
+      await req.logAuditAction(payload);
+    } catch (error) {
+      logger.warn(`Audit logging failed: ${error.message}`);
+    }
+  }
+
   // Get current user profile
   async getProfile(req, res) {
     try {
@@ -58,6 +72,13 @@ class UserController {
       }
 
       // Update allowed fields
+      const before = {
+        fullName: user.fullName,
+        phone: user.phone,
+        businessName: user.businessName,
+        businessCategory: user.businessCategory,
+      };
+
       if (fullName) user.fullName = fullName;
       if (phone) user.phone = phone;
 
@@ -69,6 +90,27 @@ class UserController {
       }
 
       await user.save();
+
+      await this.logAudit(req, {
+        userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.USER_UPDATED,
+        category: AUDIT_CATEGORIES.USER,
+        resource: { userId },
+        changes: {
+          before,
+          after: {
+            fullName: user.fullName,
+            phone: user.phone,
+            businessName: user.businessName,
+            businessCategory: user.businessCategory,
+          },
+        },
+        metadata: {
+          source: "user.updateProfile",
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
 
       logger.info(`Profile updated for user: ${user.email}`);
       res.json({
@@ -105,6 +147,18 @@ class UserController {
       // Update password
       user.password = newPassword;
       await user.save();
+
+      await this.logAudit(req, {
+        userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.AUTH_PASSWORD_CHANGE,
+        category: AUDIT_CATEGORIES.AUTH,
+        resource: { userId },
+        metadata: {
+          source: "user.changePassword",
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
 
       logger.info(`Password changed for user: ${user.email}`);
       return respondWithSuccess(res, null, "Password changed successfully");
@@ -345,6 +399,12 @@ class UserController {
         });
       }
 
+      const before = {
+        isVerified: user.isVerified,
+        subscriptionStatus: user.subscriptionStatus,
+        userType: user.userType,
+      };
+
       // Update allowed status fields
       if (typeof isVerified === "boolean") {
         user.isVerified = isVerified;
@@ -360,6 +420,26 @@ class UserController {
       }
 
       await user.save();
+
+      await this.logAudit(req, {
+        userId: req.user?.userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.USER_STATUS_CHANGED,
+        category: AUDIT_CATEGORIES.USER,
+        resource: { userId: id },
+        changes: {
+          before,
+          after: {
+            isVerified: user.isVerified,
+            subscriptionStatus: user.subscriptionStatus,
+            userType: user.userType,
+          },
+        },
+        metadata: {
+          source: "user.updateUserStatus",
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
 
       logger.info(`User status updated: ${user.email} by ${req.user.email}`);
       res.json({
@@ -1064,6 +1144,26 @@ class UserController {
       });
 
       await order.save();
+
+      await this.logAudit(req, {
+        userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.ORDER_CREATED,
+        category: AUDIT_CATEGORIES.ORDER,
+        resource: {
+          orderId: order._id,
+          orderNumber: order.orderNumber,
+        },
+        metadata: {
+          source: "user.afaRegistration",
+          orderType: "afa_registration",
+          bundleId,
+          bundleName: bundle.name,
+          amount: order.total,
+          paymentStatus: order.paymentStatus,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
 
       // Send notifications
       try {

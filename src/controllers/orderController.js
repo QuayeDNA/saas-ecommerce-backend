@@ -7,6 +7,12 @@ import User from "../models/User.js"; // Added import for User
 import notificationService from "../services/notificationService.js"; // Added import for notificationService
 import walletService from "../services/walletService.js"; // Added import for walletService
 import websocketService from "../services/websocketService.js"; // Added import for WebSocket
+import { logAuditAction } from "../utils/auditLogger.js";
+import {
+  AUDIT_ACTIONS,
+  AUDIT_CATEGORIES,
+  AUDIT_SEVERITIES,
+} from "../constants/audit.js";
 
 class OrderController {
   /**
@@ -55,6 +61,22 @@ class OrderController {
         tenantId,
         userId,
       );
+
+      await logAuditAction(req, {
+        userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.ORDER_CREATED,
+        category: AUDIT_CATEGORIES.ORDER,
+        resource: {
+          orderId: order?._id || order?.id || null,
+          orderNumber: order?.orderNumber || null,
+        },
+        metadata: {
+          source: "orderController.createSingleOrder",
+          orderType: "single",
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
 
       res.status(201).json({
         success: true,
@@ -124,6 +146,24 @@ class OrderController {
         "Bulk order validation passed, calling orderService.createBulkOrders",
       );
       const result = await orderService.createBulkOrders(value);
+
+      await logAuditAction(req, {
+        userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.ORDER_CREATED,
+        category: AUDIT_CATEGORIES.ORDER,
+        resource: {
+          orderIds: result?.orders || [],
+        },
+        metadata: {
+          source: "orderController.createBulkOrder",
+          orderType: "bulk",
+          successCount: result?.successCount || 0,
+          failedCount: result?.failedCount || 0,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
+
       return res.status(201).json({ success: true, ...result });
     } catch (err) {
       logger.error(`Bulk order creation failed: ${err.message}`);
@@ -356,6 +396,23 @@ class OrderController {
         reason,
       );
 
+      await logAuditAction(req, {
+        userId,
+        userType,
+        action: AUDIT_ACTIONS.ORDER_CANCELLED,
+        category: AUDIT_CATEGORIES.ORDER,
+        resource: {
+          orderId: result?.order?._id || id,
+          orderNumber: result?.order?.orderNumber || null,
+        },
+        metadata: {
+          source: "orderController.cancelOrder",
+          reason: reason || null,
+          refundAmount: result?.refundAmount || 0,
+        },
+        severity: AUDIT_SEVERITIES.WARNING,
+      });
+
       // Prepare response message based on whether refund was processed
       let message = "Order cancelled successfully";
       if (result.refundAmount && result.refundAmount > 0) {
@@ -396,6 +453,23 @@ class OrderController {
         userId,
         reportDescription,
       );
+
+      await logAuditAction(req, {
+        userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.ORDER_REPORTED,
+        category: AUDIT_CATEGORIES.ORDER,
+        resource: {
+          orderId: result?.order?._id || id,
+          orderNumber: result?.order?.orderNumber || null,
+        },
+        metadata: {
+          source: "orderController.reportOrder",
+          description: reportDescription,
+          reportId: result?.reportId || null,
+        },
+        severity: AUDIT_SEVERITIES.WARNING,
+      });
 
       res.json({
         success: true,
@@ -537,6 +611,26 @@ class OrderController {
         updateData,
         { new: true },
       );
+
+      await logAuditAction(req, {
+        userId,
+        userType,
+        action: AUDIT_ACTIONS.ORDER_STATUS_UPDATED,
+        category: AUDIT_CATEGORIES.ORDER,
+        resource: {
+          orderId: updatedOrder?._id || order._id,
+          orderNumber: updatedOrder?.orderNumber || order.orderNumber,
+        },
+        changes: {
+          before: { status: order.status },
+          after: { status },
+        },
+        metadata: {
+          source: "orderController.updateOrderStatus",
+          notes: notes || null,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
 
       // If storefront order moved to completed, credit profit via the service helper
       if (
@@ -1204,6 +1298,23 @@ class OrderController {
         );
       }
 
+      await logAuditAction(req, {
+        userId,
+        userType,
+        action: AUDIT_ACTIONS.ORDER_BULK_PROCESSED,
+        category: AUDIT_CATEGORIES.ORDER,
+        resource: {
+          orderIds,
+        },
+        metadata: {
+          source: "orderController.bulkProcessOrders",
+          action,
+          successful: results.successful.length,
+          failed: results.failed.length,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
+
       res.json({
         success: true,
         message: `Bulk processing completed. ${results.successful.length} successful, ${results.failed.length} failed.`,
@@ -1328,6 +1439,25 @@ class OrderController {
         receptionStatus,
         userId,
       );
+
+      await logAuditAction(req, {
+        userId,
+        userType,
+        action: AUDIT_ACTIONS.ORDER_STATUS_UPDATED,
+        category: AUDIT_CATEGORIES.ORDER,
+        resource: {
+          orderId: updatedOrder?._id || id,
+          orderNumber: updatedOrder?.orderNumber || null,
+        },
+        changes: {
+          before: { receptionStatus: updatedOrder?.receptionStatus },
+          after: { receptionStatus },
+        },
+        metadata: {
+          source: "orderController.updateReceptionStatus",
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
 
       res.json({
         success: true,
