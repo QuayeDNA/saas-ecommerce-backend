@@ -1,6 +1,5 @@
 // src/validators/userValidator.js
 import Joi from "joi";
-import { getBusinessUserTypes } from "../utils/userTypeHelpers.js";
 
 export const userValidation = {
   updateProfile: Joi.object({
@@ -49,7 +48,8 @@ export const userValidation = {
       .pattern(/^GHA-\d{9}-\d$/i)
       .optional()
       .messages({
-        "string.pattern.base": "Ghana Card number must be in format GHA-XXXXXXXXX-X (9 digits in middle, 1 at end)",
+        "string.pattern.base":
+          "Ghana Card number must be in format GHA-XXXXXXXXX-X (9 digits in middle, 1 at end)",
       }),
   }),
 };

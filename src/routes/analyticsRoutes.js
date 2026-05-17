@@ -1,6 +1,7 @@
 // src/routes/analyticsRoutes.js
 import express from "express";
 import analyticsService from "../services/analyticsService.js";
+import { BUSINESS_ROLES } from "../constants/roles.js";
 import {
   authenticate,
   authorize,
@@ -65,7 +66,7 @@ router.get("/agent", authenticate, authorizeBusinessUser, async (req, res) => {
 router.get(
   "/centralized",
   authenticate,
-  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
+  authorize(...BUSINESS_ROLES, "super_admin"),
   async (req, res) => {
     try {
       const { userType, userId, tenantId } = req.user;
@@ -96,7 +97,7 @@ router.get(
 router.get(
   "/summary",
   authenticate,
-  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
+  authorize(...BUSINESS_ROLES, "super_admin"),
   async (req, res) => {
     try {
       const { userType, userId, tenantId } = req.user;
@@ -132,7 +133,7 @@ router.get(
 router.get(
   "/charts",
   authenticate,
-  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
+  authorize(...BUSINESS_ROLES, "super_admin"),
   async (req, res) => {
     try {
       const { userType, userId, tenantId } = req.user;

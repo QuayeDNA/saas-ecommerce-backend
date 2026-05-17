@@ -12,8 +12,9 @@ export default function sanitizeForMtn(input) {
     // Keep printable ASCII range (space 0x20 to tilde 0x7E)
     const cleaned = normalized.replace(/[^\x20-\x7E]/g, "");
     return cleaned.trim();
-  } catch (err) {
+  } catch {
     // Fallback: remove characters outside basic ASCII range
-    return s.replace(/[^\x00-\x7F]/g, "").trim();
+    // Use Unicode escape ranges to avoid control-regex warnings
+    return s.replace(/[^ -~]/g, "").trim();
   }
 }

@@ -1,5 +1,6 @@
 // src/models/Bundle.js
 import mongoose from "mongoose";
+import { BUSINESS_ROLES } from "../constants/roles.js";
 
 const bundleSchema = new mongoose.Schema(
   {
@@ -237,7 +238,7 @@ bundleSchema.methods.restore = function () {
 // Get price for specific user type
 bundleSchema.methods.getPriceForUserType = function (userType) {
   // Business user types that have specific pricing
-  const businessUserTypes = ["agent", "super_agent", "dealer", "super_dealer"];
+  const businessUserTypes = BUSINESS_ROLES;
 
   // If user type has specific pricing and it's set, return it
   if (
