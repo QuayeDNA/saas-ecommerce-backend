@@ -1,8 +1,8 @@
 // src/controllers/userController.js
 import { generateSpecialOrderNumber } from "../utils/orderNumberGenerator.js";
+import { BUSINESS_ROLES } from "../constants/roles.js";
 import User from "../models/User.js";
 import logger from "../utils/logger.js";
-import crypto from "crypto";
 import {
   isBusinessUser,
   getBusinessUserTypes,
@@ -10,6 +10,10 @@ import {
 import notificationService from "../services/notificationService.js";
 import websocketService from "../services/websocketService.js";
 import pushNotificationService from "../services/pushNotificationService.js";
+import {
+  respondWithError,
+  respondWithSuccess,
+} from "../utils/errorResponse.js";
 
 class UserController {
   // Get current user profile
@@ -89,19 +93,13 @@ class UserController {
 
       const user = await User.findById(userId);
       if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: "User not found",
-        });
+        return respondWithError(res, "USR_NOT_FOUND");
       }
 
       // Verify current password
       const isMatch = await user.comparePassword(currentPassword);
       if (!isMatch) {
-        return res.status(400).json({
-          success: false,
-          message: "Current password is incorrect",
-        });
+        return respondWithError(res, "AUTH_INVALID_PASSWORD");
       }
 
       // Update password
@@ -109,16 +107,14 @@ class UserController {
       await user.save();
 
       logger.info(`Password changed for user: ${user.email}`);
-      res.json({
-        success: true,
-        message: "Password changed successfully",
-      });
+      return respondWithSuccess(res, null, "Password changed successfully");
     } catch (error) {
       logger.error(`Change password error: ${error.message}`);
-      res.status(500).json({
-        success: false,
-        message: "Failed to change password",
-      });
+      return respondWithError(
+        res,
+        "INTERNAL_SERVER_ERROR",
+        "Failed to change password",
+      );
     }
   }
 
@@ -126,9 +122,9 @@ class UserController {
   async getUsers(req, res) {
     try {
       const { page = 1, limit = 10, search, userType, status } = req.query;
-      const { userType: requestUserType, tenantId, userId } = req.user;
+      const { userType: requestUserType, userId } = req.user;
 
-      let query = {};
+      const query = {};
 
       // If business user, only show their customers
       if (isBusinessUser(requestUserType)) {
@@ -212,7 +208,7 @@ class UserController {
         });
       }
 
-      let query = {};
+      const query = {};
 
       // Support both single userType and comma-separated userTypes
       if (userTypes) {
@@ -354,26 +350,12 @@ class UserController {
         user.isVerified = isVerified;
       }
 
-      if (
-        subscriptionStatus &&
-        ["agent", "super_agent", "dealer", "super_dealer"].includes(
-          user.userType,
-        )
-      ) {
+      if (subscriptionStatus && BUSINESS_ROLES.includes(user.userType)) {
         user.subscriptionStatus = subscriptionStatus;
       }
 
       // Allow super admins to change user types
-      if (
-        userType &&
-        [
-          "agent",
-          "super_agent",
-          "dealer",
-          "super_dealer",
-          "super_admin",
-        ].includes(userType)
-      ) {
+      if (userType && [...BUSINESS_ROLES, "super_admin"].includes(userType)) {
         user.userType = userType;
       }
 

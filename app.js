@@ -66,8 +66,14 @@ logger.info("Starting SaaS E-Commerce backend...");
 
     // ─── Background Jobs ───────────────────────────────────────────────────────
     scheduleNotificationCleanup();
-    commissionFinalizationJob.start();
-    scheduleDailyCommissionGeneration();
+    // Commission-related jobs are disabled in production — run only in development
+    if (process.env.NODE_ENV === "development") {
+      commissionFinalizationJob.start();
+      scheduleDailyCommissionGeneration();
+    } else {
+      logger.info("Commission background jobs disabled in production");
+    }
+
     initializeReportedOrdersCleanupJob();
     initializePendingPaymentExpiryJob();
     initializeMomoPendingExpiryJob();
@@ -212,7 +218,12 @@ app.use("/api/wallet", walletRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/analytics", analyticsRoutes);
-app.use("/api/commissions", commissionRoutes);
+// Commission API disabled in production. Mount only in development so the feature can be iterated safely.
+if (process.env.NODE_ENV === "development") {
+  app.use("/api/commissions", commissionRoutes);
+} else {
+  logger.info("/api/commissions routes disabled in production");
+}
 app.use("/api/push", pushNotificationRoutes);
 app.use("/api/announcements", announcementRoutes);
 app.use("/api/packages", packageRoutes);

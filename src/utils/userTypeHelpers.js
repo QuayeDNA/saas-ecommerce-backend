@@ -1,23 +1,20 @@
+import { BUSINESS_ROLES, ROLES } from "../constants/roles.js";
+
 /**
  * Utility functions for handling user types consistently across the application
  */
 
 // Define all business user types that can act as agents/tenants
-const BUSINESS_USER_TYPES = ["agent", "super_agent", "dealer", "super_dealer"];
+const BUSINESS_USER_TYPES = BUSINESS_ROLES;
 
 // Define user types that can have wallets and make transactions
-const WALLET_ENABLED_USER_TYPES = [
-  "agent",
-  "super_agent",
-  "dealer",
-  "super_dealer",
-];
+const WALLET_ENABLED_USER_TYPES = BUSINESS_ROLES;
 
 // Define user types that can manage other users (act as tenants)
-const TENANT_USER_TYPES = ["agent", "super_agent", "dealer", "super_dealer"];
+const TENANT_USER_TYPES = BUSINESS_ROLES;
 
 // Define admin user types
-const ADMIN_USER_TYPES = ["admin", "super_admin"];
+const ADMIN_USER_TYPES = ["admin", ROLES.SUPER_ADMIN];
 
 /**
  * Check if a user type is a business user (can act as an agent/tenant)

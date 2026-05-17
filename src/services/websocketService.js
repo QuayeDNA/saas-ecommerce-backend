@@ -1,5 +1,6 @@
 // src/services/websocketService.js
 import { WebSocketServer } from "ws";
+import { URL } from "url";
 import logger from "../utils/logger.js";
 
 class WebSocketService {
@@ -22,7 +23,7 @@ class WebSocketService {
         this.clients.set(userId, ws);
         logger.info(`WebSocket client registered for user: ${userId}`);
         console.log(
-          `📡 WebSocket registered: userId=${userId}, Total clients: ${this.clients.size}`
+          `📡 WebSocket registered: userId=${userId}, Total clients: ${this.clients.size}`,
         );
       } else {
         logger.warn("WebSocket connection without userId");
@@ -34,10 +35,10 @@ class WebSocketService {
           if (clientWs === ws) {
             this.clients.delete(clientUserId);
             logger.info(
-              `WebSocket client disconnected for user: ${clientUserId}`
+              `WebSocket client disconnected for user: ${clientUserId}`,
             );
             console.log(
-              `📡 WebSocket disconnected: userId=${clientUserId}, Total clients: ${this.clients.size}`
+              `📡 WebSocket disconnected: userId=${clientUserId}, Total clients: ${this.clients.size}`,
             );
             break;
           }
@@ -62,13 +63,13 @@ class WebSocketService {
           JSON.stringify({
             type: "notification",
             data: notification,
-          })
+          }),
         );
         logger.info(`Notification sent to user ${userId} via WebSocket`);
       } catch (error) {
         logger.error(
           `Failed to send WebSocket notification to user ${userId}:`,
-          error
+          error,
         );
       }
     }
@@ -86,13 +87,13 @@ class WebSocketService {
             userId: userId,
             balance: walletData.balance,
             recentTransactions: walletData.recentTransactions,
-          })
+          }),
         );
         logger.info(`Wallet update sent to user ${userId} via WebSocket`);
       } catch (error) {
         logger.error(
           `Failed to send WebSocket wallet update to user ${userId}:`,
-          error
+          error,
         );
       }
     }
@@ -106,12 +107,12 @@ class WebSocketService {
       try {
         ws.send(JSON.stringify(walletUpdateData));
         logger.info(
-          `Wallet update with message sent to user ${userId} via WebSocket`
+          `Wallet update with message sent to user ${userId} via WebSocket`,
         );
       } catch (error) {
         logger.error(
           `Failed to send WebSocket wallet update to user ${userId}:`,
-          error
+          error,
         );
       }
     }
@@ -127,13 +128,13 @@ class WebSocketService {
           JSON.stringify({
             type: "order_update",
             data: orderData,
-          })
+          }),
         );
         logger.info(`Order update sent to user ${userId} via WebSocket`);
       } catch (error) {
         logger.error(
           `Failed to send WebSocket order update to user ${userId}:`,
-          error
+          error,
         );
       }
     }
@@ -149,13 +150,13 @@ class WebSocketService {
           JSON.stringify({
             type: "commission_update",
             commission: commissionData,
-          })
+          }),
         );
         logger.info(`Commission update sent to user ${userId} via WebSocket`);
       } catch (error) {
         logger.error(
           `Failed to send WebSocket commission update to user ${userId}:`,
-          error
+          error,
         );
       }
     }
@@ -171,15 +172,15 @@ class WebSocketService {
           JSON.stringify({
             type: "commission_created",
             commission: commissionData,
-          })
+          }),
         );
         logger.info(
-          `Commission created notification sent to user ${userId} via WebSocket`
+          `Commission created notification sent to user ${userId} via WebSocket`,
         );
       } catch (error) {
         logger.error(
           `Failed to send WebSocket commission created to user ${userId}:`,
-          error
+          error,
         );
       }
     }
@@ -195,15 +196,15 @@ class WebSocketService {
           JSON.stringify({
             type: "commission_paid",
             commission: commissionData,
-          })
+          }),
         );
         logger.info(
-          `Commission paid notification sent to user ${userId} via WebSocket`
+          `Commission paid notification sent to user ${userId} via WebSocket`,
         );
       } catch (error) {
         logger.error(
           `Failed to send WebSocket commission paid to user ${userId}:`,
-          error
+          error,
         );
       }
     }
@@ -218,15 +219,15 @@ class WebSocketService {
           JSON.stringify({
             type: "commission_updated",
             commission: commissionData,
-          })
+          }),
         );
         logger.info(
-          `Commission updated notification sent to user ${userId} via WebSocket`
+          `Commission updated notification sent to user ${userId} via WebSocket`,
         );
       } catch (error) {
         logger.error(
           `Failed to send WebSocket commission updated to user ${userId}:`,
-          error
+          error,
         );
       }
     }
@@ -241,15 +242,15 @@ class WebSocketService {
           JSON.stringify({
             type: "commission_finalized",
             commission: commissionData,
-          })
+          }),
         );
         logger.info(
-          `Commission finalized notification sent to user ${userId} via WebSocket`
+          `Commission finalized notification sent to user ${userId} via WebSocket`,
         );
       } catch (error) {
         logger.error(
           `Failed to send WebSocket commission finalized to user ${userId}:`,
-          error
+          error,
         );
       }
     }
@@ -271,7 +272,7 @@ class WebSocketService {
             JSON.stringify({
               type: "notification",
               data: notification,
-            })
+            }),
           );
         } catch (error) {
           logger.error(`Failed to broadcast to user ${userId}:`, error);
@@ -294,13 +295,13 @@ class WebSocketService {
           JSON.stringify({
             type: "announcement",
             data: announcement,
-          })
+          }),
         );
         logger.info(`Announcement sent to user ${userId} via WebSocket`);
       } catch (error) {
         logger.error(
           `Failed to send WebSocket announcement to user ${userId}:`,
-          error
+          error,
         );
       }
     }
@@ -325,7 +326,7 @@ class WebSocketService {
       console.log(
         `Checking WebSocket for user ${userId}: ${
           ws ? "FOUND" : "NOT FOUND"
-        }, readyState: ${ws?.readyState}`
+        }, readyState: ${ws?.readyState}`,
       );
 
       if (ws && ws.readyState === 1) {
@@ -334,14 +335,14 @@ class WebSocketService {
             JSON.stringify({
               type: "announcement",
               data: announcement,
-            })
+            }),
           );
           console.log(`✅ Announcement sent to user ${userId}`);
           successCount++;
         } catch (error) {
           console.error(
             `❌ Failed to send announcement to user ${userId}:`,
-            error
+            error,
           );
           failCount++;
         }
@@ -352,7 +353,7 @@ class WebSocketService {
     });
 
     logger.info(
-      `Announcement broadcast completed: ${successCount} successful, ${failCount} failed out of ${userIds.length} target users`
+      `Announcement broadcast completed: ${successCount} successful, ${failCount} failed out of ${userIds.length} target users`,
     );
   }
 
@@ -372,20 +373,20 @@ class WebSocketService {
             JSON.stringify({
               type: "order_created",
               data: orderData,
-            })
+            }),
           );
           successCount++;
         } catch (error) {
           logger.error(
             `Failed to send order creation to admin ${adminId}:`,
-            error
+            error,
           );
         }
       }
     });
 
     logger.info(
-      `Order creation broadcast to ${successCount} of ${superAdminIds.length} admins`
+      `Order creation broadcast to ${successCount} of ${superAdminIds.length} admins`,
     );
   }
 
@@ -403,19 +404,19 @@ class WebSocketService {
             JSON.stringify({
               type: "order_status_updated",
               data: orderData,
-            })
+            }),
           );
         } catch (error) {
           logger.error(
             `Failed to send order status update to admin ${adminId}:`,
-            error
+            error,
           );
         }
       }
     });
 
     logger.info(
-      `Order status update sent to user ${userId} and ${superAdminIds.length} admins`
+      `Order status update sent to user ${userId} and ${superAdminIds.length} admins`,
     );
   }
 
@@ -428,15 +429,21 @@ class WebSocketService {
             JSON.stringify({
               type: "site_status_update",
               data: siteStatus,
-            })
+            }),
           );
         } catch (error) {
-          logger.error(`Failed to broadcast site status to user ${userId}:`, error);
+          logger.error(
+            `Failed to broadcast site status to user ${userId}:`,
+            error,
+          );
         }
       }
     });
 
-    logger.info(`Site status update broadcasted to all connected clients:`, siteStatus);
+    logger.info(
+      `Site status update broadcasted to all connected clients:`,
+      siteStatus,
+    );
   }
 }
 

@@ -1,6 +1,7 @@
 // src/routes/orderRoutes.js
 import express from "express";
 import orderController from "../controllers/orderController.js";
+import { BUSINESS_ROLES } from "../constants/roles.js";
 import {
   authenticate,
   authorize,
@@ -19,7 +20,7 @@ router.post(
   authorizeBusinessUser,
   checkSiteStatusForOrders,
   validate(orderValidation.createSingle),
-  orderController.createSingleOrder
+  orderController.createSingleOrder,
 );
 
 router.post(
@@ -28,15 +29,15 @@ router.post(
   authorizeBusinessUser,
   checkSiteStatusForOrders,
   validate(orderValidation.createBulk),
-  orderController.createBulkOrder
+  orderController.createBulkOrder,
 );
 
 // Analytics - SPECIFIC ROUTES FIRST
 router.get(
   "/analytics/summary",
   authenticate,
-  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
-  orderController.getAnalytics
+  authorize(...BUSINESS_ROLES, "super_admin"),
+  orderController.getAnalytics,
 );
 
 // Business user analytics for dashboard
@@ -44,23 +45,23 @@ router.get(
   "/analytics/agent",
   authenticate,
   authorizeBusinessUser,
-  orderController.getAgentAnalytics
+  orderController.getAgentAnalytics,
 );
 
 // Monthly revenue for business users and super admin
 router.get(
   "/analytics/monthly-revenue",
   authenticate,
-  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
-  orderController.getMonthlyRevenue
+  authorize(...BUSINESS_ROLES, "super_admin"),
+  orderController.getMonthlyRevenue,
 );
 
 // Daily spending for business users (today's completed orders)
 router.get(
   "/analytics/daily-spending",
   authenticate,
-  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
-  orderController.getDailySpending
+  authorize(...BUSINESS_ROLES, "super_admin"),
+  orderController.getDailySpending,
 );
 
 // Order processing - RESTRICTED TO SUPER ADMIN ONLY
@@ -68,14 +69,14 @@ router.post(
   "/:orderId/items/:itemId/process",
   authenticate,
   authorize("super_admin"),
-  orderController.processOrderItem
+  orderController.processOrderItem,
 );
 
 router.post(
   "/:id/process-bulk",
   authenticate,
   authorize("super_admin"),
-  orderController.processBulkOrder
+  orderController.processBulkOrder,
 );
 
 // Bulk order processing - NEW ENDPOINT FOR SUPER ADMIN
@@ -83,7 +84,7 @@ router.post(
   "/bulk-process",
   authenticate,
   authorize("super_admin"),
-  orderController.bulkProcessOrders
+  orderController.bulkProcessOrders,
 );
 
 // Bulk reception status update - NEW ENDPOINT FOR SUPER ADMIN
@@ -91,46 +92,46 @@ router.post(
   "/bulk-reception-status",
   authenticate,
   authorize("super_admin"),
-  orderController.bulkUpdateReceptionStatus
+  orderController.bulkUpdateReceptionStatus,
 );
 
 router.post(
   "/:id/cancel",
   authenticate,
-  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
+  authorize(...BUSINESS_ROLES, "super_admin"),
   validate(orderValidation.cancel),
-  orderController.cancelOrder
+  orderController.cancelOrder,
 );
 
 router.post(
   "/:id/report",
   authenticate,
-  authorize("agent", "super_agent", "dealer", "super_dealer"),
+  authorize(...BUSINESS_ROLES),
   validate(orderValidation.report),
-  orderController.reportOrder
+  orderController.reportOrder,
 );
 
 router.patch(
   "/:id/status",
   authenticate,
   authorize("super_admin"),
-  orderController.updateOrderStatus
+  orderController.updateOrderStatus,
 );
 
 // Process draft orders when wallet is topped up
 router.post(
   "/process-drafts",
   authenticate,
-  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
-  orderController.processDraftOrders
+  authorize(...BUSINESS_ROLES, "super_admin"),
+  orderController.processDraftOrders,
 );
 
 // Process single draft order
 router.post(
   "/process-draft/:orderId",
   authenticate,
-  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
-  orderController.processSingleDraftOrder
+  authorize(...BUSINESS_ROLES, "super_admin"),
+  orderController.processSingleDraftOrder,
 );
 
 // Update reception status - RESTRICTED TO SUPER ADMIN ONLY
@@ -138,30 +139,30 @@ router.patch(
   "/:id/reception-status",
   authenticate,
   authorize("super_admin"),
-  orderController.updateReceptionStatus
+  orderController.updateReceptionStatus,
 );
 
 // Get reported orders - SPECIFIC ENDPOINT
 router.get(
   "/reported",
   authenticate,
-  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
-  orderController.getReportedOrders
+  authorize(...BUSINESS_ROLES, "super_admin"),
+  orderController.getReportedOrders,
 );
 
 // GENERIC ROUTES LAST
 router.get(
   "/",
   authenticate,
-  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
-  orderController.getOrders
+  authorize(...BUSINESS_ROLES, "super_admin"),
+  orderController.getOrders,
 );
 
 router.get(
   "/:id",
   authenticate,
-  authorize("agent", "super_agent", "dealer", "super_dealer", "super_admin"),
-  orderController.getOrder
+  authorize(...BUSINESS_ROLES, "super_admin"),
+  orderController.getOrder,
 );
 
 export default router;

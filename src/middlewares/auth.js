@@ -24,7 +24,7 @@ export const authenticate = async (req, res, next) => {
     // Verify access token
     const decoded = jwt.verify(token, process.env.JWTSECRET);
     const user = await User.findById(decoded.userId).select(
-      "-password -refreshToken"
+      "-password -refreshToken",
     );
 
     if (!user) {
@@ -32,6 +32,18 @@ export const authenticate = async (req, res, next) => {
       return res.status(401).json({
         success: false,
         message: "Invalid token. User not found.",
+      });
+    }
+
+    if (
+      user.passwordChangedAt &&
+      decoded.iat &&
+      decoded.iat * 1000 < new Date(user.passwordChangedAt).getTime()
+    ) {
+      logger.warn(`Rejected stale access token for user: ${user.email}`);
+      return res.status(401).json({
+        success: false,
+        message: "Session expired. Please log in again.",
       });
     }
 
@@ -91,7 +103,7 @@ export const authorize = (...roles) => {
     // );
     if (!roles.includes(req.user.userType)) {
       logger.warn(
-        `Unauthorized access attempt by ${req.user.email} (userType: "${req.user.userType}") to ${req.originalUrl}`
+        `Unauthorized access attempt by ${req.user.email} (userType: "${req.user.userType}") to ${req.originalUrl}`,
       );
       return res.status(403).json({
         success: false,
@@ -116,7 +128,7 @@ export const authorizeBusinessUser = (req, res, next) => {
     req.user.userType !== "super_admin"
   ) {
     logger.warn(
-      `Unauthorized business access attempt by ${req.user.email} (userType: "${req.user.userType}") to ${req.originalUrl}`
+      `Unauthorized business access attempt by ${req.user.email} (userType: "${req.user.userType}") to ${req.originalUrl}`,
     );
     return res.status(403).json({
       success: false,
@@ -135,7 +147,7 @@ export const authorizeWalletUser = (req, res, next) => {
   // );
   if (!canHaveWallet(req.user.userType)) {
     logger.warn(
-      `Unauthorized wallet access attempt by ${req.user.email} (userType: "${req.user.userType}") to ${req.originalUrl}`
+      `Unauthorized wallet access attempt by ${req.user.email} (userType: "${req.user.userType}") to ${req.originalUrl}`,
     );
     return res.status(403).json({
       success: false,
@@ -154,7 +166,7 @@ export const authorizeTenantUser = (req, res, next) => {
   // );
   if (!isTenantUser(req.user.userType)) {
     logger.warn(
-      `Unauthorized tenant access attempt by ${req.user.email} (userType: "${req.user.userType}") to ${req.originalUrl}`
+      `Unauthorized tenant access attempt by ${req.user.email} (userType: "${req.user.userType}") to ${req.originalUrl}`,
     );
     return res.status(403).json({
       success: false,
@@ -173,7 +185,7 @@ export const authorizeAdmin = (req, res, next) => {
   // );
   if (!isAdminUser(req.user.userType)) {
     logger.warn(
-      `Unauthorized admin access attempt by ${req.user.email} (userType: "${req.user.userType}") to ${req.originalUrl}`
+      `Unauthorized admin access attempt by ${req.user.email} (userType: "${req.user.userType}") to ${req.originalUrl}`,
     );
     return res.status(403).json({
       success: false,
