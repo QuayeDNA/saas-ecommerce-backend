@@ -164,40 +164,76 @@ class AuditLogService {
     const matchStage =
       Object.keys(dateFilter).length > 0 ? { timestamp: dateFilter } : {};
 
-    const [totalLogs, byCategory, byAction, bySeverity, dailyTrend] =
-      await Promise.all([
-        AuditLog.countDocuments(matchStage),
-        AuditLog.aggregate([
-          { $match: matchStage },
-          { $group: { _id: "$category", count: { $sum: 1 } } },
-          { $sort: { count: -1 } },
-        ]),
-        AuditLog.aggregate([
-          { $match: matchStage },
-          { $group: { _id: "$action", count: { $sum: 1 } } },
-          { $sort: { count: -1 } },
-          { $limit: 20 },
-        ]),
-        AuditLog.aggregate([
-          { $match: matchStage },
-          { $group: { _id: "$severity", count: { $sum: 1 } } },
-          { $sort: { count: -1 } },
-        ]),
-        AuditLog.aggregate([
-          { $match: matchStage },
-          {
-            $group: {
-              _id: {
-                year: { $year: "$timestamp" },
-                month: { $month: "$timestamp" },
-                day: { $dayOfMonth: "$timestamp" },
-              },
-              count: { $sum: 1 },
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const [
+      totalLogs,
+      byCategory,
+      byAction,
+      bySeverity,
+      dailyTrend,
+      recentCritical,
+      topUsers,
+    ] = await Promise.all([
+      AuditLog.countDocuments(matchStage),
+      AuditLog.aggregate([
+        { $match: matchStage },
+        { $group: { _id: "$category", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]),
+      AuditLog.aggregate([
+        { $match: matchStage },
+        { $group: { _id: "$action", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 20 },
+      ]),
+      AuditLog.aggregate([
+        { $match: matchStage },
+        { $group: { _id: "$severity", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]),
+      AuditLog.aggregate([
+        { $match: matchStage },
+        {
+          $group: {
+            _id: {
+              year: { $year: "$timestamp" },
+              month: { $month: "$timestamp" },
+              day: { $dayOfMonth: "$timestamp" },
             },
+            count: { $sum: 1 },
           },
-          { $sort: { "_id.year": 1, "_id.month": 1, "_id.day": 1 } },
-        ]),
-      ]);
+        },
+        { $sort: { "_id.year": 1, "_id.month": 1, "_id.day": 1 } },
+      ]),
+      AuditLog.countDocuments({
+        severity: "critical",
+        timestamp: { $gte: twentyFourHoursAgo },
+      }),
+      AuditLog.aggregate([
+        { $match: matchStage },
+        { $group: { _id: "$userId", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 10 },
+        {
+          $lookup: {
+            from: "users",
+            localField: "_id",
+            foreignField: "_id",
+            as: "user",
+          },
+        },
+        { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } },
+        {
+          $project: {
+            _id: 0,
+            userId: "$_id",
+            userName: { $ifNull: ["$user.fullName", "Unknown"] },
+            count: 1,
+          },
+        },
+      ]),
+    ]);
 
     return {
       totalLogs,
@@ -205,6 +241,8 @@ class AuditLogService {
       byAction,
       bySeverity,
       dailyTrend,
+      recentCritical,
+      topUsers,
     };
   }
 }
