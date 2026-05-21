@@ -187,40 +187,6 @@ class SettingsService {
     }
   }
 
-  // Commission Rates
-  async getCommissionRates() {
-    try {
-      const settings = await Settings.getInstance();
-      const result = {
-        agentCommission: settings.agentCommission,
-        superAgentCommission: settings.superAgentCommission,
-        dealerCommission: settings.dealerCommission,
-        superDealerCommission: settings.superDealerCommission,
-        defaultCommissionRate: settings.defaultCommissionRate,
-        customerCommission: settings.customerCommission,
-      };
-
-      return result;
-    } catch (error) {
-      logger.error(`Error getting commission rates: ${error.message}`);
-      throw error;
-    }
-  }
-
-  async updateCommissionRates(rates) {
-    const settings = await Settings.getInstance();
-    settings.agentCommission = rates.agentCommission;
-    settings.superAgentCommission = rates.superAgentCommission;
-    settings.dealerCommission = rates.dealerCommission;
-    settings.superDealerCommission = rates.superDealerCommission;
-    settings.defaultCommissionRate = rates.defaultCommissionRate;
-    settings.customerCommission = rates.customerCommission;
-    await settings.save();
-
-    logger.info("Commission rates updated:", rates);
-    return rates;
-  }
-
   // API Settings
   async getApiSettings() {
     try {

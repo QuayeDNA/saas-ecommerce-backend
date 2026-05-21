@@ -2,8 +2,6 @@
 import Order from "../models/Order.js";
 import User from "../models/User.js";
 import WalletTransaction from "../models/WalletTransaction.js";
-import Settings from "../models/Settings.js";
-import CommissionRecord from "../models/CommissionRecord.js";
 import Provider from "../models/Provider.js";
 import PayoutRequest from "../models/PayoutRequest.js";
 import EarningsTransaction from "../models/EarningsTransaction.js";
@@ -28,7 +26,6 @@ class AnalyticsService {
         revenueStats,
         walletStats,
         providerStats,
-        commissionStats,
         recentActivity,
         rates,
         chartData,
@@ -42,7 +39,6 @@ class AnalyticsService {
         this.getRevenueStatistics(dateRange),
         this.getWalletStatistics(dateRange),
         this.getProviderStatistics(),
-        this.getCommissionStatistics(dateRange),
         this.getRecentActivity(),
         this.getRates(),
         this.getChartData(timeframe),
@@ -56,7 +52,6 @@ class AnalyticsService {
         totalUsers: userStats.total,
         totalOrders: orderStats.total,
         totalRevenue: revenueStats.total,
-        totalCommissions: commissionStats.totalEarned,
         totalWalletBalance: walletStats.totalBalance,
         activeProviders: providerStats.active,
         payoutLiability: payoutStats.pendingLiability,
@@ -77,7 +72,6 @@ class AnalyticsService {
           cancelled: orderStats.cancelled,
           partiallyCompleted: orderStats.partiallyCompleted,
         },
-        commissionStatuses: commissionStats.byStatus,
         payoutStatuses: payoutStats.byStatus,
       };
 
@@ -97,7 +91,6 @@ class AnalyticsService {
         revenue: revenueStats,
         wallet: walletStats,
         providers: providerStats,
-        commissions: commissionStats,
         payouts: payoutStats,
         earnings,
         recentActivity,
@@ -172,9 +165,9 @@ class AnalyticsService {
     const groupedScopes = {
       overview: ["overview", "growth", "rates"],
       trends: ["charts", "growth"],
-      breakdowns: ["breakdowns", "orders", "users", "commissions", "payouts"],
+      breakdowns: ["breakdowns", "orders", "users", "payouts"],
       activity: ["recentActivity", "activityFeed"],
-      financial: ["revenue", "wallet", "commissions", "payouts", "earnings"],
+      financial: ["revenue", "wallet", "payouts", "earnings"],
       performance: ["topPerformers", "orders", "providers", "rates"],
       users: ["users"],
       orders: ["orders"],
@@ -225,12 +218,6 @@ class AnalyticsService {
         dateRange,
       );
 
-      // Get agent's commission statistics
-      const commissionStats = await this.getAgentCommissionStatistics(
-        agentId,
-        dateRange,
-      );
-
       // Get agent's wallet statistics
       const walletStats = await this.getAgentWalletStatistics(agentId);
 
@@ -248,7 +235,6 @@ class AnalyticsService {
         users: userStats,
         orders: orderStats,
         revenue: revenueStats,
-        commissions: commissionStats,
         wallet: walletStats,
         recentActivity,
         charts: chartData,
@@ -804,7 +790,6 @@ class AnalyticsService {
         recentOrders,
         recentTransactions,
         recentPayouts,
-        recentCommissions,
       ] = await Promise.all([
         User.find({ isDeleted: { $ne: true } })
           .select("fullName email userType createdAt status subscriptionStatus")
@@ -826,11 +811,6 @@ class AnalyticsService {
           .sort({ createdAt: -1 })
           .limit(5)
           .lean(),
-        CommissionRecord.find()
-          .select("amount status createdAt")
-          .sort({ createdAt: -1 })
-          .limit(5)
-          .lean(),
       ]);
 
       return {
@@ -838,7 +818,6 @@ class AnalyticsService {
         orders: recentOrders,
         transactions: recentTransactions,
         payouts: recentPayouts,
-        commissions: recentCommissions,
       };
     } catch (error) {
       logger.error(`Recent activity error: ${error.message}`);
@@ -847,7 +826,6 @@ class AnalyticsService {
         orders: [],
         transactions: [],
         payouts: [],
-        commissions: [],
       };
     }
   }
@@ -899,102 +877,6 @@ class AnalyticsService {
         userVerification: 0,
         agentActivation: 0,
         orderSuccess: 0,
-      };
-    }
-  }
-
-  /**
-   * Get commission statistics
-   * @param {Object} dateRange - Date range
-   * @returns {Promise<Object>} Commission statistics
-   */
-  async getCommissionStatistics(dateRange) {
-    try {
-      const { startDate, endDate } = dateRange;
-
-      const aggregation = await CommissionRecord.aggregate([
-        {
-          $match: {
-            createdAt: { $gte: startDate, $lte: endDate },
-          },
-        },
-        {
-          $group: {
-            _id: null,
-            totalEarned: { $sum: "$amount" },
-            totalPaid: {
-              $sum: {
-                $cond: [{ $eq: ["$status", "paid"] }, "$amount", 0],
-              },
-            },
-            totalRecords: { $sum: 1 },
-            pendingCount: {
-              $sum: {
-                $cond: [{ $eq: ["$status", "pending"] }, 1, 0],
-              },
-            },
-            pendingAmount: {
-              $sum: {
-                $cond: [{ $eq: ["$status", "pending"] }, "$amount", 0],
-              },
-            },
-            paidCount: {
-              $sum: {
-                $cond: [{ $eq: ["$status", "paid"] }, 1, 0],
-              },
-            },
-            rejectedCount: {
-              $sum: {
-                $cond: [{ $eq: ["$status", "rejected"] }, 1, 0],
-              },
-            },
-            cancelledCount: {
-              $sum: {
-                $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0],
-              },
-            },
-          },
-        },
-      ]);
-
-      const data = aggregation[0] || {
-        totalEarned: 0,
-        totalPaid: 0,
-        totalRecords: 0,
-        pendingCount: 0,
-        pendingAmount: 0,
-        paidCount: 0,
-        rejectedCount: 0,
-        cancelledCount: 0,
-      };
-
-      return {
-        totalEarned: data.totalEarned,
-        totalPaid: data.totalPaid,
-        totalRecords: data.totalRecords,
-        pendingCount: data.pendingCount,
-        pendingAmount: data.pendingAmount,
-        byStatus: {
-          pending: data.pendingCount,
-          paid: data.paidCount,
-          rejected: data.rejectedCount,
-          cancelled: data.cancelledCount,
-        },
-      };
-    } catch (error) {
-      logger.error(`Commission statistics error: ${error.message}`);
-      return {
-        totalEarned: 0,
-        totalPaid: 0,
-        totalRecords: 0,
-        pendingCount: 0,
-        pendingAmount: 0,
-        byStatus: {
-          pending: 0,
-          paid: 0,
-          rejected: 0,
-          cancelled: 0,
-        },
       };
     }
   }
@@ -1307,8 +1189,6 @@ class AnalyticsService {
       previousRevenueRows,
       currentPayoutRows,
       previousPayoutRows,
-      currentCommissionRows,
-      previousCommissionRows,
     ] = await Promise.all([
       User.countDocuments({
         createdAt: { $gte: dateRange.startDate, $lte: dateRange.endDate },
@@ -1348,34 +1228,12 @@ class AnalyticsService {
         },
         { $group: { _id: null, total: { $sum: "$amount" } } },
       ]),
-      CommissionRecord.aggregate([
-        {
-          $match: {
-            createdAt: { $gte: dateRange.startDate, $lte: dateRange.endDate },
-          },
-        },
-        { $group: { _id: null, total: { $sum: "$amount" } } },
-      ]),
-      CommissionRecord.aggregate([
-        {
-          $match: {
-            createdAt: {
-              $gte: previousDateRange.startDate,
-              $lte: previousDateRange.endDate,
-            },
-          },
-        },
-        { $group: { _id: null, total: { $sum: "$amount" } } },
-      ]),
     ]);
 
     const currentRevenue = currentRevenueRows[0]?.total || 0;
     const previousRevenue = previousRevenueRows[0]?.total || 0;
     const currentPayoutAmount = currentPayoutRows[0]?.total || 0;
     const previousPayoutAmount = previousPayoutRows[0]?.total || 0;
-    const currentCommission = currentCommissionRows[0]?.total || 0;
-    const previousCommission = previousCommissionRows[0]?.total || 0;
-
     return {
       users: {
         current: currentUsers,
@@ -1397,11 +1255,6 @@ class AnalyticsService {
         previous: previousPayoutAmount,
         ...this.calculateGrowth(currentPayoutAmount, previousPayoutAmount),
       },
-      commissions: {
-        current: currentCommission,
-        previous: previousCommission,
-        ...this.calculateGrowth(currentCommission, previousCommission),
-      },
     };
   }
 
@@ -1418,7 +1271,6 @@ class AnalyticsService {
 
       const [
         topAgentsByRevenue,
-        topAgentsByCommission,
         topOrderTypes,
         topStorefronts,
       ] = await Promise.all([
@@ -1464,47 +1316,6 @@ class AnalyticsService {
               orders: 1,
               revenue: 1,
               averageOrderValue: { $round: ["$averageOrderValue", 2] },
-            },
-          },
-        ]),
-        CommissionRecord.aggregate([
-          {
-            $match: {
-              createdAt: { $gte: startDate, $lte: endDate },
-            },
-          },
-          {
-            $group: {
-              _id: "$agentId",
-              records: { $sum: 1 },
-              totalCommission: { $sum: "$amount" },
-            },
-          },
-          {
-            $lookup: {
-              from: "users",
-              localField: "_id",
-              foreignField: "_id",
-              as: "user",
-            },
-          },
-          { $unwind: "$user" },
-          {
-            $match: {
-              "user.userType": { $ne: "super_admin" },
-            },
-          },
-          { $sort: { totalCommission: -1 } },
-          { $limit: maxPerformers },
-          {
-            $project: {
-              _id: 0,
-              userId: "$user._id",
-              fullName: "$user.fullName",
-              agentCode: "$user.agentCode",
-              userType: "$user.userType",
-              records: 1,
-              totalCommission: 1,
             },
           },
         ]),
@@ -1646,7 +1457,6 @@ class AnalyticsService {
 
       return {
         agents: rankedAgents,
-        commissionLeaders: topAgentsByCommission,
         storefronts: topStorefronts,
         orderTypes: topOrderTypes.map((row) => ({
           orderType: row._id || "unknown",
@@ -1658,7 +1468,6 @@ class AnalyticsService {
       logger.error(`Top performers error: ${error.message}`);
       return {
         agents: [],
-        commissionLeaders: [],
         storefronts: [],
         orderTypes: [],
       };
@@ -1725,19 +1534,6 @@ class AnalyticsService {
         meta: {
           status: payout.status,
           destinationType: payout.destination?.type,
-        },
-      });
-    });
-
-    (recentActivity.commissions || []).forEach((commission) => {
-      feed.push({
-        id: `commission-${commission._id}`,
-        type: "commission_update",
-        message: `Commission ${commission.status}`,
-        createdAt: commission.createdAt,
-        value: commission.amount || 0,
-        meta: {
-          status: commission.status,
         },
       });
     });
@@ -1838,7 +1634,7 @@ class AnalyticsService {
     const dateRange = this.getDateRange(timeframe);
     const { startDate, endDate } = dateRange;
 
-    const [dailyData, userData, statusData, commissionData] = await Promise.all(
+    const [dailyData, userData, statusData] = await Promise.all(
       [
         Order.aggregate([
           {
@@ -1896,23 +1692,6 @@ class AnalyticsService {
             },
           },
         ]),
-        CommissionRecord.aggregate([
-          {
-            $match: {
-              createdAt: { $gte: startDate, $lte: endDate },
-              status: { $in: ["pending", "paid"] },
-            },
-          },
-          {
-            $group: {
-              _id: {
-                $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
-              },
-              amount: { $sum: "$amount" },
-            },
-          },
-          { $sort: { _id: 1 } },
-        ]),
       ],
     );
 
@@ -1920,22 +1699,17 @@ class AnalyticsService {
       ...new Set([
         ...dailyData.map((row) => row._id),
         ...userData.map((row) => row._id),
-        ...commissionData.map((row) => row._id),
       ]),
     ].sort();
 
     const byDateOrder = {};
     const byDateUsers = {};
-    const byDateCommissions = {};
 
     dailyData.forEach((row) => {
       byDateOrder[row._id] = row;
     });
     userData.forEach((row) => {
       byDateUsers[row._id] = row;
-    });
-    commissionData.forEach((row) => {
-      byDateCommissions[row._id] = row;
     });
 
     const statusMap = {};
@@ -1953,7 +1727,6 @@ class AnalyticsService {
       userRegistrations: labels.map(
         (label) => byDateUsers[label]?.registrations || 0,
       ),
-      commissions: labels.map((label) => byDateCommissions[label]?.amount || 0),
       orderStatus: {
         completed: statusMap.completed || 0,
         pending: statusMap.pending || 0,
@@ -2223,70 +1996,6 @@ class AnalyticsService {
   }
 
   /**
-   * Get agent commission data
-   * @param {string} agentId - Agent ID
-   * @param {string} tenantId - Tenant ID
-   * @param {Object} dateRange - Date range
-   * @returns {Promise<Object>} Agent commission data
-   */
-  async getAgentCommissionData(agentId, tenantId, dateRange) {
-    try {
-      const { startDate, endDate } = dateRange;
-
-      // Get commission settings
-      const settings = await Settings.getInstance();
-      const commissionRate = settings.agentCommission || 5.0;
-
-      // Get agent's completed orders for the period
-      const completedOrders = await Order.find({
-        createdBy: agentId,
-        ...(tenantId ? { tenantId: tenantId } : {}),
-        status: "completed",
-        createdAt: { $gte: startDate, $lte: endDate },
-      });
-
-      const totalRevenue = completedOrders.reduce(
-        (sum, order) => sum + order.total,
-        0,
-      );
-      const commissionAmount = (totalRevenue * commissionRate) / 100;
-
-      // Get commission records for this agent
-      const commissionRecords = await CommissionRecord.find({
-        agentId: agentId,
-        createdAt: { $gte: startDate, $lte: endDate },
-      });
-
-      const paidCommission = commissionRecords
-        .filter((record) => record.status === "paid")
-        .reduce((sum, record) => sum + (record.amount || 0), 0);
-
-      const pendingCommission = commissionRecords
-        .filter((record) => record.status === "pending")
-        .reduce((sum, record) => sum + (record.amount || 0), 0);
-
-      return {
-        rate: commissionRate,
-        earned: commissionAmount,
-        paid: paidCommission,
-        pending: pendingCommission,
-        totalOrders: completedOrders.length,
-        totalRevenue: totalRevenue,
-      };
-    } catch (error) {
-      logger.error(`Agent commission data error: ${error.message}`);
-      return {
-        rate: 5.0,
-        earned: 0,
-        paid: 0,
-        pending: 0,
-        totalOrders: 0,
-        totalRevenue: 0,
-      };
-    }
-  }
-
-  /**
    * Get agent wallet data
    * @param {string} agentId - Agent ID
    * @returns {Promise<Object>} Agent wallet data
@@ -2410,53 +2119,6 @@ class AnalyticsService {
   }
 
   /**
-   * Get agent commission statistics
-   * @param {string} agentId - Agent ID
-   * @param {Object} dateRange - Date range object
-   * @returns {Promise<Object>} Agent commission statistics
-   */
-  async getAgentCommissionStatistics(agentId, dateRange) {
-    try {
-      const { startDate, endDate } = dateRange;
-      const agentObjectId = new mongoose.Types.ObjectId(agentId);
-
-      // Get commission records for this agent
-      const commissionRecords = await CommissionRecord.find({
-        agentId: agentObjectId,
-        createdAt: { $gte: startDate, $lte: endDate },
-      });
-
-      const totalCommission = commissionRecords.reduce(
-        (sum, record) => sum + (record.amount || 0),
-        0,
-      );
-
-      const paidCommission = commissionRecords
-        .filter((record) => record.status === "paid")
-        .reduce((sum, record) => sum + (record.amount || 0), 0);
-
-      const pendingCommission = commissionRecords
-        .filter((record) => record.status === "pending")
-        .reduce((sum, record) => sum + (record.amount || 0), 0);
-
-      return {
-        totalCommission,
-        paidCommission,
-        pendingCommission,
-        commissionCount: commissionRecords.length,
-      };
-    } catch (error) {
-      logger.error(`Agent commission statistics error: ${error.message}`);
-      return {
-        totalCommission: 0,
-        paidCommission: 0,
-        pendingCommission: 0,
-        commissionCount: 0,
-      };
-    }
-  }
-
-  /**
    * Get agent wallet statistics
    * @param {string} agentId - Agent ID
    * @returns {Promise<Object>} Agent wallet statistics
@@ -2528,14 +2190,6 @@ class AnalyticsService {
         .limit(5)
         .select("orderNumber total status createdAt");
 
-      // Get recent commission records
-      const recentCommissions = await CommissionRecord.find({
-        agentId: agentObjectId,
-      })
-        .sort({ createdAt: -1 })
-        .limit(5)
-        .select("amount status createdAt");
-
       // Get recent wallet transactions
       const recentTransactions = await WalletTransaction.find({
         user: agentObjectId,
@@ -2552,16 +2206,6 @@ class AnalyticsService {
           amount: order.total,
           status: order.status,
           createdAt: order.createdAt,
-        });
-      });
-
-      recentCommissions.forEach((commission) => {
-        activities.push({
-          type: "commission",
-          description: `Commission earned`,
-          amount: commission.amount,
-          status: commission.status,
-          createdAt: commission.createdAt,
         });
       });
 

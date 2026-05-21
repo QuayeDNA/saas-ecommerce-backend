@@ -165,10 +165,6 @@ const userSchema = new mongoose.Schema({
       type: Boolean,
       default: true,
     },
-    commissionUpdates: {
-      type: Boolean,
-      default: true,
-    },
     announcements: {
       type: Boolean,
       default: true,

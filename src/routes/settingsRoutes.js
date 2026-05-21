@@ -61,10 +61,6 @@ router.post(
   settingsController.toggleStorefrontsAvailability,
 );
 
-// Commission Rates
-router.get("/commission", settingsController.getCommissionRates);
-router.put("/commission", settingsController.updateCommissionRates);
-
 // API Settings (PUT remains protected)
 router.put("/api", settingsController.updateApiSettings);
 

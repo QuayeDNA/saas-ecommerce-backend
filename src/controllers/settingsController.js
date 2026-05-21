@@ -115,42 +115,6 @@ class SettingsController {
     }
   }
 
-  // Commission Rates
-  async getCommissionRates(req, res) {
-    try {
-      const rates = await settingsService.getCommissionRates();
-      res.json(rates);
-    } catch (error) {
-      logger.error("Error getting commission rates:", error);
-      res.status(500).json({ error: "Failed to get commission rates" });
-    }
-  }
-
-  async updateCommissionRates(req, res) {
-    try {
-      const {
-        agentCommission,
-        superAgentCommission,
-        dealerCommission,
-        superDealerCommission,
-        defaultCommissionRate,
-        customerCommission,
-      } = req.body;
-      const rates = await settingsService.updateCommissionRates({
-        agentCommission,
-        superAgentCommission,
-        dealerCommission,
-        superDealerCommission,
-        defaultCommissionRate,
-        customerCommission,
-      });
-      res.json(rates);
-    } catch (error) {
-      logger.error("Error updating commission rates:", error);
-      res.status(500).json({ error: "Failed to update commission rates" });
-    }
-  }
-
   // API Settings
   async getApiSettings(req, res) {
     try {

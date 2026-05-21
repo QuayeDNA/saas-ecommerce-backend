@@ -7,7 +7,6 @@ export const AUDIT_CATEGORIES = {
   PAYOUT: "payout",
   SETTINGS: "settings",
   BUNDLE: "bundle",
-  COMMISSION: "commission",
 };
 
 export const AUDIT_ACTIONS = {

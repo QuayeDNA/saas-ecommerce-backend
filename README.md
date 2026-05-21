@@ -6,7 +6,6 @@ A comprehensive multi-vendor e-commerce platform backend built with Node.js, Exp
 
 - **Multi-vendor E-commerce** - Support for multiple vendors and agents
 - **Real-time Communication** - WebSocket integration for live updates
-- **Commission Management** - Automated commission calculation and tracking
 - **JWT Authentication** - Secure authentication and authorization
 - **Push Notifications** - VAPID-based push notifications
 - **Analytics** - Real-time analytics and reporting
@@ -88,7 +87,6 @@ The API provides comprehensive endpoints for:
 
 - User authentication and management
 - Product and order management
-- Commission tracking and analytics
 - Notification management
 - Settings and configuration
 

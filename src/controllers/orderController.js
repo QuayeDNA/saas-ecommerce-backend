@@ -919,8 +919,6 @@ class OrderController {
         monthlyRevenue: 0,
         monthlyOrderCount: 0,
         month: "",
-        // commission for the current month (0.1% of completed monthly sales)
-        monthlyCommission: 0,
       };
 
       // Compute overall total sales (completed orders total) for this user (agent) across all time
@@ -983,18 +981,6 @@ class OrderController {
           month: "long",
           year: "numeric",
         });
-        // Commission is 0.1% (0.001) of total completed sales for the month
-        try {
-          const commission = (analytics.monthlyRevenue || 0) * 0.001;
-          // Round to 2 decimal places for currency formatting
-          analytics.monthlyCommission =
-            Math.round((commission + Number.EPSILON) * 100) / 100;
-        } catch (err) {
-          logger.error(
-            `Failed to compute monthly commission for agent: ${err.message}`,
-          );
-          analytics.monthlyCommission = 0;
-        }
       } catch (err) {
         logger.error(
           `Failed to compute monthly revenue for agent: ${err.message}`,

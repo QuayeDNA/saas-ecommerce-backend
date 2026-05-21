@@ -117,7 +117,6 @@ router.get("/preferences", authenticate, async (req, res) => {
         enabled: true,
         orderUpdates: true,
         walletUpdates: true,
-        commissionUpdates: true,
         announcements: true,
       },
     });
@@ -148,7 +147,6 @@ router.put("/preferences", authenticate, async (req, res) => {
       "enabled",
       "orderUpdates",
       "walletUpdates",
-      "commissionUpdates",
       "announcements",
     ];
 

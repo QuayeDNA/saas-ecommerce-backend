@@ -147,14 +147,6 @@ class NotificationService {
           } else if (notificationType === "wallet_update") {
             typeSpecificEnabled =
               user.pushNotificationPreferences?.walletUpdates !== false;
-          } else if (
-            notificationType === "commission_update" ||
-            notificationType === "commission_created" ||
-            notificationType === "commission_paid" ||
-            notificationType === "commission_finalized"
-          ) {
-            typeSpecificEnabled =
-              user.pushNotificationPreferences?.commissionUpdates !== false;
           } else if (notificationType === "announcement") {
             typeSpecificEnabled =
               user.pushNotificationPreferences?.announcements !== false;
