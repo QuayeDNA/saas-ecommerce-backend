@@ -2,6 +2,7 @@
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import authService from "../services/authService.js";
+import otpService from "../services/otpService.js";
 import logger from "../utils/logger.js";
 import { BUSINESS_ROLES } from "../constants/roles.js";
 import { isBusinessUser, getTenantId } from "../utils/userTypeHelpers.js";
@@ -95,6 +96,68 @@ class AuthController {
     }
   }
 
+  // Send OTP verification code
+  async sendOtp(req, res) {
+    try {
+      const { phone } = req.body;
+
+      const existingUser = await User.findOne({ phone });
+      if (existingUser) {
+        return this.sendAuthErrorByCode(
+          res,
+          409,
+          "AUTH_PHONE_ALREADY_REGISTERED",
+          "This phone number is already registered.",
+        );
+      }
+
+      await otpService.sendOtp(phone);
+
+      res.json({
+        success: true,
+        message: "Verification code sent successfully.",
+      });
+    } catch (error) {
+      logger.error(`Send OTP error: ${error.message}`);
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_SEND_OTP_FAILED",
+        "Failed to send verification code. Please try again.",
+      );
+    }
+  }
+
+  // Verify OTP code
+  async verifyOtp(req, res) {
+    try {
+      const { phone, code } = req.body;
+
+      const result = await otpService.verifyOtp(phone, code);
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          code: "AUTH_OTP_VERIFICATION_FAILED",
+          message: result.message,
+        });
+      }
+
+      res.json({
+        success: true,
+        message: "Phone number verified successfully.",
+      });
+    } catch (error) {
+      logger.error(`Verify OTP error: ${error.message}`);
+      return this.sendAuthError(
+        res,
+        error,
+        "AUTH_VERIFY_OTP_FAILED",
+        "Failed to verify code. Please try again.",
+      );
+    }
+  }
+
   // Register new agent (multi-tenant admin)
   async registerAgent(req, res) {
     try {
@@ -131,11 +194,15 @@ class AuthController {
             email: result.agent?.email,
             userType: result.userType,
             agentCode: result.agentCode,
+            referralCode: result.referralCode,
             status: result.userStatus,
+            referredBy: result.agent?.referredBy,
           },
         },
         metadata: {
           source: "auth.registerAgent",
+          referralCode: result.referralCode,
+          referredBy: result.agent?.referredBy,
         },
         severity: AUDIT_SEVERITIES.INFO,
       });
@@ -147,6 +214,7 @@ class AuthController {
             ? `${result.userType} account created successfully. Your account is pending approval by a super admin.`
             : `${result.userType} account created successfully. You can now log in.`,
         agentCode: result.agentCode,
+        referralCode: result.referralCode,
         userType: result.userType,
       });
     } catch (error) {
@@ -1269,6 +1337,8 @@ export default {
   resendVerification: authController.resendVerification.bind(authController),
   updateFirstTimeFlag: authController.updateFirstTimeFlag.bind(authController),
   registerSuperAdmin: authController.registerSuperAdmin.bind(authController),
+  sendOtp: authController.sendOtp.bind(authController),
+  verifyOtp: authController.verifyOtp.bind(authController),
   listUsers: authController.listUsers.bind(authController),
   updateAgentStatus: authController.updateAgentStatus.bind(authController),
   getUserById: authController.getUserById.bind(authController),

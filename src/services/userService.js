@@ -1,6 +1,7 @@
 // src/services/userService.js
 import { BUSINESS_ROLES } from "../constants/roles.js";
 import User from "../models/User.js";
+import Otp from "../models/Otp.js";
 import logger from "../utils/logger.js";
 import {
   isBusinessUser,
@@ -392,6 +393,12 @@ class UserService {
   /**
    * Register a new agent (moved from controller)
    */
+  async _generateReferralCode() {
+    const { generateReferralCode } =
+      await import("../utils/agentCodeGenerator.js");
+    return await generateReferralCode();
+  }
+
   async registerAgent(payload, appContext = {}) {
     try {
       const {
@@ -404,6 +411,7 @@ class UserService {
         subscriptionPlan = "basic",
         userType = "agent",
         tenantId,
+        referralCode,
       } = payload;
 
       // Check if user already exists
@@ -420,6 +428,26 @@ class UserService {
         );
         err.statusCode = 400;
         throw err;
+      }
+
+      const verified = await Otp.findOne({
+        phone,
+        verified: true,
+      }).sort({ createdAt: -1 });
+      if (!verified) {
+        const err = new Error("Phone number not verified. Please verify your phone with OTP first.");
+        err.statusCode = 400;
+        throw err;
+      }
+
+      let referredByUser = null;
+      if (referralCode) {
+        referredByUser = await User.findOne({ referralCode });
+        if (!referredByUser) {
+          const err = new Error("Invalid referral code. Please check and try again.");
+          err.statusCode = 400;
+          throw err;
+        }
       }
 
       const requireApproval = await settingsService.getSignupApprovalSetting();
@@ -439,23 +467,24 @@ class UserService {
         status: userStatus,
         agentCode: "TEMP",
         tenantId: new mongoose.Types.ObjectId(),
+        referredBy: referredByUser ? referredByUser._id : undefined,
       });
 
       await agent.save();
 
-      // Set tenantId and generate real agent code
       agent.tenantId = tenantId || agent._id;
       const { generateUniqueAgentCode } =
         await import("../utils/agentCodeGenerator.js");
       const agentCode = await generateUniqueAgentCode(appContext.appId);
       agent.agentCode = agentCode;
+      agent.referralCode = await this._generateReferralCode();
       await agent.save();
 
       logger.info(
-        `${userType} registered successfully: ${email} - Business: ${businessName} - Agent Code: ${agentCode}`,
+        `${userType} registered successfully: ${email} - Business: ${businessName} - Agent Code: ${agentCode} - Referral Code: ${agent.referralCode}`,
       );
 
-      return { agent, agentCode, userType, userStatus };
+      return { agent, agentCode, userType, userStatus, referralCode: agent.referralCode };
     } catch (error) {
       logger.error(`Register agent error: ${error.message}`);
       throw error;

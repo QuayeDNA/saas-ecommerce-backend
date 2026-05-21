@@ -54,10 +54,20 @@ const userSchema = new mongoose.Schema({
   agentCode: {
     type: String,
     unique: true,
-    sparse: true, // Only enforce uniqueness when the field is present
+    sparse: true,
     required: function () {
       return BUSINESS_ROLES.includes(this.userType);
     },
+  },
+  referralCode: {
+    type: String,
+    unique: true,
+    sparse: true,
+  },
+  referredBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    index: true,
   },
   businessCategory: {
     type: String,
