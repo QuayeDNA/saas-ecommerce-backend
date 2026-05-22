@@ -16,6 +16,7 @@ router.post("/withdraw", commissionController.withdrawCommission);
 router.get("/balance", commissionController.getCommissionBalance);
 router.get("/", commissionController.getUserCommissions);
 router.get("/stats", commissionController.getCommissionStats);
+router.get("/withdrawals", commissionController.getWithdrawalHistory);
 
 router.post(
   "/:id/cancel",

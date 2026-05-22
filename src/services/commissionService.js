@@ -440,6 +440,45 @@ class CommissionService {
       throw error;
     }
   }
+
+  async getWithdrawalHistory(userId, pagination = {}) {
+    try {
+      const page = pagination.page || 1;
+      const limit = pagination.limit || 20;
+      const skip = (page - 1) * limit;
+
+      const query = {
+        user: userId,
+        "metadata.type": "commission_withdrawal",
+      };
+
+      const [transactions, total] = await Promise.all([
+        WalletTransaction.find(query)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+        WalletTransaction.countDocuments(query),
+      ]);
+
+      return {
+        withdrawals: transactions,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+          hasNext: page * limit < total,
+          hasPrev: page > 1,
+        },
+      };
+    } catch (error) {
+      logger.error(
+        `[CommissionService] Error getting withdrawal history: ${error.message}`,
+      );
+      throw error;
+    }
+  }
 }
 
 export default new CommissionService();

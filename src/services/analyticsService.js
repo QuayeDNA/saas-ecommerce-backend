@@ -5,6 +5,7 @@ import WalletTransaction from "../models/WalletTransaction.js";
 import Provider from "../models/Provider.js";
 import PayoutRequest from "../models/PayoutRequest.js";
 import EarningsTransaction from "../models/EarningsTransaction.js";
+import Commission from "../models/Commission.js";
 import logger from "../utils/logger.js";
 import mongoose from "mongoose";
 import { getBusinessUserTypes } from "../utils/userTypeHelpers.js";
@@ -33,6 +34,8 @@ class AnalyticsService {
         topPerformers,
         growth,
         earnings,
+        referralStats,
+        commissionTrends,
       ] = await Promise.all([
         this.getUserStatistics(dateRange),
         this.getOrderStatistics(dateRange),
@@ -46,6 +49,8 @@ class AnalyticsService {
         this.getTopPerformers(dateRange),
         this.getGrowthStatistics(dateRange, previousDateRange),
         this.getEarningsStatistics(dateRange),
+        this.getReferralStatistics(dateRange),
+        this.getCommissionTrends(dateRange),
       ]);
 
       const overview = {
@@ -93,6 +98,8 @@ class AnalyticsService {
         providers: providerStats,
         payouts: payoutStats,
         earnings,
+        referral: referralStats,
+        commissionTrends,
         recentActivity,
         rates,
         charts: chartData,
@@ -2226,6 +2233,103 @@ class AnalyticsService {
         .slice(0, 10);
     } catch (error) {
       logger.error(`Agent recent activity error: ${error.message}`);
+      return [];
+    }
+  }
+
+  async getReferralStatistics(dateRange) {
+    try {
+      const match = dateRange
+        ? { createdAt: { $gte: dateRange.start, $lte: dateRange.end } }
+        : {};
+
+      const totalReferrers = await User.countDocuments({
+        referredBy: { $exists: true, $ne: null },
+      });
+
+      const [commissionAgg, referredCount] = await Promise.all([
+        Commission.aggregate([
+          { $match: { status: "credited", ...match } },
+          {
+            $group: {
+              _id: null,
+              totalCommissionsPaid: { $sum: "$amount" },
+              totalOrdersFromReferrals: { $sum: "$ordersCount" },
+              activeReferrers: { $addToSet: "$referrer" },
+            },
+          },
+        ]),
+        User.countDocuments({ referredBy: { $exists: true, $ne: null } }),
+      ]);
+
+      const data = commissionAgg[0] || {
+        totalCommissionsPaid: 0,
+        totalOrdersFromReferrals: 0,
+        activeReferrers: [],
+      };
+
+      return {
+        totalReferrers,
+        activeReferrers: data.activeReferrers?.length || 0,
+        totalCommissionsPaid: data.totalCommissionsPaid,
+        totalOrdersFromReferrals: data.totalOrdersFromReferrals,
+        totalReferred: referredCount,
+      };
+    } catch (error) {
+      logger.error(`Referral statistics error: ${error.message}`);
+      return {
+        totalReferrers: 0,
+        activeReferrers: 0,
+        totalCommissionsPaid: 0,
+        totalOrdersFromReferrals: 0,
+        totalReferred: 0,
+      };
+    }
+  }
+
+  async getCommissionTrends(dateRange) {
+    try {
+      if (!dateRange) return [];
+
+      const diffDays = Math.ceil(
+        (dateRange.end - dateRange.start) / (1000 * 60 * 60 * 24),
+      );
+
+      const groupBy =
+        diffDays <= 31
+          ? { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } }
+          : { $dateToString: { format: "%Y-%m", date: "$createdAt" } };
+
+      const trends = await Commission.aggregate([
+        {
+          $match: {
+            status: "credited",
+            createdAt: { $gte: dateRange.start, $lte: dateRange.end },
+          },
+        },
+        {
+          $group: {
+            _id: groupBy,
+            totalCommission: { $sum: "$amount" },
+            batchCount: { $sum: 1 },
+            totalOrders: { $sum: "$ordersCount" },
+          },
+        },
+        { $sort: { _id: 1 } },
+        {
+          $project: {
+            _id: 0,
+            period: "$_id",
+            totalCommission: 1,
+            batchCount: 1,
+            totalOrders: 1,
+          },
+        },
+      ]);
+
+      return trends;
+    } catch (error) {
+      logger.error(`Commission trends error: ${error.message}`);
       return [];
     }
   }

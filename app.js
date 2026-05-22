@@ -33,6 +33,7 @@ import storefrontRoutes from "./src/routes/storefrontRoutes.js";
 import paystackRoutes from "./src/routes/paystackRoutes.js";
 import auditLogRoutes from "./src/routes/auditLogRoutes.js";
 import commissionRoutes from "./src/routes/commissionRoutes.js";
+import referralRoutes from "./src/routes/referralRoutes.js";
 import appContextMiddleware from "./src/middlewares/appContext.js";
 import requestContextMiddleware from "./src/middlewares/requestContext.js";
 import auditLogger from "./src/middlewares/auditLogger.js";
@@ -221,6 +222,7 @@ app.use("/api/storefront", storefrontRoutes);
 app.use("/api/webhooks/paystack", paystackRoutes);
 app.use("/api/audit-logs", auditLogRoutes);
 app.use("/api/commissions", commissionRoutes);
+app.use("/api/referrals", referralRoutes);
 app.use("/api", publicRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
