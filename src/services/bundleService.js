@@ -266,6 +266,7 @@ const bundleService = {
       const [bundles, total] = await Promise.all([
         Bundle.find(query)
           .populate("providerId", "name logo code")
+          .populate("packageId", "name description")
           .sort({ dataVolume: 1 })
           .skip(skip)
           .limit(limit)
