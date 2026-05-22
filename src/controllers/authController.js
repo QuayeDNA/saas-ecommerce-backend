@@ -99,7 +99,7 @@ class AuthController {
   // Send OTP verification code
   async sendOtp(req, res) {
     try {
-      const { phone } = req.body;
+      const { phone, email } = req.body;
 
       const existingUser = await User.findOne({ phone });
       if (existingUser) {
@@ -111,7 +111,7 @@ class AuthController {
         );
       }
 
-      await otpService.sendOtp(phone);
+      await otpService.sendOtp(phone, email);
 
       res.json({
         success: true,

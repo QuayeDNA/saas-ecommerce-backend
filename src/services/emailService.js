@@ -189,6 +189,54 @@ class EmailService {
     }
   }
 
+  async sendOtpEmail(email, code) {
+    if (!this.enabled) {
+      logger.warn(`[EMAIL_DISABLED] Skipping OTP email to ${email}`);
+      logger.info(`[EMAIL_DISABLED] OTP Code (simulated): ${code}`);
+      return;
+    }
+
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: "Your Verification Code",
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; border-radius: 8px 8px 0 0;">
+            <h1 style="color: #fff; margin: 0; font-size: 24px;">Email Verification</h1>
+          </div>
+          <div style="padding: 30px; background: #f9f9f9; border-radius: 0 0 8px 8px;">
+            <p style="font-size: 16px; color: #333;">Your verification code is:</p>
+            <div style="text-align: center; margin: 30px 0;">
+              <span style="font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #667eea; background: #fff; padding: 15px 30px; border-radius: 8px; border: 2px dashed #667eea;">
+                ${code}
+              </span>
+            </div>
+            <p style="font-size: 14px; color: #666;">This code will expire in 10 minutes.</p>
+            <p style="font-size: 14px; color: #666;">If you didn't request this code, please ignore this email.</p>
+            <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;">
+            <p style="font-size: 12px; color: #999;">SaaS E-commerce Platform</p>
+          </div>
+        </div>
+      `,
+    };
+
+    if (process.env.NODE_ENV === "development") {
+      logger.info(`[DEV] Sending OTP email to ${email}`);
+    }
+
+    try {
+      const info = await this.transporter.sendMail(mailOptions);
+      logger.info(`OTP email sent to ${email}`, {
+        messageId: info.messageId,
+      });
+      return info;
+    } catch (error) {
+      logger.error(`Failed to send OTP email to ${email}: ${error.message}`);
+      throw new Error("Failed to send OTP email");
+    }
+  }
+
   async sendWelcomeEmail(email, userName) {
     if (!this.enabled) {
       logger.warn(`[EMAIL_DISABLED] Skipping welcome email to ${email}`);

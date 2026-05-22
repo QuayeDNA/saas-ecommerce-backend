@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import Otp from "../models/Otp.js";
 import logger from "../utils/logger.js";
+import emailService from "./emailService.js";
 
 const OTP_LENGTH = 6;
 const OTP_EXPIRY_MINUTES = 10;
@@ -14,7 +15,7 @@ class OtpService {
     return code;
   }
 
-  async sendSms(phone, code) {
+  async sendOtpNotification(phone, code, email) {
     const provider = (process.env.SMS_PROVIDER || "log").toLowerCase();
 
     switch (provider) {
@@ -23,6 +24,9 @@ class OtpService {
         break;
       case "twilio":
         await this._sendViaTwilio(phone, code);
+        break;
+      case "email":
+        await this._sendViaEmail(email, code);
         break;
       case "log":
       default:
@@ -69,7 +73,21 @@ class OtpService {
     }
   }
 
-  async sendOtp(phone) {
+  async _sendViaEmail(email, code) {
+    if (!email) {
+      logger.warn("[OTP] Email provider selected but no email provided");
+      return;
+    }
+    try {
+      await emailService.sendOtpEmail(email, code);
+      logger.info(`[OTP] Sent via email to ${email}`);
+    } catch (error) {
+      logger.error(`[OTP] Email send failed: ${error.message}`);
+      throw new Error("Failed to send OTP via email");
+    }
+  }
+
+  async sendOtp(phone, email) {
     const code = this.generateCode();
 
     await Otp.deleteMany({ phone, verified: false });
@@ -81,7 +99,7 @@ class OtpService {
       maxAttempts: OTP_MAX_ATTEMPTS,
     });
 
-    await this.sendSms(phone, code);
+    await this.sendOtpNotification(phone, code, email);
 
     logger.info(`[OTP] Code generated and sent to ${phone}`);
     return true;

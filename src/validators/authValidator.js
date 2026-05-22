@@ -67,6 +67,11 @@ export const sendOtpValidation = [
   body("phone")
     .isMobilePhone()
     .withMessage("Please provide a valid phone number"),
+
+  body("email")
+    .isEmail()
+    .normalizeEmail()
+    .withMessage("Please provide a valid email"),
 ];
 
 export const verifyOtpValidation = [
