@@ -33,6 +33,11 @@ const commissionSchema = new mongoose.Schema(
       required: true,
       min: 0,
     },
+    qualifiedUsersCount: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
     status: {
       type: String,
       enum: ["pending", "credited", "cancelled"],

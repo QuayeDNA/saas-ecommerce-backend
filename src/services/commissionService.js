@@ -40,7 +40,8 @@ class CommissionService {
     const rate = settings.referralCommissionPercent ?? 5.0;
     const cap = settings.referralCommissionCap ?? 0;
 
-    const groups = await Order.aggregate([
+    // Step 1: group by (referrer, referredUser) — per-user daily totals
+    const perUserGroups = await Order.aggregate([
       {
         $match: {
           status: "completed",
@@ -63,45 +64,75 @@ class CommissionService {
       },
       {
         $group: {
-          _id: "$creator.referredBy",
-          batchTotal: { $sum: "$total" },
-          ordersCount: { $sum: 1 },
+          _id: {
+            referrer: "$creator.referredBy",
+            referredUser: "$createdBy",
+          },
+          userTotal: { $sum: "$total" },
+          userOrderCount: { $sum: 1 },
         },
       },
     ]);
 
-    if (groups.length === 0) {
+    if (perUserGroups.length === 0) {
       logger.info(
         `[CommissionService] No eligible orders found for ${dateKey}`,
       );
       return { processed: 0, message: "No eligible orders found", date: dateKey };
     }
 
+    // Step 2: per-referred-user min check + commission calc, aggregate by referrer
+    const referrerMap = new Map();
+
+    for (const group of perUserGroups) {
+      const referrerId = group._id.referrer.toString();
+      const userTotal = group.userTotal;
+
+      if (minAmount > 0 && userTotal < minAmount) {
+        logger.info(
+          `[CommissionService] Referred user ${group._id.referredUser} total ${userTotal} below minimum ${minAmount}, skipping`,
+        );
+        continue;
+      }
+
+      let userCommission = (userTotal * rate) / 100;
+      if (userCommission <= 0) continue;
+
+      if (!referrerMap.has(referrerId)) {
+        referrerMap.set(referrerId, {
+          totalCommission: 0,
+          totalOrders: 0,
+          qualifiedUsers: 0,
+          batchTotal: 0,
+        });
+      }
+
+      const entry = referrerMap.get(referrerId);
+      entry.totalCommission += userCommission;
+      entry.totalOrders += group.userOrderCount;
+      entry.qualifiedUsers++;
+      entry.batchTotal += userTotal;
+    }
+
+    if (referrerMap.size === 0) {
+      logger.info(
+        `[CommissionService] No referrers met the minimum threshold for ${dateKey}`,
+      );
+      return { processed: 0, message: "No referrers met minimum threshold", date: dateKey };
+    }
+
     let credited = 0;
     let skipped = 0;
 
-    for (const group of groups) {
+    for (const [referrerId, data] of referrerMap) {
       try {
-        const referrerId = group._id;
-
-        if (minAmount > 0 && group.batchTotal < minAmount) {
-          logger.info(
-            `[CommissionService] Referrer ${referrerId} batch total ${group.batchTotal} below minimum ${minAmount}, skipping`,
-          );
-          skipped++;
-          continue;
-        }
-
-        let amount = (group.batchTotal * rate) / 100;
+        // Step 3: apply cap per referrer for the day
+        let amount = data.totalCommission;
         if (cap > 0 && amount > cap) {
           amount = cap;
         }
 
-        if (amount <= 0) {
-          skipped++;
-          continue;
-        }
-
+        // Step 4: upsert Commission record + credit commissionBalance
         await Commission.findOneAndUpdate(
           { date: dateKey, referrer: referrerId },
           {
@@ -110,8 +141,9 @@ class CommissionService {
               date: dateKey,
               amount,
               rate,
-              batchTotal: group.batchTotal,
-              ordersCount: group.ordersCount,
+              batchTotal: data.batchTotal,
+              ordersCount: data.totalOrders,
+              qualifiedUsersCount: data.qualifiedUsers,
               status: "credited",
               creditedAt: new Date(),
             },
@@ -135,8 +167,9 @@ class CommissionService {
             date: dateKey,
             amount,
             rate,
-            batchTotal: group.batchTotal,
-            ordersCount: group.ordersCount,
+            batchTotal: data.batchTotal,
+            ordersCount: data.totalOrders,
+            qualifiedUsersCount: data.qualifiedUsers,
           },
           ip: null,
           userAgent: null,
@@ -147,14 +180,14 @@ class CommissionService {
           await notificationService.createInAppNotification(
             referrerId.toString(),
             "Daily Commission Earned!",
-            `You earned GHS ${amount.toFixed(2)} in commissions today (${dateKey}) from ${group.ordersCount} referral order(s). Current commission balance: GHS ${(referrer?.commissionBalance ?? 0).toFixed(2)}.`,
+            `You earned GHS ${amount.toFixed(2)} in commissions today (${dateKey}) from ${data.qualifiedUsers} referred user(s) who met the minimum order threshold. Current commission balance: GHS ${(referrer?.commissionBalance ?? 0).toFixed(2)}.`,
             "success",
             {
               type: "daily_commission",
               amount,
               date: dateKey,
-              ordersCount: group.ordersCount,
-              batchTotal: group.batchTotal,
+              qualifiedUsers: data.qualifiedUsers,
+              batchTotal: data.batchTotal,
             },
           );
         } catch (notifError) {
@@ -166,7 +199,7 @@ class CommissionService {
         credited++;
       } catch (err) {
         logger.error(
-          `[CommissionService] Error processing group for referrer ${group._id}: ${err.message}`,
+          `[CommissionService] Error processing referrer ${referrerId}: ${err.message}`,
         );
         skipped++;
       }
