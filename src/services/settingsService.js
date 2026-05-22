@@ -612,6 +612,63 @@ class SettingsService {
     logger.info("Fee settings updated:", feeSettings);
     return this.getFeeSettings();
   }
+
+  // ---------------------------------------------------------------------------
+  // Referral & Commission Settings
+  // ---------------------------------------------------------------------------
+
+  async getReferralSettings() {
+    try {
+      const settings = await Settings.getInstance();
+      return {
+        referralCommissionPercent:
+          settings.referralCommissionPercent ?? 5.0,
+        referralProgramEnabled:
+          settings.referralProgramEnabled ?? true,
+        referralCommissionCap:
+          settings.referralCommissionCap ?? 0,
+        minOrderAmountForCommission:
+          settings.minOrderAmountForCommission ?? 0,
+      };
+    } catch (error) {
+      logger.error(`Error getting referral settings: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async updateReferralSettings(referralSettings) {
+    try {
+      const settings = await Settings.getInstance();
+
+      if (referralSettings.referralCommissionPercent !== undefined) {
+        settings.referralCommissionPercent = Number(
+          referralSettings.referralCommissionPercent,
+        );
+      }
+      if (referralSettings.referralProgramEnabled !== undefined) {
+        settings.referralProgramEnabled = Boolean(
+          referralSettings.referralProgramEnabled,
+        );
+      }
+      if (referralSettings.referralCommissionCap !== undefined) {
+        settings.referralCommissionCap = Number(
+          referralSettings.referralCommissionCap,
+        );
+      }
+      if (referralSettings.minOrderAmountForCommission !== undefined) {
+        settings.minOrderAmountForCommission = Number(
+          referralSettings.minOrderAmountForCommission,
+        );
+      }
+
+      await settings.save();
+      logger.info("Referral settings updated:", referralSettings);
+      return this.getReferralSettings();
+    } catch (error) {
+      logger.error(`Error updating referral settings: ${error.message}`);
+      throw error;
+    }
+  }
 }
 
 export default new SettingsService();

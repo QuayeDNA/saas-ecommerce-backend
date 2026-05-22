@@ -308,6 +308,33 @@ class SettingsController {
         .json({ success: false, error: "Failed to update fee settings" });
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Referral & Commission Settings
+  // ---------------------------------------------------------------------------
+  async getReferralSettings(req, res) {
+    try {
+      const settings = await settingsService.getReferralSettings();
+      res.json({ success: true, data: settings });
+    } catch (error) {
+      logger.error("Error getting referral settings:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to get referral settings" });
+    }
+  }
+
+  async updateReferralSettings(req, res) {
+    try {
+      const settings = await settingsService.updateReferralSettings(req.body);
+      res.json({ success: true, data: settings });
+    } catch (error) {
+      logger.error("Error updating referral settings:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to update referral settings" });
+    }
+  }
 }
 
 export default new SettingsController();

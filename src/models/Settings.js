@@ -215,6 +215,30 @@ const settingsSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+
+    // ==========================================================================
+    // Referral & Commission Settings
+    // ==========================================================================
+    referralCommissionPercent: {
+      type: Number,
+      default: 5.0,
+      min: 0,
+      max: 100,
+    },
+    referralProgramEnabled: {
+      type: Boolean,
+      default: true,
+    },
+    referralCommissionCap: {
+      type: Number,
+      default: 0, // 0 = unlimited
+      min: 0,
+    },
+    minOrderAmountForCommission: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
   {
     timestamps: true,
