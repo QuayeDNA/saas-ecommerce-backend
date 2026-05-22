@@ -103,6 +103,11 @@ const userSchema = new mongoose.Schema({
     default: 0,
     min: 0,
   },
+  commissionBalance: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
   payoutAccount: {
     type: {
       type: String,

@@ -7,6 +7,7 @@ export const AUDIT_CATEGORIES = {
   PAYOUT: "payout",
   SETTINGS: "settings",
   BUNDLE: "bundle",
+  REFERRAL: "referral",
 };
 
 export const AUDIT_ACTIONS = {
@@ -63,6 +64,12 @@ export const AUDIT_ACTIONS = {
   BUNDLE_CREATED: "bundle.created",
   BUNDLE_UPDATED: "bundle.updated",
   BUNDLE_DELETED: "bundle.deleted",
+
+  // Referral & Commissions
+  REFERRAL_COMMISSION_CALCULATED: "referral.commission_calculated",
+  REFERRAL_COMMISSION_CREDITED: "referral.commission_credited",
+  REFERRAL_COMMISSION_CANCELLED: "referral.commission_cancelled",
+  REFERRAL_COMMISSION_WITHDRAWN: "referral.commission_withdrawn",
 };
 
 export const AUDIT_SEVERITIES = {

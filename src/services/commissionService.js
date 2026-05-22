@@ -1,0 +1,412 @@
+import mongoose from "mongoose";
+import Commission from "../models/Commission.js";
+import Order from "../models/Order.js";
+import User from "../models/User.js";
+import WalletTransaction from "../models/WalletTransaction.js";
+import Settings from "../models/Settings.js";
+import notificationService from "./notificationService.js";
+import websocketService from "./websocketService.js";
+import logger from "../utils/logger.js";
+import { logAuditAction } from "../utils/auditLogger.js";
+import {
+  AUDIT_ACTIONS,
+  AUDIT_CATEGORIES,
+  AUDIT_SEVERITIES,
+} from "../constants/audit.js";
+
+class CommissionService {
+  async processDailyCommissions(dateStr) {
+    const targetDate = dateStr
+      ? new Date(dateStr + "T00:00:00.000Z")
+      : new Date(new Date().toDateString());
+
+    const startOfDay = new Date(targetDate);
+    startOfDay.setUTCHours(0, 0, 0, 0);
+
+    const endOfDay = new Date(targetDate);
+    endOfDay.setUTCHours(23, 59, 59, 999);
+
+    const dateKey = startOfDay.toISOString().slice(0, 10);
+
+    const settings = await Settings.getInstance();
+    if (!settings.referralProgramEnabled) {
+      logger.info(
+        "[CommissionService] Referral program is disabled, skipping daily batch",
+      );
+      return { processed: 0, message: "Referral program is disabled", date: dateKey };
+    }
+
+    const minAmount = settings.minOrderAmountForCommission ?? 0;
+    const rate = settings.referralCommissionPercent ?? 5.0;
+    const cap = settings.referralCommissionCap ?? 0;
+
+    const groups = await Order.aggregate([
+      {
+        $match: {
+          status: "completed",
+          createdAt: { $gte: startOfDay, $lte: endOfDay },
+        },
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "createdBy",
+          foreignField: "_id",
+          as: "creator",
+        },
+      },
+      { $unwind: "$creator" },
+      {
+        $match: {
+          "creator.referredBy": { $exists: true, $ne: null },
+        },
+      },
+      {
+        $group: {
+          _id: "$creator.referredBy",
+          batchTotal: { $sum: "$total" },
+          ordersCount: { $sum: 1 },
+        },
+      },
+    ]);
+
+    if (groups.length === 0) {
+      logger.info(
+        `[CommissionService] No eligible orders found for ${dateKey}`,
+      );
+      return { processed: 0, message: "No eligible orders found", date: dateKey };
+    }
+
+    let credited = 0;
+    let skipped = 0;
+
+    for (const group of groups) {
+      try {
+        const referrerId = group._id;
+
+        if (minAmount > 0 && group.batchTotal < minAmount) {
+          logger.info(
+            `[CommissionService] Referrer ${referrerId} batch total ${group.batchTotal} below minimum ${minAmount}, skipping`,
+          );
+          skipped++;
+          continue;
+        }
+
+        let amount = (group.batchTotal * rate) / 100;
+        if (cap > 0 && amount > cap) {
+          amount = cap;
+        }
+
+        if (amount <= 0) {
+          skipped++;
+          continue;
+        }
+
+        await Commission.findOneAndUpdate(
+          { date: dateKey, referrer: referrerId },
+          {
+            $setOnInsert: {
+              referrer: referrerId,
+              date: dateKey,
+              amount,
+              rate,
+              batchTotal: group.batchTotal,
+              ordersCount: group.ordersCount,
+              status: "credited",
+              creditedAt: new Date(),
+            },
+          },
+          { upsert: true, new: true },
+        );
+
+        await User.findByIdAndUpdate(referrerId, {
+          $inc: { commissionBalance: amount },
+        });
+
+        await logAuditAction({
+          userId: referrerId,
+          performedBy: referrerId,
+          action: AUDIT_ACTIONS.REFERRAL_COMMISSION_CREDITED,
+          category: AUDIT_CATEGORIES.REFERRAL,
+          severity: AUDIT_SEVERITIES.INFO,
+          description: `Daily commission of ${amount} credited to referrer ${referrerId} for ${dateKey}`,
+          metadata: {
+            referrerId,
+            date: dateKey,
+            amount,
+            rate,
+            batchTotal: group.batchTotal,
+            ordersCount: group.ordersCount,
+          },
+          ip: null,
+          userAgent: null,
+        });
+
+        try {
+          const referrer = await User.findById(referrerId);
+          await notificationService.createInAppNotification(
+            referrerId.toString(),
+            "Daily Commission Earned!",
+            `You earned GHS ${amount.toFixed(2)} in commissions today (${dateKey}) from ${group.ordersCount} referral order(s). Current commission balance: GHS ${(referrer?.commissionBalance ?? 0).toFixed(2)}.`,
+            "success",
+            {
+              type: "daily_commission",
+              amount,
+              date: dateKey,
+              ordersCount: group.ordersCount,
+              batchTotal: group.batchTotal,
+            },
+          );
+        } catch (notifError) {
+          logger.error(
+            `[CommissionService] Failed to send daily commission notification: ${notifError.message}`,
+          );
+        }
+
+        credited++;
+      } catch (err) {
+        logger.error(
+          `[CommissionService] Error processing group for referrer ${group._id}: ${err.message}`,
+        );
+        skipped++;
+      }
+    }
+
+    logger.info(
+      `[CommissionService] Daily batch for ${dateKey}: ${credited} credited, ${skipped} skipped`,
+    );
+
+    return {
+      processed: credited,
+      skipped,
+      message: `Processed ${credited} commission(s) for ${dateKey}`,
+      date: dateKey,
+    };
+  }
+
+  async withdrawCommission(userId, amount) {
+    const user = await User.findById(userId);
+    if (!user) {
+      throw new Error("User not found");
+    }
+    if (amount <= 0) {
+      throw new Error("Amount must be greater than zero");
+    }
+    if (user.commissionBalance < amount) {
+      throw new Error("Insufficient commission balance");
+    }
+
+    user.commissionBalance -= amount;
+    user.walletBalance += amount;
+    await user.save();
+
+    const reference = `CMW${Date.now()}${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
+    await WalletTransaction.create({
+      user: userId,
+      type: "credit",
+      amount,
+      balanceAfter: user.walletBalance,
+      description: "Commission withdrawal — transferred from commission wallet",
+      status: "completed",
+      reference,
+      metadata: { type: "commission_withdrawal" },
+    });
+
+    await logAuditAction({
+      userId,
+      performedBy: userId,
+      action: AUDIT_ACTIONS.REFERRAL_COMMISSION_WITHDRAWN,
+      category: AUDIT_CATEGORIES.REFERRAL,
+      severity: AUDIT_SEVERITIES.INFO,
+      description: `Commission withdrawal of ${amount} transferred to main wallet`,
+      metadata: {
+        amount,
+        commissionBalanceAfter: user.commissionBalance,
+        walletBalanceAfter: user.walletBalance,
+      },
+      ip: null,
+      userAgent: null,
+    });
+
+    try {
+      await notificationService.createInAppNotification(
+        userId.toString(),
+        "Commission Withdrawn",
+        `GHS ${amount.toFixed(2)} transferred from commission wallet to main wallet. New commission balance: GHS ${user.commissionBalance.toFixed(2)}.`,
+        "success",
+        {
+          type: "commission_withdrawal",
+          amount,
+          commissionBalance: user.commissionBalance,
+          walletBalance: user.walletBalance,
+        },
+      );
+    } catch (notifError) {
+      logger.error(
+        `[CommissionService] Failed to send withdrawal notification: ${notifError.message}`,
+      );
+    }
+
+    try {
+      websocketService.sendWalletUpdateToUser(userId.toString(), {
+        balance: user.walletBalance,
+        commissionBalance: user.commissionBalance,
+      });
+    } catch (wsError) {
+      logger.error(
+        `[CommissionService] Failed to send wallet update: ${wsError.message}`,
+      );
+    }
+
+    return {
+      amount,
+      commissionBalance: user.commissionBalance,
+      walletBalance: user.walletBalance,
+    };
+  }
+
+  async getCommissionBalance(userId) {
+    const user = await User.findById(userId).select("commissionBalance walletBalance");
+    if (!user) {
+      throw new Error("User not found");
+    }
+    return {
+      commissionBalance: user.commissionBalance,
+      walletBalance: user.walletBalance,
+    };
+  }
+
+  async getUserCommissions(userId, filters = {}, pagination = {}) {
+    try {
+      const query = { referrer: userId };
+
+      if (filters.status) {
+        query.status = filters.status;
+      }
+      if (filters.startDate || filters.endDate) {
+        query.createdAt = {};
+        if (filters.startDate) query.createdAt.$gte = new Date(filters.startDate);
+        if (filters.endDate) query.createdAt.$lte = new Date(filters.endDate);
+      }
+
+      const page = pagination.page || 1;
+      const limit = pagination.limit || 20;
+      const skip = (page - 1) * limit;
+
+      const [commissions, total] = await Promise.all([
+        Commission.find(query)
+          .sort({ date: -1 })
+          .skip(skip)
+          .limit(limit),
+        Commission.countDocuments(query),
+      ]);
+
+      return {
+        commissions,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+          hasNext: page * limit < total,
+          hasPrev: page > 1,
+        },
+      };
+    } catch (error) {
+      logger.error(
+        `[CommissionService] Error getting user commissions: ${error.message}`,
+      );
+      throw error;
+    }
+  }
+
+  async getCommissionStats(userId) {
+    try {
+      const [aggregation] = await Commission.aggregate([
+        { $match: { referrer: new mongoose.Types.ObjectId(userId) } },
+        {
+          $group: {
+            _id: null,
+            totalCommissions: { $sum: 1 },
+            totalEarned: {
+              $sum: { $cond: [{ $eq: ["$status", "credited"] }, "$amount", 0] },
+            },
+            totalPending: {
+              $sum: { $cond: [{ $eq: ["$status", "pending"] }, "$amount", 0] },
+            },
+            pendingCount: {
+              $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] },
+            },
+            creditedCount: {
+              $sum: { $cond: [{ $eq: ["$status", "credited"] }, 1, 0] },
+            },
+          },
+        },
+      ]);
+
+      return {
+        totalCommissions: aggregation?.totalCommissions || 0,
+        totalEarned: aggregation?.totalEarned || 0,
+        totalPending: aggregation?.totalPending || 0,
+        pendingCount: aggregation?.pendingCount || 0,
+        creditedCount: aggregation?.creditedCount || 0,
+      };
+    } catch (error) {
+      logger.error(
+        `[CommissionService] Error getting commission stats: ${error.message}`,
+      );
+      throw error;
+    }
+  }
+
+  async cancelCommission(commissionId, adminId) {
+    try {
+      const commission = await Commission.findById(commissionId);
+      if (!commission) {
+        throw new Error("Commission not found");
+      }
+
+      if (commission.status === "cancelled") {
+        throw new Error("Commission is already cancelled");
+      }
+
+      if (commission.status === "credited") {
+        await User.findByIdAndUpdate(commission.referrer, {
+          $inc: { commissionBalance: -commission.amount },
+        });
+      }
+
+      commission.status = "cancelled";
+      commission.cancelledAt = new Date();
+      await commission.save();
+
+      await logAuditAction({
+        userId: commission.referrer,
+        performedBy: adminId,
+        action: AUDIT_ACTIONS.REFERRAL_COMMISSION_CANCELLED,
+        category: AUDIT_CATEGORIES.REFERRAL,
+        severity: AUDIT_SEVERITIES.WARNING,
+        description: `Commission ${commission._id} cancelled by admin`,
+        metadata: {
+          commissionId: commission._id,
+          referrerId: commission.referrer,
+          date: commission.date,
+          amount: commission.amount,
+          previousStatus: commission.status,
+        },
+        ip: null,
+        userAgent: null,
+      });
+
+      return commission;
+    } catch (error) {
+      logger.error(
+        `[CommissionService] Error cancelling commission ${commissionId}: ${error.message}`,
+      );
+      throw error;
+    }
+  }
+}
+
+export default new CommissionService();
