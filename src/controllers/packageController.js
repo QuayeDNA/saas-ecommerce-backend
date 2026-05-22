@@ -1,4 +1,5 @@
 // src/controllers/packageController.js
+import mongoose from "mongoose";
 import packageService from "../services/packageService.js";
 import logger from "../utils/logger.js";
 
@@ -64,6 +65,13 @@ class PackageController {
   async getPackage(req, res) {
     try {
       const { id } = req.params;
+
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(404).json({
+          success: false,
+          message: "Package not found",
+        });
+      }
 
       const packageGroup = await packageService.getPackageById(id);
 
