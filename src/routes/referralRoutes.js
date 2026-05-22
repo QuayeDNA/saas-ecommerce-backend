@@ -7,7 +7,11 @@ const router = Router();
 router.use(authenticate);
 
 router.get("/dashboard", referralController.getDashboard);
-router.get("/leaderboard", referralController.getLeaderboard);
+router.get(
+  "/leaderboard",
+  authorize("super_admin", "admin"),
+  referralController.getLeaderboard,
+);
 router.get("/tree", referralController.getReferralTree);
 
 router.get(
