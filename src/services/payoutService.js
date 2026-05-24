@@ -788,15 +788,22 @@ class PayoutService {
   // ═══════════════════════════════════════════════════════════════════════════
 
   /**
-   * Admin marks an approved or failed payout as manually completed.
-   * If the payout was 'failed' (Paystack webhook set it), earnings are
-   * re-deducted here since the refundEarnings already ran on failure.
+   * Admin marks an approved, failed, pending, or processing payout
+   * as manually completed.
+   *
+   * Status-specific handling:
+   *   failed     — earnings were refunded by webhook, re-deduct
+   *   pending    — earnings never deducted (auto-fallback), deduct now
+   *   processing — earnings already deducted when payout was approved,
+   *                Paystack transfer was initiated but webhook never arrived.
+   *                No earnings action needed — just mark complete.
+   *   approved   — earnings already deducted, just mark complete.
    */
   async markManuallyCompleted(payoutId, adminId, transferReference) {
     const payout = await PayoutRequest.findById(payoutId).populate("user");
     if (!payout) throw new Error("Payout not found");
 
-    if (!["approved", "failed", "pending"].includes(payout.status)) {
+    if (!["approved", "failed", "pending", "processing"].includes(payout.status)) {
       throw new Error(
         `Cannot manually complete payout with status: ${payout.status}`,
       );
@@ -846,6 +853,22 @@ class PayoutService {
           sourceStatus: "pending",
         },
       );
+    }
+
+    // If processing, earnings already deducted when payout was approved.
+    // The Paystack transfer was sent but the webhook never arrived.
+    // Admin has verified externally that funds were delivered.
+    if (payout.status === "processing") {
+      payout.metadata = {
+        ...(payout.metadata || {}),
+        sourceStatus: "processing",
+      };
+
+      logger.warn("[Payout] Manual override for processing payout", {
+        payoutId,
+        adminId,
+        transferCode: payout.paystackTransfer?.transferCode,
+      });
     }
 
     payout.status = "completed";
