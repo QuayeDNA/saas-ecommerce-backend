@@ -95,7 +95,7 @@ class CommissionService {
         continue;
       }
 
-      let userCommission = (userTotal * rate) / 100;
+      const userCommission = (userTotal * rate) / 100;
       if (userCommission <= 0) continue;
 
       if (!referrerMap.has(referrerId)) {
