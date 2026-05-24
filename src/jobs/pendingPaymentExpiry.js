@@ -3,21 +3,24 @@
 /**
  * Pending Payment Expiry Job
  *
- * Automatically cancels storefront orders that remain stuck in "pending_payment"
+ * Automatically handles storefront orders that remain stuck in "pending_payment"
  * for longer than a configured grace period.
  *
- * This prevents storefront orders from sitting indefinitely in a limbo state when
- * customers abandon checkout or fail to complete Paystack payment.
+ * Paystack orders: deleted directly — no payment was ever completed on Paystack's
+ * side, so no financial records exist. Keeping them just creates noise.
+ *
+ * Non-Paystack orders (mobile_money, bank_transfer): cancelled so an admin can
+ * review and manually handle if needed (payment may have been made off-platform).
  *
  * Configuration:
- * - STORE_FRONT_PENDING_PAYMENT_EXPIRY_HOURS (default: 24)
+ * - STORE_FRONT_PENDING_PAYMENT_EXPIRY_HOURS (default: 2)
  */
 
 import cron from "node-cron";
 import Order from "../models/Order.js";
 import logger from "../utils/logger.js";
 
-const DEFAULT_EXPIRY_HOURS = 24;
+const DEFAULT_EXPIRY_HOURS = 2;
 
 function getExpiryHours() {
   const envVal = process.env.STORE_FRONT_PENDING_PAYMENT_EXPIRY_HOURS;
@@ -29,43 +32,79 @@ function getExpiryHours() {
 }
 
 /**
- * Cancel storefront orders stuck in pending_payment beyond the TTL.
- * This is a safety net for abandoned checkouts.
+ * Delete Paystack orders stuck in pending_payment beyond the TTL.
+ * These were never actually paid on Paystack's side — the user abandoned
+ * checkout before completing payment. No financial record to preserve.
+ */
+async function deleteExpiredPaystackOrders(cutoff) {
+  const result = await Order.deleteMany({
+    orderType: "storefront",
+    status: "pending_payment",
+    "storefrontData.paymentMethod.type": "paystack",
+    updatedAt: { $lt: cutoff },
+  });
+
+  if (result.deletedCount > 0) {
+    logger.info(
+      `Pending payment expiry job: deleted ${result.deletedCount} abandoned Paystack order(s) older than ${getExpiryHours()} hour(s)`
+    );
+  }
+
+  return result.deletedCount || 0;
+}
+
+/**
+ * Cancel non-Paystack orders stuck in pending_payment beyond the TTL.
+ * These may have had off-platform payment initiated, so we keep them
+ * as cancelled for the cleanup job's retention period.
+ */
+async function cancelExpiredNonPaystackOrders(cutoff) {
+  const result = await Order.updateMany(
+    {
+      orderType: "storefront",
+      status: "pending_payment",
+      "storefrontData.paymentMethod.type": { $ne: "paystack" },
+      updatedAt: { $lt: cutoff },
+    },
+    {
+      $set: {
+        status: "cancelled",
+        paymentStatus: "failed",
+        "storefrontData.paymentMethod.verificationNotes":
+          `Auto-cancelled after ${getExpiryHours()}h without payment verification`,
+        updatedAt: new Date(),
+      },
+    },
+  );
+
+  if (result.modifiedCount > 0) {
+    logger.info(
+      `Pending payment expiry job: cancelled ${result.modifiedCount} non-Paystack order(s) older than ${getExpiryHours()} hour(s)`
+    );
+  }
+
+  return result.modifiedCount || 0;
+}
+
+/**
+ * Handle expired storefront orders stuck in pending_payment.
+ * Paystack orders are deleted (never paid, no financial impact).
+ * Other orders are cancelled (may have off-platform payment).
  */
 export async function runPendingPaymentExpiryJob() {
   try {
     const expiryHours = getExpiryHours();
     const cutoff = new Date(Date.now() - expiryHours * 60 * 60 * 1000);
 
-    const query = {
-      orderType: "storefront",
-      status: "pending_payment",
-      updatedAt: { $lt: cutoff },
-    };
+    const [deletedCount, cancelledCount] = await Promise.all([
+      deleteExpiredPaystackOrders(cutoff),
+      cancelExpiredNonPaystackOrders(cutoff),
+    ]);
 
-    const update = {
-      $set: {
-        status: "cancelled",
-        paymentStatus: "failed",
-        "storefrontData.paymentMethod.verificationNotes":
-          `Auto-cancelled after ${expiryHours}h without payment verification`,
-        updatedAt: new Date(),
-      },
-    };
-
-    const result = await Order.updateMany(query, update);
-
-    logger.info(
-      `Pending payment expiry job: cancelled ${result.modifiedCount || 0} storefront order(s) older than ${expiryHours} hour(s)`
-    );
-
-    return {
-      cancelledCount: result.modifiedCount || 0,
-      expiryHours,
-    };
+    return { deletedCount, cancelledCount, expiryHours };
   } catch (error) {
     logger.error(`Pending payment expiry job failed: ${error.message}`);
-    return { cancelledCount: 0, error: error.message };
+    return { deletedCount: 0, cancelledCount: 0, error: error.message };
   }
 }
 
