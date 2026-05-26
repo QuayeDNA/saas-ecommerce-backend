@@ -21,6 +21,205 @@ function normalizePagination(pagination = {}) {
   return { page, limit, skip: (page - 1) * limit };
 }
 
+function dayFilterToDateRange(dayFilter) {
+  if (!dayFilter || dayFilter === "all") return null;
+  const now = new Date();
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+
+  switch (dayFilter) {
+    case "today":
+      return { start, end };
+    case "yesterday":
+      start.setDate(start.getDate() - 1);
+      end.setDate(end.getDate() - 1);
+      return { start, end };
+    case "2daysago":
+      start.setDate(start.getDate() - 2);
+      end.setDate(end.getDate() - 2);
+      return { start, end };
+    default:
+      return null;
+  }
+}
+
+function formatTime(date) {
+  return date.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+function formatDate(date) {
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+const ACTION_LABELS = {
+  "auth.login": "Login",
+  "auth.logout": "Logout",
+  "auth.register": "Account Registration",
+  "auth.password_change": "Password Change",
+  "auth.password_reset": "Password Reset",
+  "auth.pin_setup": "PIN Setup",
+  "auth.failed_login": "Failed Login Attempt",
+  "user.created": "User Created",
+  "user.updated": "User Updated",
+  "user.status_changed": "Status Changed",
+  "user.deleted": "User Deleted",
+  "user.impersonated": "User Impersonated",
+  "order.created": "Order Created",
+  "order.status_updated": "Order Status Updated",
+  "order.cancelled": "Order Cancelled",
+  "order.reported": "Order Reported",
+  "order.bulk_processed": "Bulk Order Processed",
+  "wallet.topup_requested": "Top-Up Requested",
+  "wallet.topup_approved": "Top-Up Approved",
+  "wallet.topup_rejected": "Top-Up Rejected",
+  "wallet.credited": "Wallet Credited",
+  "wallet.debited": "Wallet Debited",
+  "wallet.paystack_initiated": "Paystack Payment Initiated",
+  "wallet.paystack_verified": "Paystack Payment Verified",
+  "storefront.created": "Storefront Created",
+  "storefront.updated": "Storefront Updated",
+  "storefront.pricing_updated": "Pricing Updated",
+  "storefront.approved": "Storefront Approved",
+  "storefront.suspended": "Storefront Suspended",
+  "storefront.order_created": "Storefront Order Created",
+  "storefront.payment_verified": "Payment Verified",
+  "payout.requested": "Payout Requested",
+  "payout.approved": "Payout Approved",
+  "payout.rejected": "Payout Rejected",
+  "payout.completed": "Payout Completed",
+  "payout.failed": "Payout Failed",
+  "settings.updated": "Settings Updated",
+  "bundle.created": "Bundle Created",
+  "bundle.updated": "Bundle Updated",
+  "bundle.deleted": "Bundle Deleted",
+  "referral.commission_calculated": "Commission Calculated",
+  "referral.commission_credited": "Commission Credited",
+  "referral.commission_cancelled": "Commission Cancelled",
+  "referral.commission_withdrawn": "Commission Withdrawn",
+};
+
+const CATEGORY_LABELS = {
+  auth: "Authentication",
+  user: "User Management",
+  order: "Orders",
+  wallet: "Wallet",
+  storefront: "Storefront",
+  payout: "Payouts",
+  settings: "Settings",
+  bundle: "Bundles",
+  referral: "Referral",
+};
+
+function getActionLabel(action) {
+  return ACTION_LABELS[action] || action.replace(/\./g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function getCategoryLabel(category) {
+  return CATEGORY_LABELS[category] || category;
+}
+
+function generateDescription(log) {
+  const { action, metadata = {} } = log;
+
+  const DESCRIPTIONS = {
+    "auth.login": "User logged in successfully",
+    "auth.logout": "User logged out",
+    "auth.register": "User registered a new account",
+    "auth.password_change": "User changed their password",
+    "auth.password_reset": "User reset their password",
+    "auth.pin_setup": "User set up their transaction PIN",
+    "auth.failed_login": "User unsuccessfully logged in",
+    "user.created": "User account was created",
+    "user.updated": "User profile was updated",
+    "user.status_changed": "User account status was changed",
+    "user.deleted": "User account was deleted",
+    "user.impersonated": "User account was accessed by an admin",
+    "order.created": "User placed a new order",
+    "order.status_updated": "Order status was updated",
+    "order.cancelled": "User cancelled an order",
+    "order.reported": "User reported an issue with an order",
+    "order.bulk_processed": "Bulk order processing was completed",
+    "wallet.topup_requested": "User requested a wallet top up",
+    "wallet.topup_approved": "Wallet top up request was approved",
+    "wallet.topup_rejected": "Wallet top up request was rejected",
+    "wallet.credited": "Wallet was credited",
+    "wallet.debited": "Wallet was debited",
+    "wallet.paystack_initiated": "User initiated a Paystack payment",
+    "wallet.paystack_verified": "Paystack payment was verified successfully",
+    "storefront.created": "User created a storefront",
+    "storefront.updated": "User updated their storefront",
+    "storefront.pricing_updated": "Storefront pricing was updated",
+    "storefront.approved": "Storefront was approved",
+    "storefront.suspended": "Storefront was suspended",
+    "storefront.order_created": "A storefront order was placed",
+    "storefront.payment_verified": "Storefront payment was verified",
+    "payout.requested": "User requested a payout",
+    "payout.approved": "Payout request was approved",
+    "payout.rejected": "Payout request was rejected",
+    "payout.completed": "Payout was completed successfully",
+    "payout.failed": "Payout failed",
+    "settings.updated": "User updated their settings",
+    "bundle.created": "A new bundle was created",
+    "bundle.updated": "A bundle was updated",
+    "bundle.deleted": "A bundle was deleted",
+    "referral.commission_calculated": "Referral commission was calculated",
+    "referral.commission_credited": "Referral commission was credited",
+    "referral.commission_cancelled": "Referral commission was cancelled",
+    "referral.commission_withdrawn": "Referral commission was withdrawn",
+  };
+
+  let desc = DESCRIPTIONS[action] || getActionLabel(action);
+
+  if (metadata.amount) {
+    const unit = metadata.unit || metadata.currency || "";
+    const amountStr = `${metadata.amount}${unit ? " " + unit : ""}`;
+
+    if (action === "wallet.topup_requested") {
+      desc = `User requested ${amountStr} wallet top up`;
+    } else if (action === "wallet.topup_approved") {
+      desc = `Wallet top up of ${amountStr} was approved`;
+    } else if (action === "wallet.topup_rejected") {
+      desc = `Wallet top up of ${amountStr} was rejected`;
+    } else if (action === "wallet.credited") {
+      desc = `Wallet was credited with ${amountStr}`;
+    } else if (action === "wallet.debited") {
+      desc = `Wallet was debited by ${amountStr}`;
+    } else if (["payout.requested", "payout.approved", "payout.rejected", "payout.completed", "payout.failed"].includes(action)) {
+      desc = desc.replace(/a payout/, `a payout of ${amountStr}`);
+    }
+  }
+
+  if (metadata.method) {
+    desc += ` via ${metadata.method}`;
+  } else if (metadata.source) {
+    desc += ` via ${metadata.source}`;
+  }
+
+  if (metadata.storefrontName) {
+    if (action === "storefront.created") {
+      desc = `User created a storefront "${metadata.storefrontName}"`;
+    } else if (action.startsWith("storefront.")) {
+      desc += ` for "${metadata.storefrontName}"`;
+    }
+  }
+
+  if (log.changes && log.changes.after && log.changes.after.status && action === "order.status_updated") {
+    desc = `Order status changed to "${log.changes.after.status}"`;
+  }
+
+  return desc;
+}
+
 class AuditLogService {
   async logAction({
     userId,
@@ -123,22 +322,53 @@ class AuditLogService {
       userId: toObjectId(userId),
     };
 
-    if (options.startDate || options.endDate) {
+    const range = dayFilterToDateRange(options.dayFilter);
+    const effectiveStart = options.startDate || range?.start;
+    const effectiveEnd = options.endDate || range?.end;
+
+    if (effectiveStart || effectiveEnd) {
       query.timestamp = {};
-      if (options.startDate) query.timestamp.$gte = new Date(options.startDate);
-      if (options.endDate) query.timestamp.$lte = new Date(options.endDate);
+      if (effectiveStart) query.timestamp.$gte = new Date(effectiveStart);
+      if (effectiveEnd) query.timestamp.$lte = new Date(effectiveEnd);
     }
 
     const [logs, total] = await Promise.all([
       AuditLog.find(query)
         .sort({ timestamp: -1 })
         .skip(skip)
-        .limit(limit),
+        .limit(limit)
+        .populate("userId", "fullName email userType"),
       AuditLog.countDocuments(query),
     ]);
 
+    const formattedLogs = logs.map((log) => {
+      const user =
+        log.userId && typeof log.userId === "object"
+          ? { fullName: log.userId.fullName || "", email: log.userId.email || "" }
+          : { fullName: "", email: "" };
+
+      return {
+        _id: log._id,
+        user,
+        action: getActionLabel(log.action),
+        category: getCategoryLabel(log.category),
+        severity: log.severity,
+        time: formatTime(log.timestamp),
+        date: formatDate(log.timestamp),
+        timestamp: log.timestamp,
+        description: generateDescription(log),
+        raw: {
+          metadata: log.metadata || {},
+          changes: log.changes || null,
+          resource: log.resource || null,
+          ipAddress: log.ipAddress || "",
+          userAgent: log.userAgent || "",
+        },
+      };
+    });
+
     return {
-      logs,
+      logs: formattedLogs,
       pagination: {
         page,
         limit,

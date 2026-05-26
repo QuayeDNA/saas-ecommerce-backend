@@ -82,12 +82,13 @@ class AuditLogController {
         });
       }
 
-      const { page = 1, limit = 20, startDate, endDate } = req.query;
+      const { page = 1, limit = 20, startDate, endDate, dayFilter } = req.query;
       const result = await auditLogService.getUserActivityTimeline(userId, {
         page,
         limit,
         startDate,
         endDate,
+        dayFilter,
       });
 
       return res.json({
