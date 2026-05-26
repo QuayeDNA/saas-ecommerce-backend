@@ -14,6 +14,7 @@ import announcementExpirationJob from "./src/jobs/announcementExpiration.js";
 import { initializePendingPaymentExpiryJob } from "./src/jobs/pendingPaymentExpiry.js";
 import { initializeMomoPendingExpiryJob } from "./src/jobs/momoPendingExpiry.js";
 import { schedulePaystackVerificationRetryJob } from "./src/jobs/paystackVerificationRetry.js";
+import { schedulePayoutReconciliationJob } from "./src/jobs/payoutReconciliationJob.js";
 import { scheduleDailyCommissionProcessing } from "./src/jobs/dailyCommissionProcessing.js";
 import walletService from "./src/services/walletService.js";
 import authRoutes from "./src/routes/authRoutes.js";
@@ -75,6 +76,8 @@ logger.info("Starting SaaS E-Commerce backend...");
     announcementExpirationJob();
     // Retry background Paystack verification for storefront orders and wallet top-ups
     schedulePaystackVerificationRetryJob();
+    // Reconcile payouts stuck in 'processing' where the webhook never arrived
+    schedulePayoutReconciliationJob();
     scheduleDailyCommissionProcessing();
   } catch (e) {
     logger.error(`Startup initialization failed: ${e.message}`);

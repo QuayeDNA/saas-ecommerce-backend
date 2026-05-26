@@ -376,6 +376,41 @@ class PaystackService {
       throw err;
     }
   }
+
+  /**
+   * Fetch a transfer by its Paystack transfer code (e.g. TRF_xxxxx).
+   * Used by the reconciliation cron to check the real status of a
+   * stuck-processing payout when the webhook never arrived.
+   *
+   * @param {string} transferCode - The Paystack transfer code
+   * @returns {object} Paystack transfer response data
+   */
+  async fetchTransfer(transferCode) {
+    await this.ensureKeys();
+    if (!this.secretKey)
+      throw new Error("Paystack secret key is not configured");
+    if (!transferCode) throw new Error("Transfer code is required");
+
+    try {
+      const resp = await axios.get(
+        `${this.baseUrl}/transfer/${transferCode}`,
+        {
+          headers: { Authorization: `Bearer ${this.secretKey}` },
+          timeout: 15000,
+        },
+      );
+      if (!resp?.data?.status)
+        throw new Error(resp?.data?.message || "Failed to fetch transfer");
+      return resp.data.data;
+    } catch (err) {
+      logger.error("[Paystack] fetchTransfer error", {
+        transferCode,
+        message: err.message,
+        data: err.response?.data,
+      });
+      throw err;
+    }
+  }
 }
 
 export default new PaystackService();
