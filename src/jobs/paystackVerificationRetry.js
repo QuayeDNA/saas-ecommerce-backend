@@ -9,6 +9,7 @@ import logger from "../utils/logger.js";
 // How often to retry failed / unverified Paystack transactions
 const JOB_SCHEDULE = "*/5 * * * *"; // every 5 minutes
 const MAX_ATTEMPTS = 12;
+const ABANDONED_THRESHOLD_MINUTES = 30; // fail early if task is older than this
 
 async function processTask(task) {
   const reference = task.reference;
@@ -31,6 +32,21 @@ async function processTask(task) {
         logger.debug(
           `[PaystackVerificationJob] Reference ${reference} pending (${Math.round(taskAgeMinutes)}min old, awaiting customer payment)`,
         );
+      }
+
+      // Early-exit: storefront tasks older than the threshold are abandoned
+      // (user never completed payment on Paystack). No point retrying.
+      if (
+        task.kind === "storefront" &&
+        taskAgeMinutes > ABANDONED_THRESHOLD_MINUTES
+      ) {
+        task.status = "failed";
+        task.lastError = "Payment abandoned — no transaction completed on Paystack";
+        await task.save();
+        logger.info(
+          `[PaystackVerificationJob] Marked abandoned payment as failed: ${reference}`,
+        );
+        return;
       }
 
       // Keep retrying for a while; eventually mark as failed to avoid infinite loops.

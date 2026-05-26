@@ -61,10 +61,6 @@ router.post(
   settingsController.toggleStorefrontsAvailability,
 );
 
-// Commission Rates
-router.get("/commission", settingsController.getCommissionRates);
-router.put("/commission", settingsController.updateCommissionRates);
-
 // API Settings (PUT remains protected)
 router.put("/api", settingsController.updateApiSettings);
 
@@ -77,5 +73,9 @@ router.get("/system", settingsController.getSystemInfo);
 
 // Admin Password Change
 router.post("/admin/change-password", settingsController.changeAdminPassword);
+
+// Referral & Commission Settings — super_admin only
+router.get("/referral", settingsController.getReferralSettings);
+router.put("/referral", settingsController.updateReferralSettings);
 
 export default router;

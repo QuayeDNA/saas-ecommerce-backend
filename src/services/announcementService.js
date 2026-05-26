@@ -1,6 +1,7 @@
 import Announcement from "../models/Announcement.js";
 import User from "../models/User.js";
 import websocketService from "./websocketService.js";
+import notificationService from "./notificationService.js";
 
 class AnnouncementService {
   /**
@@ -372,6 +373,17 @@ class AnnouncementService {
 
       // Actually broadcast via WebSocket
       await websocketService.broadcastAnnouncementToAll(announcement, allUserIds);
+
+      // Create in-app notification records for real users (not synthetic public IDs)
+      const realUserIds = eligibleUsers.map((user) => user._id.toString());
+      if (realUserIds.length > 0) {
+        notificationService.createAnnouncementNotifications(announcement, realUserIds)
+          .catch((err) => {
+            console.error(
+              `Failed to create announcement notifications: ${err.message}`
+            );
+          });
+      }
 
       console.log(
         `Announcement ${announcementId} broadcast to ${allUserIds.length} users`

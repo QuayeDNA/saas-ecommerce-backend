@@ -54,10 +54,20 @@ const userSchema = new mongoose.Schema({
   agentCode: {
     type: String,
     unique: true,
-    sparse: true, // Only enforce uniqueness when the field is present
+    sparse: true,
     required: function () {
       return BUSINESS_ROLES.includes(this.userType);
     },
+  },
+  referralCode: {
+    type: String,
+    unique: true,
+    sparse: true,
+  },
+  referredBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    index: true,
   },
   businessCategory: {
     type: String,
@@ -89,6 +99,11 @@ const userSchema = new mongoose.Schema({
     min: 0,
   },
   earningsBalance: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+  commissionBalance: {
     type: Number,
     default: 0,
     min: 0,
@@ -162,10 +177,6 @@ const userSchema = new mongoose.Schema({
       default: true,
     },
     walletUpdates: {
-      type: Boolean,
-      default: true,
-    },
-    commissionUpdates: {
       type: Boolean,
       default: true,
     },

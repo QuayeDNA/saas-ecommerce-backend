@@ -44,38 +44,6 @@ const settingsSchema = new mongoose.Schema(
         "Storefronts are temporarily closed by the admin. Please check back later.",
     },
 
-    // Commission Rates by User Type
-    agentCommission: {
-      type: Number,
-      default: 5.0,
-      min: 0,
-      max: 100,
-    },
-    superAgentCommission: {
-      type: Number,
-      default: 7.5,
-      min: 0,
-      max: 100,
-    },
-    dealerCommission: {
-      type: Number,
-      default: 10.0,
-      min: 0,
-      max: 100,
-    },
-    superDealerCommission: {
-      type: Number,
-      default: 12.5,
-      min: 0,
-      max: 100,
-    },
-    defaultCommissionRate: {
-      type: Number,
-      default: 1.0,
-      min: 0,
-      max: 100,
-    },
-
     // API Settings
     mtnApiKey: {
       type: String,
@@ -246,6 +214,30 @@ const settingsSchema = new mongoose.Schema(
     autoPayoutEnabled: {
       type: Boolean,
       default: false,
+    },
+
+    // ==========================================================================
+    // Referral & Commission Settings
+    // ==========================================================================
+    referralCommissionPercent: {
+      type: Number,
+      default: 5.0,
+      min: 0,
+      max: 100,
+    },
+    referralProgramEnabled: {
+      type: Boolean,
+      default: true,
+    },
+    referralCommissionCap: {
+      type: Number,
+      default: 0, // 0 = unlimited
+      min: 0,
+    },
+    minOrderAmountForCommission: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
   },
   {

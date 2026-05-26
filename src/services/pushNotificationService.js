@@ -245,27 +245,6 @@ class PushNotificationService {
     return await this.sendToUser(userId, notification);
   }
 
-  /**
-   * Send commission notification
-   * @param {string} userId - User ID
-   * @param {number} amount - Commission amount
-   * @param {string} status - Commission status
-   * @returns {Promise<boolean>} Success status
-   */
-  async sendCommissionUpdate(userId, amount, status) {
-    const notification = {
-      title: "Commission Update",
-      body: `Commission of ${amount} GHS ${status}`,
-      url: "/commissions",
-      data: {
-        amount,
-        status,
-        timestamp: Date.now(),
-      },
-    };
-
-    return await this.sendToUser(userId, notification);
-  }
 }
 
 const pushNotificationService = new PushNotificationService();

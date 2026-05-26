@@ -38,12 +38,15 @@ router.get('/unread', authenticate, async (req, res) => {
 // Get all notifications (both read and unread)
 router.get('/', authenticate, async (req, res) => {
   try {
-    const { page = 1, limit = 50, read } = req.query;
+    const { page = 1, limit = 50, read, category } = req.query;
     const skip = (page - 1) * limit;
     
     const filter = {};
     if (read !== undefined) {
       filter.read = read === 'true';
+    }
+    if (category) {
+      filter.category = category;
     }
     
     const notifications = await notificationService.getAllNotifications(
@@ -260,14 +263,20 @@ router.delete('/:notificationId', authenticate, async (req, res) => {
 // Get notification count (for badge)
 router.get('/count', authenticate, async (req, res) => {
   try {
-    const notifications = await notificationService.getUnreadNotifications(
+    const { category } = req.query;
+    const filter = { read: false };
+    if (category) {
+      filter.category = category;
+    }
+    
+    const count = await notificationService.getNotificationCount(
       req.user.userId,
-      { limit: 1000 } // Get all to count
+      filter
     );
     
     res.json({
       success: true,
-      count: notifications.length
+      count
     });
   } catch (error) {
     logger.error(`Get notification count error: ${error.message}`);

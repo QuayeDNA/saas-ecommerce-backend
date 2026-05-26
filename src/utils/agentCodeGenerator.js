@@ -131,7 +131,52 @@ export const generateSpecialAgentCode = async (prefix = "BLA") => {
   );
 };
 
+/**
+ * Generate a unique referral code (alphanumeric, 8 chars)
+ * @returns {Promise<string>} - Unique referral code
+ */
+export const generateReferralCode = async () => {
+  const maxAttempts = 5;
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      let code = "";
+      for (let i = 0; i < 8; i++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+
+      const User = mongoose.model("User");
+      const existing = await User.findOne({ referralCode: code });
+
+      if (!existing) {
+        return code;
+      }
+
+      console.warn(`Referral code ${code} already exists, retrying...`);
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.pow(2, attempt) * 10),
+      );
+    } catch (error) {
+      console.error(
+        `Attempt ${attempt + 1} failed to generate referral code:`,
+        error.message,
+      );
+
+      if (attempt === maxAttempts - 1) {
+        const timestamp = Date.now().toString(36).toUpperCase().slice(-4);
+        return `REF${timestamp}`;
+      }
+    }
+  }
+
+  throw new Error(
+    "Failed to generate unique referral code after maximum attempts",
+  );
+};
+
 export default {
   generateUniqueAgentCode,
   generateSpecialAgentCode,
+  generateReferralCode,
 };

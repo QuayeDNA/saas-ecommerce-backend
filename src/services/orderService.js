@@ -6,7 +6,6 @@ import walletService from "./walletService.js";
 import notificationService from "./notificationService.js";
 import pushNotificationService from "./pushNotificationService.js";
 import duplicateOrderPreventionService from "./duplicateOrderPreventionService.js";
-import commissionService from "./commissionService.js";
 import websocketService from "./websocketService.js";
 import AgentStorefront from "../models/AgentStorefront.js";
 import storefrontService from "./storefrontService.js";
@@ -1039,24 +1038,6 @@ class OrderService {
         }
       }
 
-      // Commission update (non-storefront business users)
-      if (
-        processedSuccessfully &&
-        order.status === "completed" &&
-        order.createdBy
-      ) {
-        try {
-          const agent = await User.findById(order.createdBy);
-          if (agent && isBusinessUser(agent.userType)) {
-            await commissionService.updateCommissionRealTime(order._id);
-          }
-        } catch (commErr) {
-          logger.error(
-            `Commission update failed for order ${order._id}: ${commErr.message}`,
-          );
-        }
-      }
-
       // Storefront profit credit — called here AND in markOrderCompleted to cover all paths
       if (
         processedSuccessfully &&
@@ -1221,17 +1202,6 @@ class OrderService {
     order.status = "completed";
     order.processedBy = adminId;
     await order.save();
-
-    try {
-      const agent = await User.findById(order.createdBy);
-      if (agent && isBusinessUser(agent.userType)) {
-        await commissionService.updateCommissionRealTime(order._id);
-      }
-    } catch (err) {
-      logger.error(
-        `Commission update failed for order ${order._id}: ${err.message}`,
-      );
-    }
 
     if (order.orderType === "storefront") {
       await this._creditStorefrontProfit(order);

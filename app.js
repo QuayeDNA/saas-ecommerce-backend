@@ -8,8 +8,6 @@ import connectDB from "./src/config/db.js";
 import logger from "./src/utils/logger.js";
 import websocketService from "./src/services/websocketService.js";
 import { scheduleNotificationCleanup } from "./src/jobs/clearOldNotifications.js";
-import commissionFinalizationJob from "./src/jobs/commissionFinalization.js";
-import { scheduleDailyCommissionGeneration } from "./src/jobs/dailyCommissionGeneration.js";
 import { initializeReportedOrdersCleanupJob } from "./src/jobs/reportedOrdersCleanup.js";
 import { initializeCancelledStorefrontOrdersCleanupJob } from "./src/jobs/cancelledStorefrontOrdersCleanup.js";
 import announcementExpirationJob from "./src/jobs/announcementExpiration.js";
@@ -17,6 +15,7 @@ import { initializePendingPaymentExpiryJob } from "./src/jobs/pendingPaymentExpi
 import { initializeMomoPendingExpiryJob } from "./src/jobs/momoPendingExpiry.js";
 import { schedulePaystackVerificationRetryJob } from "./src/jobs/paystackVerificationRetry.js";
 import { schedulePayoutReconciliationJob } from "./src/jobs/payoutReconciliationJob.js";
+import { scheduleDailyCommissionProcessing } from "./src/jobs/dailyCommissionProcessing.js";
 import walletService from "./src/services/walletService.js";
 import authRoutes from "./src/routes/authRoutes.js";
 import orderRouter from "./src/routes/orderRoutes.js";
@@ -29,12 +28,13 @@ import walletRoutes from "./src/routes/walletRoutes.js";
 import settingsRoutes from "./src/routes/settingsRoutes.js";
 import notificationRoutes from "./src/routes/notificationRoutes.js";
 import analyticsRoutes from "./src/routes/analyticsRoutes.js";
-import commissionRoutes from "./src/routes/commissionRoutes.js";
 import pushNotificationRoutes from "./src/routes/pushNotificationRoutes.js";
 import announcementRoutes from "./src/routes/announcementRoutes.js";
 import storefrontRoutes from "./src/routes/storefrontRoutes.js";
 import paystackRoutes from "./src/routes/paystackRoutes.js";
 import auditLogRoutes from "./src/routes/auditLogRoutes.js";
+import commissionRoutes from "./src/routes/commissionRoutes.js";
+import referralRoutes from "./src/routes/referralRoutes.js";
 import appContextMiddleware from "./src/middlewares/appContext.js";
 import requestContextMiddleware from "./src/middlewares/requestContext.js";
 import auditLogger from "./src/middlewares/auditLogger.js";
@@ -69,14 +69,6 @@ logger.info("Starting SaaS E-Commerce backend...");
 
     // ─── Background Jobs ───────────────────────────────────────────────────────
     scheduleNotificationCleanup();
-    // Commission-related jobs are disabled in production — run only in development
-    if (process.env.NODE_ENV === "development") {
-      commissionFinalizationJob.start();
-      scheduleDailyCommissionGeneration();
-    } else {
-      logger.info("Commission background jobs disabled in production");
-    }
-
     initializeReportedOrdersCleanupJob();
     initializePendingPaymentExpiryJob();
     initializeMomoPendingExpiryJob();
@@ -86,6 +78,7 @@ logger.info("Starting SaaS E-Commerce backend...");
     schedulePaystackVerificationRetryJob();
     // Reconcile payouts stuck in 'processing' where the webhook never arrived
     schedulePayoutReconciliationJob();
+    scheduleDailyCommissionProcessing();
   } catch (e) {
     logger.error(`Startup initialization failed: ${e.message}`);
     process.exit(1);
@@ -224,12 +217,6 @@ app.use("/api/wallet", walletRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/analytics", analyticsRoutes);
-// Commission API disabled in production. Mount only in development so the feature can be iterated safely.
-if (process.env.NODE_ENV === "development") {
-  app.use("/api/commissions", commissionRoutes);
-} else {
-  logger.info("/api/commissions routes disabled in production");
-}
 app.use("/api/push", pushNotificationRoutes);
 app.use("/api/announcements", announcementRoutes);
 app.use("/api/packages", packageRoutes);
@@ -237,6 +224,8 @@ app.use("/api/bundles", bundleRoutes);
 app.use("/api/storefront", storefrontRoutes);
 app.use("/api/webhooks/paystack", paystackRoutes);
 app.use("/api/audit-logs", auditLogRoutes);
+app.use("/api/commissions", commissionRoutes);
+app.use("/api/referrals", referralRoutes);
 app.use("/api", publicRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────────────────────

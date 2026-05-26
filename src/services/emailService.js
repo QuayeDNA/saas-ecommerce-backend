@@ -27,6 +27,7 @@ class EmailService {
     };
 
     this.transporter = nodemailer.createTransport(transportOptions);
+    this.enabled = true;
   }
 
   async verifyConnection() {
@@ -186,6 +187,134 @@ class EmailService {
         `Failed to send password reset email to ${email}: ${error.message}`,
       );
       throw new Error("Failed to send password reset email");
+    }
+  }
+
+  async sendOtpEmail(email, code) {
+    const isDev = process.env.NODE_ENV === "development";
+
+    if (!this.enabled) {
+      logger.info(`[DEV] OTP code for ${email}: ${code}`);
+      return { simulated: true, code };
+    }
+
+    if (isDev) {
+      logger.info(`[DEV] OTP code for ${email}: ${code}`);
+    }
+
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: "Your Verification Code",
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; border-radius: 8px 8px 0 0;">
+            <h1 style="color: #fff; margin: 0; font-size: 24px;">Email Verification</h1>
+          </div>
+          <div style="padding: 30px; background: #f9f9f9; border-radius: 0 0 8px 8px;">
+            <p style="font-size: 16px; color: #333;">Your verification code is:</p>
+            <div style="text-align: center; margin: 30px 0;">
+              <span style="font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #667eea; background: #fff; padding: 15px 30px; border-radius: 8px; border: 2px dashed #667eea;">
+                ${code}
+              </span>
+            </div>
+            <p style="font-size: 14px; color: #666;">This code will expire in 10 minutes.</p>
+            <p style="font-size: 14px; color: #666;">If you didn't request this code, please ignore this email.</p>
+            <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;">
+            <p style="font-size: 12px; color: #999;">SaaS E-commerce Platform</p>
+          </div>
+        </div>
+      `,
+    };
+
+    try {
+      const info = await this.transporter.sendMail(mailOptions);
+      logger.info(`OTP email sent to ${email}`, {
+        messageId: info.messageId,
+      });
+      return info;
+    } catch (error) {
+      logger.error(`Failed to send OTP email to ${email}: ${error.message}`);
+      if (isDev) {
+        logger.info(`[DEV] Email send failed — using simulated code: ${code}`);
+        return { simulated: true, code };
+      }
+      throw new Error("Failed to send OTP email");
+    }
+  }
+
+  async sendAccountStatusEmail(email, fullName, status, businessName) {
+    const isApproved = status === "active";
+    const subject = isApproved
+      ? "Your Account Has Been Approved!"
+      : "Your Account Has Been Declined";
+
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: ${isApproved ? "linear-gradient(135deg, #28a745, #20c997)" : "linear-gradient(135deg, #dc3545, #e74c3c)"}; padding: 30px; text-align: center; border-radius: 8px 8px 0 0;">
+          <h1 style="color: #fff; margin: 0; font-size: 24px;">
+            Account ${isApproved ? "Approved" : "Declined"}
+          </h1>
+        </div>
+        <div style="padding: 30px; background: #f9f9f9; border-radius: 0 0 8px 8px;">
+          <p style="font-size: 16px; color: #333;">Dear ${fullName},</p>
+          ${isApproved
+            ? `
+            <p style="font-size: 16px; color: #333;">
+              Congratulations! Your account${businessName ? ` for <strong>${businessName}</strong>` : ""} has been approved.
+            </p>
+            <p style="font-size: 16px; color: #333;">
+              You can now log in and start using all the features of our platform.
+            </p>
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="${process.env.FRONTEND_URL || "http://localhost:5173"}/login"
+                 style="background-color: #007bff; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; font-size: 16px;">
+                Log In to Your Account
+              </a>
+            </div>
+            `
+            : `
+            <p style="font-size: 16px; color: #333;">
+              We regret to inform you that your account${businessName ? ` for <strong>${businessName}</strong>` : ""} has been declined.
+            </p>
+            <p style="font-size: 16px; color: #666;">
+              If you believe this is an error or would like more information, please contact our support team.
+            </p>
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="${process.env.FRONTEND_URL || "http://localhost:5173"}/contact"
+                 style="background-color: #6c757d; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; font-size: 16px;">
+                Contact Support
+              </a>
+            </div>
+            `
+          }
+          <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;">
+          <p style="font-size: 12px; color: #999;">SaaS E-commerce Platform</p>
+        </div>
+      </div>
+    `;
+
+    if (process.env.NODE_ENV === "development") {
+      logger.info(`[DEV] Account status email to ${email}: ${subject}`);
+      if (!this.enabled) return;
+    }
+
+    if (!this.enabled) {
+      logger.warn(`[EMAIL_DISABLED] Skipping account status email to ${email}`);
+      return;
+    }
+
+    try {
+      const info = await this.transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: email,
+        subject,
+        html,
+      });
+      logger.info(`Account status email sent to ${email}`, { messageId: info.messageId });
+      return info;
+    } catch (error) {
+      logger.error(`Failed to send account status email to ${email}: ${error.message}`);
     }
   }
 

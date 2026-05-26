@@ -11,6 +11,8 @@ import {
   forgotPasswordValidation,
   resetPasswordValidation,
   setupPinValidation,
+  sendOtpValidation,
+  verifyOtpValidation,
 } from "../validators/authValidator.js";
 
 const router = express.Router();
@@ -21,7 +23,16 @@ const validateRegisterSuperAdmin = validate(registerSuperAdminValidation);
 const validateForgotPassword = validate(forgotPasswordValidation);
 const validateResetPassword = validate(resetPasswordValidation);
 const validateSetupPin = validate(setupPinValidation);
-// Public routes
+const validateSendOtp = validate(sendOtpValidation);
+const validateVerifyOtp = validate(verifyOtpValidation);
+// Public routes (with rate limiting for OTP to prevent SMS spam)
+router.post(
+  "/send-otp",
+  apiEndpointLimits.lowFrequency,
+  validateSendOtp,
+  authController.sendOtp,
+);
+router.post("/verify-otp", validateVerifyOtp, authController.verifyOtp);
 router.post("/login", authController.login);
 router.post("/refresh", authController.refreshToken);
 router.post(

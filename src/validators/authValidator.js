@@ -55,6 +55,40 @@ export const registerAgentValidation = [
     .optional()
     .isMongoId()
     .withMessage("Invalid tenant ID format"),
+
+  body("referralCode")
+    .optional()
+    .trim()
+    .isLength({ min: 1 })
+    .withMessage("Invalid referral code"),
+];
+
+export const sendOtpValidation = [
+  body("phone")
+    .isMobilePhone()
+    .withMessage("Please provide a valid phone number"),
+
+  body("email")
+    .isEmail()
+    .normalizeEmail()
+    .withMessage("Please provide a valid email"),
+
+  body("channel")
+    .optional()
+    .isIn(["email", "phone"])
+    .withMessage("Channel must be 'email' or 'phone'"),
+];
+
+export const verifyOtpValidation = [
+  body("phone")
+    .isMobilePhone()
+    .withMessage("Please provide a valid phone number"),
+
+  body("code")
+    .isLength({ min: 4, max: 6 })
+    .withMessage("Verification code must be 4 to 6 digits")
+    .matches(/^\d+$/)
+    .withMessage("Verification code must contain digits only"),
 ];
 
 export const loginValidation = [

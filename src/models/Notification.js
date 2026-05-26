@@ -26,6 +26,16 @@ const notificationSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  category: {
+    type: String,
+    enum: ['system', 'order', 'wallet', 'announcement', 'commission'],
+    default: 'system'
+  },
+  announcementId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Announcement',
+    default: null
+  },
   metadata: {
     type: mongoose.Schema.Types.Mixed,
     default: {}
@@ -43,6 +53,7 @@ const notificationSchema = new mongoose.Schema({
 // Index for faster queries
 notificationSchema.index({ user: 1, read: 1, createdAt: -1 });
 notificationSchema.index({ user: 1, createdAt: -1 });
+notificationSchema.index({ user: 1, category: 1, createdAt: -1 });
 
 // Update readAt when marking as read
 notificationSchema.pre('save', function(next) {

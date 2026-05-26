@@ -115,42 +115,6 @@ class SettingsController {
     }
   }
 
-  // Commission Rates
-  async getCommissionRates(req, res) {
-    try {
-      const rates = await settingsService.getCommissionRates();
-      res.json(rates);
-    } catch (error) {
-      logger.error("Error getting commission rates:", error);
-      res.status(500).json({ error: "Failed to get commission rates" });
-    }
-  }
-
-  async updateCommissionRates(req, res) {
-    try {
-      const {
-        agentCommission,
-        superAgentCommission,
-        dealerCommission,
-        superDealerCommission,
-        defaultCommissionRate,
-        customerCommission,
-      } = req.body;
-      const rates = await settingsService.updateCommissionRates({
-        agentCommission,
-        superAgentCommission,
-        dealerCommission,
-        superDealerCommission,
-        defaultCommissionRate,
-        customerCommission,
-      });
-      res.json(rates);
-    } catch (error) {
-      logger.error("Error updating commission rates:", error);
-      res.status(500).json({ error: "Failed to update commission rates" });
-    }
-  }
-
   // API Settings
   async getApiSettings(req, res) {
     try {
@@ -342,6 +306,33 @@ class SettingsController {
       res
         .status(500)
         .json({ success: false, error: "Failed to update fee settings" });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Referral & Commission Settings
+  // ---------------------------------------------------------------------------
+  async getReferralSettings(req, res) {
+    try {
+      const settings = await settingsService.getReferralSettings();
+      res.json({ success: true, data: settings });
+    } catch (error) {
+      logger.error("Error getting referral settings:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to get referral settings" });
+    }
+  }
+
+  async updateReferralSettings(req, res) {
+    try {
+      const settings = await settingsService.updateReferralSettings(req.body);
+      res.json({ success: true, data: settings });
+    } catch (error) {
+      logger.error("Error updating referral settings:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to update referral settings" });
     }
   }
 }

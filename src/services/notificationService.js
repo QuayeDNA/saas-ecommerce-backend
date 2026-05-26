@@ -147,14 +147,6 @@ class NotificationService {
           } else if (notificationType === "wallet_update") {
             typeSpecificEnabled =
               user.pushNotificationPreferences?.walletUpdates !== false;
-          } else if (
-            notificationType === "commission_update" ||
-            notificationType === "commission_created" ||
-            notificationType === "commission_paid" ||
-            notificationType === "commission_finalized"
-          ) {
-            typeSpecificEnabled =
-              user.pushNotificationPreferences?.commissionUpdates !== false;
           } else if (notificationType === "announcement") {
             typeSpecificEnabled =
               user.pushNotificationPreferences?.announcements !== false;
@@ -193,6 +185,62 @@ class NotificationService {
     } catch (error) {
       logger.error(`Failed to create in-app notification: ${error.message}`);
       throw error;
+    }
+  }
+
+  /**
+   * Bulk-create notification records for an announcement broadcast
+   * @param {object} announcement - The announcement document (lean)
+   * @param {string[]} userIds - Array of user IDs to notify
+   * @returns {Promise<number>} Number of notifications created
+   */
+  async createAnnouncementNotifications(announcement, userIds) {
+    if (!userIds || userIds.length === 0) return 0;
+
+    const notificationDocs = userIds.map((userId) => ({
+      user: userId,
+      title: announcement.title,
+      message: announcement.message,
+      type: announcement.type === 'maintenance' ? 'warning' : (announcement.type || 'info'),
+      category: 'announcement',
+      announcementId: announcement._id,
+      metadata: {
+        type: 'announcement',
+        announcementId: announcement._id,
+        priority: announcement.priority,
+        actionRequired: announcement.actionRequired || false,
+        actionUrl: announcement.actionUrl || null,
+        actionText: announcement.actionText || null,
+        template: announcement.template || null,
+      },
+      read: false,
+    }));
+
+    try {
+      const created = await Notification.insertMany(notificationDocs, { ordered: false });
+
+      for (const notif of created) {
+        try {
+          websocketService.sendNotificationToUser(notif.user.toString(), {
+            type: 'new_notification',
+            notification: notif,
+          });
+        } catch (wsError) {
+          logger.error(
+            `Failed to send WebSocket for announcement notification: ${wsError.message}`,
+          );
+        }
+      }
+
+      logger.info(
+        `Created ${created.length} announcement notifications for announcement ${announcement._id}`,
+      );
+      return created.length;
+    } catch (error) {
+      logger.error(
+        `Failed to create announcement notifications: ${error.message}`,
+      );
+      return 0;
     }
   }
 
