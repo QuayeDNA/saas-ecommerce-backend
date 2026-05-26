@@ -15,8 +15,21 @@ class OtpService {
     return code;
   }
 
-  async sendOtpNotification(phone, code, email) {
-    const provider = (process.env.SMS_PROVIDER || "log").toLowerCase();
+  _maskEmail(email) {
+    if (!email) return "";
+    const [name, domain] = email.split("@");
+    if (!domain) return email;
+    const visible = name.slice(0, 2);
+    return `${visible}***@${domain}`;
+  }
+
+  _maskPhone(phone) {
+    if (!phone || phone.length < 6) return phone || "";
+    return phone.slice(0, 3) + "***" + phone.slice(-3);
+  }
+
+  async sendOtpNotification(phone, code, email, channelOverride) {
+    const provider = channelOverride || (process.env.SMS_PROVIDER || "log").toLowerCase();
 
     switch (provider) {
       case "vonage":
@@ -28,11 +41,14 @@ class OtpService {
       case "email":
         await this._sendViaEmail(email, code);
         break;
+      case "phone":
       case "log":
       default:
         logger.info(`[OTP] Development mode. Code for ${phone}: ${code}`);
         break;
     }
+
+    return provider === "phone" ? "log" : provider;
   }
 
   async _sendViaVonage(phone, code) {
@@ -87,7 +103,7 @@ class OtpService {
     }
   }
 
-  async sendOtp(phone, email) {
+  async sendOtp(phone, email, channel) {
     const code = this.generateCode();
 
     await Otp.deleteMany({ phone, verified: false });
@@ -99,10 +115,14 @@ class OtpService {
       maxAttempts: OTP_MAX_ATTEMPTS,
     });
 
-    await this.sendOtpNotification(phone, code, email);
+    const actualProvider = await this.sendOtpNotification(phone, code, email, channel);
 
-    logger.info(`[OTP] Code generated and sent to ${phone}`);
-    return true;
+    const actualChannel = actualProvider === "email" ? "email" : "phone";
+    const maskedContact =
+      actualChannel === "email" ? this._maskEmail(email) : this._maskPhone(phone);
+
+    logger.info(`[OTP] Code generated and sent via ${actualChannel} to ${maskedContact}`);
+    return { success: true, channel: actualChannel, maskedContact };
   }
 
   async verifyOtp(phone, code) {

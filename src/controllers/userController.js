@@ -8,6 +8,7 @@ import {
   getBusinessUserTypes,
 } from "../utils/userTypeHelpers.js";
 import notificationService from "../services/notificationService.js";
+import emailService from "../services/emailService.js";
 import websocketService from "../services/websocketService.js";
 import pushNotificationService from "../services/pushNotificationService.js";
 import {
@@ -446,6 +447,15 @@ class UserController {
         },
         severity: AUDIT_SEVERITIES.INFO,
       });
+
+      if (status === "active" || status === "rejected") {
+        emailService.sendAccountStatusEmail(
+          user.email,
+          user.fullName,
+          status,
+          user.businessName,
+        );
+      }
 
       logger.info(`User status updated: ${user.email} by ${req.user.email}`);
       res.json({

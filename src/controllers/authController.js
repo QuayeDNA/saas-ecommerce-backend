@@ -7,6 +7,7 @@ import logger from "../utils/logger.js";
 import { BUSINESS_ROLES } from "../constants/roles.js";
 import { isBusinessUser, getTenantId } from "../utils/userTypeHelpers.js";
 import userService from "../services/userService.js";
+import emailService from "../services/emailService.js";
 import {
   AUDIT_ACTIONS,
   AUDIT_CATEGORIES,
@@ -99,7 +100,7 @@ class AuthController {
   // Send OTP verification code
   async sendOtp(req, res) {
     try {
-      const { phone, email } = req.body;
+      const { phone, email, channel } = req.body;
 
       const existingUser = await User.findOne({ phone });
       if (existingUser) {
@@ -111,11 +112,13 @@ class AuthController {
         );
       }
 
-      await otpService.sendOtp(phone, email);
+      const result = await otpService.sendOtp(phone, email, channel);
 
       res.json({
         success: true,
         message: "Verification code sent successfully.",
+        channel: result.channel,
+        maskedContact: result.maskedContact,
       });
     } catch (error) {
       logger.error(`Send OTP error: ${error.message}`);
@@ -1077,6 +1080,15 @@ class AuthController {
         },
         severity: AUDIT_SEVERITIES.INFO,
       });
+
+      if (status === "active" || status === "rejected") {
+        emailService.sendAccountStatusEmail(
+          updated.email,
+          updated.fullName,
+          status,
+          updated.businessName,
+        );
+      }
 
       res.json({
         success: true,

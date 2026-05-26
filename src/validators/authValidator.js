@@ -72,6 +72,11 @@ export const sendOtpValidation = [
     .isEmail()
     .normalizeEmail()
     .withMessage("Please provide a valid email"),
+
+  body("channel")
+    .optional()
+    .isIn(["email", "phone"])
+    .withMessage("Channel must be 'email' or 'phone'"),
 ];
 
 export const verifyOtpValidation = [

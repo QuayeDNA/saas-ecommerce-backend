@@ -118,7 +118,7 @@ class ReferralService {
       if (remainingDepth <= 0) return [];
 
       const children = await User.find({ referredBy: parentId })
-        .select("_id fullName email phone referralCode")
+        .select("_id fullName email phone referralCode createdAt")
         .lean();
 
       const result = [];
