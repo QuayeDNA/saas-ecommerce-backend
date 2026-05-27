@@ -534,6 +534,8 @@ class SettingsService {
           mobile_money: settings.minimumPayoutAmounts?.mobile_money ?? 1.0,
           bank_account: settings.minimumPayoutAmounts?.bank_account ?? 50.0,
         },
+        commissionRatePercent:
+          settings.referralCommissionPercent ?? 5,
       };
     } catch (error) {
       logger.error(`Error getting fee settings: ${error.message}`);
@@ -606,6 +608,11 @@ class SettingsService {
             ? Number(feeSettings.minimumPayoutAmounts.bank_account)
             : (settings.minimumPayoutAmounts?.bank_account ?? 50.0),
       };
+    }
+    if (feeSettings.commissionRatePercent !== undefined) {
+      settings.referralCommissionPercent = Number(
+        feeSettings.commissionRatePercent,
+      );
     }
 
     await settings.save();
