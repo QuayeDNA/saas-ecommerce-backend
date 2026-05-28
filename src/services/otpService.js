@@ -28,7 +28,7 @@ class OtpService {
     return phone.slice(0, 3) + "***" + phone.slice(-3);
   }
 
-  async sendOtpNotification(phone, code, email, channelOverride) {
+  async sendOtpNotification(phone, code, email, channelOverride, appContext) {
     const provider = channelOverride || (process.env.SMS_PROVIDER || "log").toLowerCase();
 
     switch (provider) {
@@ -39,7 +39,7 @@ class OtpService {
         await this._sendViaTwilio(phone, code);
         break;
       case "email":
-        await this._sendViaEmail(email, code);
+        await this._sendViaEmail(email, code, appContext);
         break;
       case "phone":
       case "log":
@@ -89,13 +89,13 @@ class OtpService {
     }
   }
 
-  async _sendViaEmail(email, code) {
+  async _sendViaEmail(email, code, appContext) {
     if (!email) {
       logger.warn("[OTP] Email provider selected but no email provided");
       return;
     }
     try {
-      await emailService.sendOtpEmail(email, code);
+      await emailService.sendOtpEmail(email, code, appContext);
       logger.info(`[OTP] Sent via email to ${email}`);
     } catch (error) {
       logger.error(`[OTP] Email send failed: ${error.message}`);
@@ -103,7 +103,7 @@ class OtpService {
     }
   }
 
-  async sendOtp(phone, email, channel) {
+  async sendOtp(phone, email, channel, appContext) {
     const code = this.generateCode();
 
     await Otp.deleteMany({ phone, verified: false });
@@ -115,7 +115,7 @@ class OtpService {
       maxAttempts: OTP_MAX_ATTEMPTS,
     });
 
-    const actualProvider = await this.sendOtpNotification(phone, code, email, channel);
+    const actualProvider = await this.sendOtpNotification(phone, code, email, channel, appContext);
 
     const actualChannel = actualProvider === "email" ? "email" : "phone";
     const maskedContact =

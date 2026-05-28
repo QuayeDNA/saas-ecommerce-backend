@@ -1,9 +1,30 @@
 const APP_IDS = {
   APP_A: "app_a",
   APP_B: "app_b",
+  APP_C: "app_c",
 };
 
 const DEFAULT_APP_ID = APP_IDS.APP_A;
+
+const DEFAULT_EMAIL_BRAND = {
+  brandName: "SaaS E-commerce",
+  primary: "#142850",
+  primaryLight: "#1e3a5f",
+  secondary: "#0ea5e9",
+  accent: "#14b8a6",
+  headerGradient: "linear-gradient(135deg, #142850, #0ea5e9)",
+  textPrimary: "#1e293b",
+  textSecondary: "#64748b",
+  textMuted: "#94a3b8",
+  bodyBg: "#f8fafc",
+  cardBg: "#ffffff",
+  success: "#10b981",
+  error: "#ef4444",
+  warning: "#f59e0b",
+  logoUrl: null,
+  footerText: "© 2024 SaaS E-commerce Platform. All rights reserved.",
+  supportEmail: null,
+};
 
 const BASE_APP_CONFIG = {
   [APP_IDS.APP_A]: {
@@ -24,6 +45,25 @@ const BASE_APP_CONFIG = {
       start_url: "/",
       categories: ["business", "productivity"],
     },
+    emailBrand: {
+      brandName: "BryteLinks",
+      primary: "#142850",
+      primaryLight: "#1e3a5f",
+      secondary: "#0ea5e9",
+      accent: "#14b8a6",
+      headerGradient: "linear-gradient(135deg, #142850, #0ea5e9)",
+      textPrimary: "#1e293b",
+      textSecondary: "#64748b",
+      textMuted: "#94a3b8",
+      bodyBg: "#f8fafc",
+      cardBg: "#ffffff",
+      success: "#10b981",
+      error: "#ef4444",
+      warning: "#f59e0b",
+      logoUrl: null,
+      footerText: "© 2024 BryteLinks. All rights reserved.",
+      supportEmail: "support@brytelinks.com",
+    },
   },
   [APP_IDS.APP_B]: {
     aliases: [
@@ -42,6 +82,60 @@ const BASE_APP_CONFIG = {
         "A modern storefront for buying data bundles from trusted agents across Ghana.",
       start_url: "/",
       categories: ["business", "finance", "utilities"],
+    },
+    emailBrand: {
+      brandName: "DirectData",
+      primary: "#0057FF",
+      primaryLight: "#EEF2FF",
+      secondary: "#C0A670",
+      accent: "#252F36",
+      headerGradient: "linear-gradient(135deg, #0057FF, #252F36)",
+      textPrimary: "#1e293b",
+      textSecondary: "#4A5270",
+      textMuted: "#8891A7",
+      bodyBg: "#F2F4F8",
+      cardBg: "#ffffff",
+      success: "#059669",
+      error: "#E11D48",
+      warning: "#D97706",
+      logoUrl: null,
+      footerText: "© 2024 DirectData. All rights reserved.",
+      supportEmail: "support@directdata.shop",
+    },
+  },
+  [APP_IDS.APP_C]: {
+    aliases: [
+      "app_c",
+      "app-c",
+      "appc",
+      "directdata-app",
+    ],
+    origins: [],
+    manifest: {
+      name: "DirectData",
+      short_name: "DirectData",
+      description: "DirectData application.",
+      start_url: "/",
+      categories: ["business"],
+    },
+    emailBrand: {
+      brandName: "DirectData",
+      primary: "#142850",
+      primaryLight: "#1e3a5f",
+      secondary: "#0ea5e9",
+      accent: "#14b8a6",
+      headerGradient: "linear-gradient(135deg, #142850, #0ea5e9)",
+      textPrimary: "#1e293b",
+      textSecondary: "#64748b",
+      textMuted: "#94a3b8",
+      bodyBg: "#f8fafc",
+      cardBg: "#ffffff",
+      success: "#10b981",
+      error: "#ef4444",
+      warning: "#f59e0b",
+      logoUrl: null,
+      footerText: "© 2024 DirectData. All rights reserved.",
+      supportEmail: null,
     },
   },
 };
@@ -88,6 +182,9 @@ function getRawAppConfig(appId) {
   const manifestFromEnv = parseJsonObject(
     process.env[`APP_${token}_MANIFEST_JSON`],
   );
+  const emailBrandFromEnv = parseJsonObject(
+    process.env[`APP_${token}_EMAIL_BRAND_JSON`],
+  );
 
   const aliases =
     aliasesFromEnv.length > 0 ? aliasesFromEnv : base.aliases || [];
@@ -97,11 +194,17 @@ function getRawAppConfig(appId) {
     ...(base.manifest || {}),
     ...(manifestFromEnv || {}),
   };
+  const emailBrand = {
+    ...DEFAULT_EMAIL_BRAND,
+    ...(base.emailBrand || {}),
+    ...(emailBrandFromEnv || {}),
+  };
 
   return {
     aliases,
     origins,
     manifest,
+    emailBrand,
   };
 }
 
@@ -254,6 +357,16 @@ export function normalizeAppId(appId) {
     return candidate;
   }
   return normalizeCandidate(process.env.DEFAULT_APP_ID) || DEFAULT_APP_ID;
+}
+
+export function getEmailTheme(appId) {
+  const normalizedAppId = normalizeAppId(appId);
+  const config = getRawAppConfig(normalizedAppId);
+  return config.emailBrand || { ...DEFAULT_EMAIL_BRAND };
+}
+
+export function getDefaultEmailTheme() {
+  return { ...DEFAULT_EMAIL_BRAND };
 }
 
 export { APP_IDS, DEFAULT_APP_ID };

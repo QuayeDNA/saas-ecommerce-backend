@@ -112,7 +112,7 @@ class AuthController {
         );
       }
 
-      const result = await otpService.sendOtp(phone, email, channel);
+      const result = await otpService.sendOtp(phone, email, channel, req.appContext);
 
       res.json({
         success: true,
@@ -1087,6 +1087,7 @@ class AuthController {
           updated.fullName,
           status,
           updated.businessName,
+          req.appContext,
         );
       }
 
