@@ -94,17 +94,16 @@ app.use(
       const allowed = [
         process.env.FRONTEND_URL,
         process.env.STOREFRONT_URL, // dedicated public-store domain
-        "https://brytelinks.com", // ← add this
+        "https://brytelinks.com",
         "https://www.brytelinks.com",
         "https://brytelink-chi.vercel.app",
         "https://saas-ecommerce.vercel.app",
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://localhost:3000",
       ].filter(Boolean);
 
       // Allow requests with no origin (mobile apps, curl, Postman, etc.)
       if (!origin) return callback(null, true);
+      // Allow any localhost origin regardless of port
+      if (/^https?:\/\/localhost(:\d+)?$/.test(origin)) return callback(null, true);
       // Allow any Vercel preview for this project
       if (
         allowed.includes(origin) ||
