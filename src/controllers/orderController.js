@@ -14,31 +14,26 @@ import {
   AUDIT_SEVERITIES,
 } from "../constants/audit.js";
 
-class OrderController {
-  /**
-   * Get the correct navigation link based on user type
-   * @param {string} userType - User type (agent, super_admin, etc.)
-   * @param {string} page - Page to navigate to (wallet, orders, etc.)
-   * @returns {string} Navigation link
-   */
-  getNavigationLink(userType, page) {
-    const routes = {
-      agent: {
-        wallet: "/agent/dashboard/wallet",
-        orders: "/agent/dashboard/orders",
-      },
-      super_admin: {
-        wallet: "/superadmin/wallet",
-        orders: "/superadmin/orders",
-      },
-      admin: {
-        wallet: "/admin/wallet",
-        orders: "/admin/orders",
-      },
-    };
+function getNavigationLink(userType, page) {
+  const routes = {
+    agent: {
+      wallet: "/agent/dashboard/wallet",
+      orders: "/agent/dashboard/orders",
+    },
+    super_admin: {
+      wallet: "/superadmin/wallet",
+      orders: "/superadmin/orders",
+    },
+    admin: {
+      wallet: "/admin/wallet",
+      orders: "/admin/orders",
+    },
+  };
 
-    return routes[userType]?.[page] || `/${page}`;
-  }
+  return routes[userType]?.[page] || `/${page}`;
+}
+
+class OrderController {
 
   // Create single order
   async createSingleOrder(req, res) {
@@ -1265,7 +1260,7 @@ class OrderController {
                 type: "order_status_bulk_update",
                 count: results.successful.length,
                 status: action,
-                navigationLink: this.getNavigationLink("super_admin", "orders"),
+                navigationLink: getNavigationLink("super_admin", "orders"),
               },
             );
             websocketService.sendNotificationToUser(adminId, {

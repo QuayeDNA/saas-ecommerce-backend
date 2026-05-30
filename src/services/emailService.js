@@ -255,6 +255,7 @@ class EmailService {
         return { simulated: true, code };
       }
       throw new Error("Failed to send OTP email");
+    }
   }
 
   async sendAccountStatusEmail(email, fullName, status, businessName, appContext) {
