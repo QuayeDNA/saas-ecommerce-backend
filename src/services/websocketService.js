@@ -26,14 +26,20 @@ class WebSocketService {
         this.clients.set(userId, ws);
 
         if (!userType) {
-          try {
-            const User = (await import("../models/User.js")).default;
-            const user = await User.findById(userId).select("userType").lean();
-            userType = user?.userType || null;
-          } catch (error) {
-            logger.warn(
-              `Failed to resolve WebSocket userType for ${userId}: ${error.message}`,
-            );
+          const isObjectId = /^[a-fA-F0-9]{24}$/.test(userId);
+
+          if (isObjectId) {
+            try {
+              const User = (await import("../models/User.js")).default;
+              const user = await User.findById(userId).select("userType").lean();
+              userType = user?.userType || null;
+            } catch (error) {
+              logger.warn(
+                `Failed to resolve WebSocket userType for ${userId}: ${error.message}`,
+              );
+            }
+          } else {
+            userType = userId.includes(":") ? userId.split(":")[0] : "public";
           }
         }
 
