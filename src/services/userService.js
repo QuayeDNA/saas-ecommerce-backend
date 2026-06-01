@@ -1,7 +1,7 @@
 // src/services/userService.js
 import { BUSINESS_ROLES } from "../constants/roles.js";
 import User from "../models/User.js";
-import Otp from "../models/Otp.js";
+// import Otp from "../models/Otp.js"; // OTP verification disabled - will be re-enabled when SMS is ready
 import logger from "../utils/logger.js";
 import {
   isBusinessUser,
@@ -430,15 +430,13 @@ class UserService {
         throw err;
       }
 
-      const verified = await Otp.findOne({
-        phone,
-        verified: true,
-      }).sort({ createdAt: -1 });
-      if (!verified) {
-        const err = new Error("Phone number not verified. Please verify your phone with OTP first.");
-        err.statusCode = 400;
-        throw err;
-      }
+      // OTP verification disabled - will be re-enabled when SMS is ready
+      // const verified = await Otp.findOne({ phone, verified: true }).sort({ createdAt: -1 });
+      // if (!verified) {
+      //   const err = new Error("Phone number not verified. Please verify your phone with OTP first.");
+      //   err.statusCode = 400;
+      //   throw err;
+      // }
 
       let referredByUser = null;
       if (referralCode) {
