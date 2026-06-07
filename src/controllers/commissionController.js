@@ -3,8 +3,10 @@ import commissionService from "../services/commissionService.js";
 class CommissionController {
   async processDailyCommissions(req, res, next) {
     try {
-      const { date } = req.body;
-      const result = await commissionService.processDailyCommissions(date || null);
+      const dateFromBody = req.body?.date;
+      const dateFromQuery = req.query?.date;
+      const date = dateFromBody || dateFromQuery || null;
+      const result = await commissionService.processDailyCommissions(date);
       res.json({
         success: true,
         message: result.message,
@@ -116,10 +118,10 @@ class CommissionController {
     try {
       const userId = req.user._id;
       const { page, limit } = req.query;
-      const result = await commissionService.getWithdrawalHistory(
-        userId,
-        { page: parseInt(page) || 1, limit: parseInt(limit) || 20 },
-      );
+      const result = await commissionService.getWithdrawalHistory(userId, {
+        page: parseInt(page) || 1,
+        limit: parseInt(limit) || 20,
+      });
       res.json({ success: true, data: result });
     } catch (error) {
       next(error);
