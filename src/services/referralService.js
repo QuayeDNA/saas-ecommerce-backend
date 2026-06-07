@@ -2,7 +2,6 @@ import mongoose from "mongoose";
 import User from "../models/User.js";
 import Commission from "../models/Commission.js";
 import Order from "../models/Order.js";
-import logger from "../utils/logger.js";
 
 class ReferralService {
   async getDashboard(userId) {
@@ -14,12 +13,20 @@ class ReferralService {
     const [referredCount, activeReferredCount, commissionAgg] =
       await Promise.all([
         User.countDocuments({ referredBy: userId }),
-        Order.distinct("createdBy", {
-          createdBy: {
-            $in: await User.find({ referredBy: userId }).distinct("_id"),
+        Order.aggregate([
+          { $match: { status: "completed" } },
+          {
+            $lookup: {
+              from: "users",
+              localField: "createdBy",
+              foreignField: "_id",
+              as: "creator",
+            },
           },
-          status: "completed",
-        }),
+          { $unwind: "$creator" },
+          { $match: { "creator.referredBy": new mongoose.Types.ObjectId(userId) } },
+          { $group: { _id: "$createdBy" } },
+        ]),
         Commission.aggregate([
           { $match: { referrer: new mongoose.Types.ObjectId(userId) } },
           {
@@ -27,9 +34,6 @@ class ReferralService {
               _id: null,
               totalEarned: {
                 $sum: { $cond: [{ $eq: ["$status", "credited"] }, "$amount", 0] },
-              },
-              pendingAmount: {
-                $sum: { $cond: [{ $eq: ["$status", "pending"] }, "$amount", 0] },
               },
             },
           },
@@ -40,7 +44,7 @@ class ReferralService {
     const host = process.env.FRONTEND_URL || `${proto}://localhost:5173`;
     const shareLink = `${host}/register?ref=${user.referralCode}`;
 
-    const earnings = commissionAgg[0] || { totalEarned: 0, pendingAmount: 0 };
+    const earnings = commissionAgg[0] || { totalEarned: 0 };
 
     return {
       referralCode: user.referralCode,
@@ -48,7 +52,7 @@ class ReferralService {
       totalReferred: referredCount,
       activeReferred: activeReferredCount.length,
       totalCommissionsEarned: earnings.totalEarned,
-      pendingCommissions: earnings.pendingAmount,
+      pendingCommissions: 0,
       commissionBalance: user.commissionBalance,
       walletBalance: user.walletBalance,
     };
@@ -114,22 +118,57 @@ class ReferralService {
   }
 
   async getReferralTree(userId, depth = 2) {
-    const buildLevel = async (parentId, remainingDepth) => {
-      if (remainingDepth <= 0) return [];
+    const [result] = await User.aggregate([
+      { $match: { _id: new mongoose.Types.ObjectId(userId) } },
+      {
+        $graphLookup: {
+          from: "users",
+          startWith: "$_id",
+          connectFromField: "_id",
+          connectToField: "referredBy",
+          maxDepth: depth - 1,
+          depthField: "level",
+          as: "descendants",
+        },
+      },
+      {
+        $project: {
+          descendants: {
+            _id: 1,
+            fullName: 1,
+            email: 1,
+            phone: 1,
+            referralCode: 1,
+            createdAt: 1,
+            referredBy: 1,
+            level: 1,
+          },
+        },
+      },
+    ]);
 
-      const children = await User.find({ referredBy: parentId })
-        .select("_id fullName email phone referralCode createdAt")
-        .lean();
+    if (!result) return [];
 
-      const result = [];
-      for (const child of children) {
-        const grandChildren = await buildLevel(child._id, remainingDepth - 1);
-        result.push({ user: child, children: grandChildren });
-      }
-      return result;
+    const descendants = result.descendants || [];
+
+    const buildTree = (parentId, currentDepth) => {
+      if (currentDepth >= depth) return [];
+      return descendants
+        .filter(d => d.referredBy && d.referredBy.toString() === parentId.toString())
+        .map(d => ({
+          user: {
+            _id: d._id,
+            fullName: d.fullName,
+            email: d.email,
+            phone: d.phone,
+            referralCode: d.referralCode,
+            createdAt: d.createdAt,
+          },
+          children: buildTree(d._id, currentDepth + 1),
+        }));
     };
 
-    return buildLevel(userId, depth);
+    return buildTree(userId, 0);
   }
 
   async getAdminStats() {

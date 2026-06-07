@@ -40,8 +40,8 @@ const commissionSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "credited", "cancelled"],
-      default: "pending",
+      enum: ["credited", "cancelled"],
+      default: "credited",
     },
     creditedAt: {
       type: Date,

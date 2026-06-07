@@ -238,11 +238,15 @@ class AnalyticsService {
         timeframe,
       );
 
+      // Get agent's commission summary
+      const commissionStats = await this.getAgentCommissionStats(agentId);
+
       const result = {
         users: userStats,
         orders: orderStats,
         revenue: revenueStats,
         wallet: walletStats,
+        commissions: commissionStats,
         recentActivity,
         charts: chartData,
         timeframe,
@@ -2234,6 +2238,44 @@ class AnalyticsService {
     } catch (error) {
       logger.error(`Agent recent activity error: ${error.message}`);
       return [];
+    }
+  }
+
+  async getAgentCommissionStats(agentId) {
+    try {
+      const agentObjectId = new mongoose.Types.ObjectId(agentId);
+
+      const [user, aggregation] = await Promise.all([
+        User.findById(agentObjectId).select("commissionBalance"),
+        Commission.aggregate([
+          { $match: { referrer: agentObjectId } },
+          {
+            $group: {
+              _id: null,
+              totalEarned: {
+                $sum: { $cond: [{ $eq: ["$status", "credited"] }, "$amount", 0] },
+              },
+              creditedCount: {
+                $sum: { $cond: [{ $eq: ["$status", "credited"] }, 1, 0] },
+              },
+            },
+          },
+        ]),
+      ]);
+
+      const commissionBalance = user?.commissionBalance || 0;
+      const agg = aggregation[0] || {};
+      const totalEarned = agg.totalEarned || 0;
+
+      return {
+        commissionBalance,
+        totalEarned,
+        totalWithdrawn: Math.max(0, totalEarned - commissionBalance),
+        creditedCount: agg.creditedCount || 0,
+      };
+    } catch (error) {
+      logger.error(`Agent commission stats error: ${error.message}`);
+      return { commissionBalance: 0, totalEarned: 0, creditedCount: 0 };
     }
   }
 

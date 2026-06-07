@@ -67,11 +67,12 @@ class CommissionController {
 
   async getUserCommissions(req, res, next) {
     try {
-      const userId = req.user._id;
+      const isAdmin = req.user.userType === "super_admin";
+      const userId = isAdmin ? null : req.user._id;
       const { status, startDate, endDate, page, limit } = req.query;
       const result = await commissionService.getUserCommissions(
         userId,
-        { status, startDate, endDate },
+        { status, startDate, endDate, isAdmin },
         { page: parseInt(page) || 1, limit: parseInt(limit) || 20 },
       );
       res.json({ success: true, data: result });
@@ -116,11 +117,13 @@ class CommissionController {
 
   async getWithdrawalHistory(req, res, next) {
     try {
-      const userId = req.user._id;
+      const isAdmin = req.user.userType === "super_admin";
+      const userId = isAdmin ? null : req.user._id;
       const { page, limit } = req.query;
       const result = await commissionService.getWithdrawalHistory(userId, {
         page: parseInt(page) || 1,
         limit: parseInt(limit) || 20,
+        isAdmin,
       });
       res.json({ success: true, data: result });
     } catch (error) {

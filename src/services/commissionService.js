@@ -121,35 +121,42 @@ class CommissionService {
       return { processed: 0, message: "No referrers met minimum threshold", date: dateKey };
     }
 
+    // Check which referrers already have a Commission doc for this date
+    const existingDocs = await Commission.find({
+      date: dateKey,
+      referrer: { $in: [...referrerMap.keys()].map(id => new mongoose.Types.ObjectId(id)) },
+    }).select("referrer").lean();
+    const existingReferrerSet = new Set(existingDocs.map(c => c.referrer.toString()));
+
     let credited = 0;
     let skipped = 0;
 
     for (const [referrerId, data] of referrerMap) {
       try {
+        if (existingReferrerSet.has(referrerId)) {
+          logger.info(`[CommissionService] Commission already exists for referrer ${referrerId} on ${dateKey}, skipping`);
+          skipped++;
+          continue;
+        }
+
         // Step 3: apply cap per referrer for the day
         let amount = data.totalCommission;
         if (cap > 0 && amount > cap) {
           amount = cap;
         }
 
-        // Step 4: upsert Commission record + credit commissionBalance
-        await Commission.findOneAndUpdate(
-          { date: dateKey, referrer: referrerId },
-          {
-            $setOnInsert: {
-              referrer: referrerId,
-              date: dateKey,
-              amount,
-              rate,
-              batchTotal: data.batchTotal,
-              ordersCount: data.totalOrders,
-              qualifiedUsersCount: data.qualifiedUsers,
-              status: "credited",
-              creditedAt: new Date(),
-            },
-          },
-          { upsert: true, new: true },
-        );
+        // Step 4: create Commission record + credit commissionBalance
+        await Commission.create({
+          referrer: referrerId,
+          date: dateKey,
+          amount,
+          rate,
+          batchTotal: data.batchTotal,
+          ordersCount: data.totalOrders,
+          qualifiedUsersCount: data.qualifiedUsers,
+          status: "credited",
+          creditedAt: new Date(),
+        });
 
         await User.findByIdAndUpdate(referrerId, {
           $inc: { commissionBalance: amount },
@@ -312,7 +319,9 @@ class CommissionService {
 
   async getUserCommissions(userId, filters = {}, pagination = {}) {
     try {
-      const query = { referrer: userId };
+      const isAdmin = filters.isAdmin;
+      const query = {};
+      if (userId) query.referrer = userId;
 
       if (filters.status) {
         query.status = filters.status;
@@ -327,11 +336,17 @@ class CommissionService {
       const limit = pagination.limit || 20;
       const skip = (page - 1) * limit;
 
+      let commissionsQuery = Commission.find(query)
+        .sort({ date: -1 })
+        .skip(skip)
+        .limit(limit);
+
+      if (isAdmin) {
+        commissionsQuery = commissionsQuery.populate("referrer", "fullName email agentCode");
+      }
+
       const [commissions, total] = await Promise.all([
-        Commission.find(query)
-          .sort({ date: -1 })
-          .skip(skip)
-          .limit(limit),
+        commissionsQuery,
         Commission.countDocuments(query),
       ]);
 
@@ -365,12 +380,6 @@ class CommissionService {
             totalEarned: {
               $sum: { $cond: [{ $eq: ["$status", "credited"] }, "$amount", 0] },
             },
-            totalPending: {
-              $sum: { $cond: [{ $eq: ["$status", "pending"] }, "$amount", 0] },
-            },
-            pendingCount: {
-              $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] },
-            },
             creditedCount: {
               $sum: { $cond: [{ $eq: ["$status", "credited"] }, 1, 0] },
             },
@@ -381,8 +390,8 @@ class CommissionService {
       return {
         totalCommissions: aggregation?.totalCommissions || 0,
         totalEarned: aggregation?.totalEarned || 0,
-        totalPending: aggregation?.totalPending || 0,
-        pendingCount: aggregation?.pendingCount || 0,
+        totalPending: 0,
+        pendingCount: 0,
         creditedCount: aggregation?.creditedCount || 0,
       };
     } catch (error) {
@@ -448,16 +457,21 @@ class CommissionService {
       const skip = (page - 1) * limit;
 
       const query = {
-        user: userId,
         "metadata.type": "commission_withdrawal",
       };
+      if (userId) query.user = userId;
+
+      let txQuery = WalletTransaction.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit);
+
+      if (pagination.isAdmin) {
+        txQuery = txQuery.populate("user", "fullName email");
+      }
 
       const [transactions, total] = await Promise.all([
-        WalletTransaction.find(query)
-          .sort({ createdAt: -1 })
-          .skip(skip)
-          .limit(limit)
-          .lean(),
+        txQuery.lean(),
         WalletTransaction.countDocuments(query),
       ]);
 
