@@ -318,6 +318,8 @@ class WalletController {
         data: paystackData,
       });
 
+      const userId = req.user?.userId || null;
+
       await logAuditAction(req, {
         userId,
         userType: req.user?.userType,
