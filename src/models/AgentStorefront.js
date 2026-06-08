@@ -104,6 +104,12 @@ const agentStorefrontSchema = new mongoose.Schema({
     ref: 'User'
   },
   
+  // Track last activity (order placed or storefront updated) for inactivity detection
+  lastActivityAt: {
+    type: Date,
+    default: null,
+  },
+
   // Simple Settings
   settings: {
     theme: { 
@@ -164,6 +170,7 @@ const agentStorefrontSchema = new mongoose.Schema({
 
 // Indexes for performance (agentId and businessName already indexed via unique: true)
 agentStorefrontSchema.index({ isActive: 1, isApproved: 1 });
+agentStorefrontSchema.index({ lastActivityAt: 1 });
 
 // Virtual for store URL
 agentStorefrontSchema.virtual('storeUrl').get(function() {

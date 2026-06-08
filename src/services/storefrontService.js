@@ -80,6 +80,19 @@ class StorefrontService {
     const settings = await Settings.getInstance();
     const autoApprove = settings.autoApproveStorefronts || false;
 
+    // ── Payment Gate (check only — debit happens after successful save) ─────
+    let creationFee = 0;
+    if (settings.requirePaymentForStorefrontCreation) {
+      creationFee = settings.storefrontCreationFee || 0;
+      if (creationFee > 0) {
+        if (user.walletBalance < creationFee) {
+          throw new Error(
+            `Storefront creation requires a GHS ${creationFee.toFixed(2)} fee. Your wallet balance is GHS ${(user.walletBalance || 0).toFixed(2)}. Please top up your wallet.`,
+          );
+        }
+      }
+    }
+
     const storefront = new AgentStorefront({
       agentId: userId,
       ...storefrontData,
@@ -89,6 +102,17 @@ class StorefrontService {
     });
 
     const saved = await storefront.save();
+
+    // ── Debit wallet AFTER successful storefront creation ──────────────────
+    if (creationFee > 0) {
+      await walletService.debitWallet(
+        userId.toString(),
+        creationFee,
+        "Storefront creation fee",
+        null,
+        { type: "storefront_creation_fee" },
+      );
+    }
 
     await logAuditAction(null, {
       userId,
@@ -148,6 +172,7 @@ class StorefrontService {
     delete updateData.agentId;
 
     Object.assign(storefront, updateData);
+    storefront.lastActivityAt = new Date();
     const saved = await storefront.save();
 
     await logAuditAction(null, {
@@ -612,6 +637,15 @@ class StorefrontService {
   async createStorefrontOrder(businessName, orderData) {
     const storefront = await AgentStorefront.findPublicStore(businessName);
     if (!storefront) throw new Error("Storefront not found or not available");
+
+    // Update lastActivityAt to track store activity
+    AgentStorefront.findByIdAndUpdate(storefront._id, {
+      lastActivityAt: new Date(),
+    }).catch((err) =>
+      logger.warn(
+        `[StorefrontService] Failed to update lastActivityAt for ${storefront._id}: ${err.message}`,
+      ),
+    );
 
     const settings = await Settings.getInstance();
     if (settings.storefrontsOpen === false) {

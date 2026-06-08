@@ -670,6 +670,65 @@ class SettingsService {
       throw error;
     }
   }
+  // ---------------------------------------------------------------------------
+  // BryteLinks — Storefront Payment Gate & Auto-Suspend Settings
+  // ---------------------------------------------------------------------------
+
+  async getBryteLinksSettings() {
+    try {
+      const settings = await Settings.getInstance();
+      return {
+        requirePaymentForStorefrontCreation:
+          settings.requirePaymentForStorefrontCreation ?? false,
+        storefrontCreationFee: settings.storefrontCreationFee ?? 50,
+        autoSuspendInactiveStores: settings.autoSuspendInactiveStores ?? false,
+        inactivityThresholdDays: settings.inactivityThresholdDays ?? 14,
+      };
+    } catch (error) {
+      logger.error(
+        `Error getting BryteLinks settings: ${error.message}`,
+      );
+      throw error;
+    }
+  }
+
+  async updateBryteLinksSettings(bryteLinksSettings) {
+    try {
+      const settings = await Settings.getInstance();
+
+      if (bryteLinksSettings.requirePaymentForStorefrontCreation !== undefined) {
+        settings.requirePaymentForStorefrontCreation = Boolean(
+          bryteLinksSettings.requirePaymentForStorefrontCreation,
+        );
+      }
+      if (bryteLinksSettings.storefrontCreationFee !== undefined) {
+        settings.storefrontCreationFee = Number(
+          bryteLinksSettings.storefrontCreationFee,
+        );
+      }
+      if (bryteLinksSettings.autoSuspendInactiveStores !== undefined) {
+        settings.autoSuspendInactiveStores = Boolean(
+          bryteLinksSettings.autoSuspendInactiveStores,
+        );
+      }
+      if (bryteLinksSettings.inactivityThresholdDays !== undefined) {
+        settings.inactivityThresholdDays = Number(
+          bryteLinksSettings.inactivityThresholdDays,
+        );
+      }
+
+      await settings.save();
+
+      logger.info("BryteLinks settings updated:", bryteLinksSettings);
+
+      return this.getBryteLinksSettings();
+    } catch (error) {
+      logger.error(
+        `Error updating BryteLinks settings: ${error.message}`,
+      );
+      throw error;
+    }
+  }
 }
 
 export default new SettingsService();

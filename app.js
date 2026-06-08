@@ -16,6 +16,7 @@ import { initializeMomoPendingExpiryJob } from "./src/jobs/momoPendingExpiry.js"
 import { schedulePaystackVerificationRetryJob } from "./src/jobs/paystackVerificationRetry.js";
 import { schedulePayoutReconciliationJob } from "./src/jobs/payoutReconciliationJob.js";
 import { scheduleDailyCommissionProcessing } from "./src/jobs/dailyCommissionProcessing.js";
+import { scheduleInactiveStoreSuspension } from "./src/jobs/inactiveStoreSuspension.js";
 import walletService from "./src/services/walletService.js";
 import authRoutes from "./src/routes/authRoutes.js";
 import orderRouter from "./src/routes/orderRoutes.js";
@@ -79,6 +80,7 @@ logger.info("Starting SaaS E-Commerce backend...");
     // Reconcile payouts stuck in 'processing' where the webhook never arrived
     schedulePayoutReconciliationJob();
     scheduleDailyCommissionProcessing();
+    scheduleInactiveStoreSuspension();
   } catch (e) {
     logger.error(`Startup initialization failed: ${e.message}`);
     process.exit(1);

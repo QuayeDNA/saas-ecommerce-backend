@@ -335,6 +335,33 @@ class SettingsController {
         .json({ success: false, error: "Failed to update referral settings" });
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // BryteLinks — Storefront Payment Gate & Auto-Suspend Settings
+  // ---------------------------------------------------------------------------
+  async getBryteLinksSettings(req, res) {
+    try {
+      const settings = await settingsService.getBryteLinksSettings();
+      res.json({ success: true, data: settings });
+    } catch (error) {
+      logger.error("Error getting BryteLinks settings:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to get BryteLinks settings" });
+    }
+  }
+
+  async updateBryteLinksSettings(req, res) {
+    try {
+      const settings = await settingsService.updateBryteLinksSettings(req.body);
+      res.json({ success: true, data: settings });
+    } catch (error) {
+      logger.error("Error updating BryteLinks settings:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to update BryteLinks settings" });
+    }
+  }
 }
 
 export default new SettingsController();

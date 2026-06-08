@@ -217,6 +217,32 @@ const settingsSchema = new mongoose.Schema(
     },
 
     // ==========================================================================
+    // BryteLinks — Storefront Payment Gate
+    // ==========================================================================
+    requirePaymentForStorefrontCreation: {
+      type: Boolean,
+      default: false,
+    },
+    storefrontCreationFee: {
+      type: Number,
+      default: 50,
+      min: 0,
+    },
+
+    // ==========================================================================
+    // BryteLinks — Auto-Suspend Inactive Stores
+    // ==========================================================================
+    autoSuspendInactiveStores: {
+      type: Boolean,
+      default: false,
+    },
+    inactivityThresholdDays: {
+      type: Number,
+      default: 14,
+      min: 1,
+    },
+
+    // ==========================================================================
     // Referral & Commission Settings
     // ==========================================================================
     referralCommissionPercent: {

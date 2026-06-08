@@ -29,6 +29,9 @@ router.get("/fees", settingsController.getFeeSettings);
 // know whether paystack is enabled without requiring super_admin role.
 router.get("/api", settingsController.getApiSettings);
 
+// BryteLinks — GET available to all authenticated users (agents need to check payment gate)
+router.get("/brytelinks", settingsController.getBryteLinksSettings);
+
 // All other routes require super admin authorization
 router.use(authorize("super_admin"));
 
@@ -77,5 +80,8 @@ router.post("/admin/change-password", settingsController.changeAdminPassword);
 // Referral & Commission Settings — super_admin only
 router.get("/referral", settingsController.getReferralSettings);
 router.put("/referral", settingsController.updateReferralSettings);
+
+// BryteLinks — Storefront Payment Gate & Auto-Suspend Settings (PUT only)
+router.put("/brytelinks", settingsController.updateBryteLinksSettings);
 
 export default router;
