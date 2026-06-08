@@ -9,6 +9,7 @@ import Commission from "../models/Commission.js";
 import logger from "../utils/logger.js";
 import mongoose from "mongoose";
 import { getBusinessUserTypes } from "../utils/userTypeHelpers.js";
+import { ALL_ROLES } from "../constants/roles.js";
 
 class AnalyticsService {
   /**
@@ -385,13 +386,7 @@ class AnalyticsService {
 
     // Build dynamic byType object with all user types
     const byType = {};
-    const allUserTypes = [
-      "agent",
-      "super_agent",
-      "dealer",
-      "super_dealer",
-      "super_admin",
-    ];
+    const allUserTypes = [...ALL_ROLES.filter(t => t !== "super_admin"), "super_admin"];
 
     allUserTypes.forEach((userType) => {
       // Convert user type to plural for display (e.g., agent -> agents)

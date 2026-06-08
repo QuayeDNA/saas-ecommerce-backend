@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { ALL_ROLES } from "../constants/roles.js";
 
 const announcementSchema = new mongoose.Schema(
   {
@@ -26,14 +27,7 @@ const announcementSchema = new mongoose.Schema(
     targetAudience: [
       {
         type: String,
-        enum: [
-          "agent",
-          "super_agent",
-          "dealer",
-          "super_dealer",
-          "admin",
-          "public",
-        ],
+        enum: [...ALL_ROLES, "admin", "public"],
       },
     ],
     // Optional storefront scoping for public announcements

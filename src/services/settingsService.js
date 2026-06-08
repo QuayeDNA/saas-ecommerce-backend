@@ -3,6 +3,7 @@ import User from "../models/User.js";
 import Settings from "../models/Settings.js";
 import logger from "../utils/logger.js";
 import websocketService from "./websocketService.js";
+import { ALL_ROLES } from "../constants/roles.js";
 
 // =============================================================================
 // SETTINGS SERVICE
@@ -319,14 +320,7 @@ class SettingsService {
       }
 
       // Validate role
-      const validRoles = [
-        "agent",
-        "super_agent",
-        "dealer",
-        "super_dealer",
-        "admin",
-        "super_admin",
-      ];
+      const validRoles = ALL_ROLES;
       if (!validRoles.includes(newRole)) {
         throw new Error("Invalid role");
       }

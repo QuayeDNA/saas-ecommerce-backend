@@ -8,6 +8,7 @@ import {
   packageValidation,
   bundleValidation,
 } from "../validators/packageValidator.js";
+import { BUSINESS_ROLES } from "../constants/roles.js";
 
 const router = express.Router();
 
@@ -67,28 +68,14 @@ router.post(
 router.get(
   "/bundles",
   authenticate,
-  authorize(
-    "agent",
-    "super_agent",
-    "dealer",
-    "super_dealer",
-    "admin",
-    "super_admin",
-  ),
+  authorize(...BUSINESS_ROLES, "admin", "super_admin"),
   bundleController.getAllBundles,
 );
 
 router.get(
   "/bundles/:id",
   authenticate,
-  authorize(
-    "agent",
-    "super_agent",
-    "dealer",
-    "super_dealer",
-    "admin",
-    "super_admin",
-  ),
+  authorize(...BUSINESS_ROLES, "admin", "super_admin"),
   bundleController.getBundleById,
 );
 
@@ -125,28 +112,14 @@ router.delete(
 router.get(
   "/bundles/provider/:providerId",
   authenticate,
-  authorize(
-    "agent",
-    "super_agent",
-    "dealer",
-    "super_dealer",
-    "admin",
-    "super_admin",
-  ),
+  authorize(...BUSINESS_ROLES, "admin", "super_admin"),
   bundleController.getBundlesByProvider,
 );
 
 router.get(
   "/bundles/package/:packageId",
   authenticate,
-  authorize(
-    "agent",
-    "super_agent",
-    "dealer",
-    "super_dealer",
-    "admin",
-    "super_admin",
-  ),
+  authorize(...BUSINESS_ROLES, "admin", "super_admin"),
   bundleController.getBundlesByPackage,
 );
 

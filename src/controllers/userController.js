@@ -597,6 +597,12 @@ class UserController {
         const superDealers = await User.countDocuments({
           userType: "super_dealer",
         });
+        const eliteDealers = await User.countDocuments({
+          userType: "elite_dealer",
+        });
+        const masterDealers = await User.countDocuments({
+          userType: "master_dealer",
+        });
 
         stats = {
           totalUsers,
@@ -614,6 +620,8 @@ class UserController {
           superAgents,
           dealers,
           superDealers,
+          eliteDealers,
+          masterDealers,
           // Keep existing fields for backward compatibility
           totalBusinessUsers,
           verifiedUsers,

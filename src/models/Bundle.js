@@ -279,13 +279,7 @@ bundleSchema.methods.updatePricingTiers = function (pricingData, updatedBy) {
   }
 
   // Update individual pricing tiers
-  const businessUserTypes = [
-    "agent",
-    "super_agent",
-    "dealer",
-    "super_dealer",
-    "default",
-  ];
+  const businessUserTypes = [...BUSINESS_ROLES, "default"];
 
   businessUserTypes.forEach((userType) => {
     if (pricingData[userType] !== undefined) {

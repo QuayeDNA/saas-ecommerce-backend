@@ -1,5 +1,5 @@
 // src/services/userService.js
-import { BUSINESS_ROLES } from "../constants/roles.js";
+import { BUSINESS_ROLES, ALL_ROLES } from "../constants/roles.js";
 import User from "../models/User.js";
 // import Otp from "../models/Otp.js"; // OTP verification disabled - will be re-enabled when SMS is ready
 import logger from "../utils/logger.js";
@@ -335,13 +335,7 @@ class UserService {
 
       if (
         statusUpdates.userType &&
-        [
-          "agent",
-          "super_agent",
-          "dealer",
-          "super_dealer",
-          "super_admin",
-        ].includes(statusUpdates.userType)
+        ALL_ROLES.includes(statusUpdates.userType)
       ) {
         user.userType = statusUpdates.userType;
       }

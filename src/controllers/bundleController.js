@@ -1,6 +1,7 @@
 // src/controllers/bundleController.js
 import bundleService from "../services/bundleService.js";
 import logger from "../utils/logger.js";
+import { BUSINESS_ROLES } from "../constants/roles.js";
 
 const bundleController = {
   // Get all bundles (public)
@@ -361,13 +362,7 @@ const bundleController = {
       const { pricingTiers, basePrice } = req.body;
 
       // Validate pricing tiers structure
-      const validUserTypes = [
-        "agent",
-        "super_agent",
-        "dealer",
-        "super_dealer",
-        "default",
-      ];
+      const validUserTypes = [...BUSINESS_ROLES, "default"];
       const invalidUserTypes = Object.keys(pricingTiers || {}).filter(
         (userType) => !validUserTypes.includes(userType),
       );
@@ -446,13 +441,7 @@ const bundleController = {
         });
       }
 
-      const validUserTypes = [
-        "agent",
-        "super_agent",
-        "dealer",
-        "super_dealer",
-        "default",
-      ];
+      const validUserTypes = [...BUSINESS_ROLES, "default"];
       const results = [];
       const errors = [];
 
