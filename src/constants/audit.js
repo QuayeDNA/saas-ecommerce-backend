@@ -65,6 +65,9 @@ export const AUDIT_ACTIONS = {
   BUNDLE_UPDATED: "bundle.updated",
   BUNDLE_DELETED: "bundle.deleted",
 
+  // Earnings
+  EARNINGS_CONVERTED_TO_WALLET: "earnings.converted_to_wallet",
+
   // Referral & Commissions
   REFERRAL_COMMISSION_CALCULATED: "referral.commission_calculated",
   REFERRAL_COMMISSION_CREDITED: "referral.commission_credited",

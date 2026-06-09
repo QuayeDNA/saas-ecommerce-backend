@@ -63,6 +63,11 @@ router.get(
 );
 router.get("/payouts", authenticate, payoutController.getPayouts);
 router.post("/payouts/request", authenticate, payoutController.requestPayout);
+router.post(
+  "/earnings/convert-to-wallet",
+  authenticate,
+  payoutController.convertEarningsToWallet,
+);
 
 // ── Admin / super_admin ───────────────────────────────────────────────────────
 router.post(

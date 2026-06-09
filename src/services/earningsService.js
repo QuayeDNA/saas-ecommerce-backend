@@ -1,4 +1,5 @@
 import EarningsTransaction from "../models/EarningsTransaction.js";
+import WalletTransaction from "../models/WalletTransaction.js";
 import PayoutRequest from "../models/PayoutRequest.js";
 import User from "../models/User.js";
 
@@ -210,6 +211,86 @@ class EarningsService {
     }
 
     return { user, transaction };
+  }
+
+  async convertToWallet({ userId, amount, session = null }) {
+    const transferAmount = toNumber(amount);
+    if (transferAmount <= 0) {
+      throw new Error("Amount must be greater than zero");
+    }
+
+    const getOpts = session ? { session } : {};
+    const updateOpts = session
+      ? { session, new: true, runValidators: false }
+      : { new: true, runValidators: false };
+
+    const user = await User.findOneAndUpdate(
+      {
+        _id: userId,
+        earningsBalance: { $gte: transferAmount },
+      },
+      { $inc: { earningsBalance: -transferAmount } },
+      updateOpts,
+    );
+
+    if (!user) {
+      throw new Error("Insufficient earnings balance");
+    }
+
+    const earningsBalanceAfter = toNumber(user.earningsBalance);
+
+    await User.findByIdAndUpdate(
+      userId,
+      { $inc: { walletBalance: transferAmount } },
+      updateOpts,
+    );
+
+    const updatedUser = session
+      ? await User.findById(userId, null, { session })
+      : await User.findById(userId);
+
+    const walletBalanceAfter = toNumber(updatedUser.walletBalance);
+
+    const reference = `ECW${Date.now()}${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
+    const earningsTxData = {
+      user: userId,
+      type: "debit",
+      amount: transferAmount,
+      balanceAfter: earningsBalanceAfter,
+      description: "Converted to wallet balance",
+      metadata: { source: "converted_to_wallet", reference },
+    };
+
+    const walletTxData = {
+      user: userId,
+      type: "credit",
+      amount: transferAmount,
+      balanceAfter: walletBalanceAfter,
+      description: "Earnings converted to wallet",
+      status: "completed",
+      reference,
+      metadata: { type: "earnings_conversion" },
+    };
+
+    let earningsTransaction;
+    let walletTransaction;
+    if (session) {
+      [earningsTransaction] = await EarningsTransaction.create([earningsTxData], { session });
+      [walletTransaction] = await WalletTransaction.create([walletTxData], { session });
+    } else {
+      earningsTransaction = await EarningsTransaction.create(earningsTxData);
+      walletTransaction = await WalletTransaction.create(walletTxData);
+    }
+
+    return {
+      earningsBalance: earningsBalanceAfter,
+      walletBalance: walletBalanceAfter,
+      amount: transferAmount,
+      earningsTransaction,
+      walletTransaction,
+      reference,
+    };
   }
 
   async getStorefrontProfitForRange(userId, { startDate, endDate } = {}) {

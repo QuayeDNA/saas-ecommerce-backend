@@ -1,9 +1,12 @@
 // src/controllers/payoutController.js
 import mongoose from "mongoose";
 import payoutService from "../services/payoutService.js";
+import earningsService from "../services/earningsService.js";
 import settingsService from "../services/settingsService.js";
 import paystackService from "../services/paystackService.js";
 import logger from "../utils/logger.js";
+import notificationService from "../services/notificationService.js";
+import websocketService from "../services/websocketService.js";
 import { logAuditAction } from "../utils/auditLogger.js";
 import {
   AUDIT_ACTIONS,
@@ -134,6 +137,81 @@ class PayoutController {
       });
     } catch (err) {
       logger.error("[Payout] requestPayout", { message: err.message });
+      return res.status(400).json({ success: false, message: err.message });
+    }
+  }
+
+  /**
+   * POST /api/wallet/earnings/convert-to-wallet
+   * Agent converts earnings balance directly to wallet balance — instant, no fees, no admin.
+   */
+  async convertEarningsToWallet(req, res) {
+    try {
+      const { amount } = req.body;
+
+      if (!amount || Number(amount) <= 0) {
+        return res.status(400).json({ success: false, message: "A valid amount is required." });
+      }
+
+      const result = await earningsService.convertToWallet({
+        userId: req.user.userId,
+        amount: Number(amount),
+      });
+
+      await logAuditAction(req, {
+        userId: req.user?.userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.EARNINGS_CONVERTED_TO_WALLET,
+        category: AUDIT_CATEGORIES.WALLET,
+        resource: { earningsTransactionId: result.earningsTransaction?._id || null },
+        metadata: {
+          source: "payoutController.convertEarningsToWallet",
+          amount: Number(amount),
+          earningsBalanceAfter: result.earningsBalance,
+          walletBalanceAfter: result.walletBalance,
+          reference: result.reference,
+        },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
+
+      try {
+        await notificationService.createInAppNotification(
+          req.user.userId.toString(),
+          "Earnings Converted",
+          `GHS ${Number(amount).toFixed(2)} converted from earnings to wallet balance. New earnings balance: GHS ${result.earningsBalance.toFixed(2)}.`,
+          "success",
+          {
+            type: "earnings_conversion",
+            amount: Number(amount),
+            earningsBalance: result.earningsBalance,
+            walletBalance: result.walletBalance,
+          },
+        );
+      } catch (notifErr) {
+        logger.warn("[Payout] convertEarningsToWallet notification failed", { message: notifErr.message });
+      }
+
+      try {
+        websocketService.sendWalletUpdateToUser(req.user.userId.toString(), {
+          balance: result.walletBalance,
+          earningsBalance: result.earningsBalance,
+        });
+      } catch (wsErr) {
+        logger.warn("[Payout] convertEarningsToWallet websocket failed", { message: wsErr.message });
+      }
+
+      return res.json({
+        success: true,
+        message: `GHS ${Number(amount).toFixed(2)} converted to wallet balance.`,
+        data: {
+          earningsBalance: result.earningsBalance,
+          walletBalance: result.walletBalance,
+          amount: result.amount,
+          reference: result.reference,
+        },
+      });
+    } catch (err) {
+      logger.error("[Payout] convertEarningsToWallet", { message: err.message });
       return res.status(400).json({ success: false, message: err.message });
     }
   }
