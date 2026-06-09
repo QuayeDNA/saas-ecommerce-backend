@@ -3,7 +3,12 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
+import path from "path";
+import { fileURLToPath } from "url";
 import { createServer } from "http";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 import connectDB from "./src/config/db.js";
 import logger from "./src/utils/logger.js";
 import websocketService from "./src/services/websocketService.js";
@@ -36,6 +41,7 @@ import paystackRoutes from "./src/routes/paystackRoutes.js";
 import auditLogRoutes from "./src/routes/auditLogRoutes.js";
 import commissionRoutes from "./src/routes/commissionRoutes.js";
 import referralRoutes from "./src/routes/referralRoutes.js";
+import uploadRoutes from "./src/routes/uploadRoutes.js";
 import appContextMiddleware from "./src/middlewares/appContext.js";
 import requestContextMiddleware from "./src/middlewares/requestContext.js";
 import auditLogger from "./src/middlewares/auditLogger.js";
@@ -208,6 +214,9 @@ app.get("/wallet/topup/callback", async (req, res) => {
   }
 });
 
+// ─── Static uploads ───────────────────────────────────────────────────────────
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
 // ─── API Routes ───────────────────────────────────────────────────────────────
 
 app.use("/api/auth", authRoutes);
@@ -223,6 +232,7 @@ app.use("/api/announcements", announcementRoutes);
 app.use("/api/packages", packageRoutes);
 app.use("/api/bundles", bundleRoutes);
 app.use("/api/storefront", storefrontRoutes);
+app.use("/api/upload", uploadRoutes);
 app.use("/api/webhooks/paystack", paystackRoutes);
 app.use("/api/audit-logs", auditLogRoutes);
 app.use("/api/commissions", commissionRoutes);
