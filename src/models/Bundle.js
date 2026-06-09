@@ -79,6 +79,20 @@ const bundleSchema = new mongoose.Schema(
           return this.price;
         },
       },
+      elite_dealer: {
+        type: Number,
+        min: 0,
+        default: function () {
+          return this.price;
+        },
+      },
+      master_dealer: {
+        type: Number,
+        min: 0,
+        default: function () {
+          return this.price;
+        },
+      },
       default: {
         type: Number,
         min: 0,
@@ -196,6 +210,8 @@ bundleSchema.pre("save", function (next) {
       super_agent: this.price,
       dealer: this.price,
       super_dealer: this.price,
+      elite_dealer: this.price,
+      master_dealer: this.price,
       default: this.price,
     };
   }
