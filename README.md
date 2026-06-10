@@ -1,158 +1,80 @@
 # SAAS E-Commerce Backend API
 
-A comprehensive multi-vendor e-commerce platform backend built with Node.js, Express.js, and MongoDB.
+Express 5 + MongoDB API serving all three storefront brands (BryteLinks, Directdata, Caskmaf Hub).
 
-## 🚀 Features
+## Stack
 
-- **Multi-vendor E-commerce** - Support for multiple vendors and agents
-- **Real-time Communication** - WebSocket integration for live updates
-- **JWT Authentication** - Secure authentication and authorization
-- **Push Notifications** - VAPID-based push notifications
-- **Analytics** - Real-time analytics and reporting
+- **Runtime:** Node.js (ES Modules)
+- **Framework:** Express 5
+- **Database:** MongoDB with Mongoose ODM
+- **Auth:** JWT (access + refresh tokens) + OTP
+- **Real-time:** WebSocket (`ws`)
+- **Payment:** Paystack (inline checkout, webhooks, subaccounts)
+- **Email:** Nodemailer (Gmail)
+- **Push:** Web Push API (VAPID)
+- **Validation:** Joi
+- **Storage:** Multer (image uploads)
+- **Cache:** Redis (optional)
+- **Logging:** Winston
+- **Jobs:** Node.js `cron` patterns
 
-## 🛠️ Technology Stack
-
-- **Runtime**: Node.js with ES Modules
-- **Framework**: Express.js
-- **Database**: MongoDB with Mongoose ODM
-- **Authentication**: JWT with bcrypt
-- **Real-time**: WebSocket (ws library)
-- **Validation**: Joi schema validation
-- **Logging**: Winston logger
-- **Email**: Nodemailer with Gmail
-- **Push Notifications**: Web Push API with VAPID
-
-## 📋 Prerequisites
-
-- Node.js (v18 or higher)
-- MongoDB (local or cloud instance)
-- Git
-
-## 🚀 Quick Start
-
-### 1. Clone the Repository
+## Quick Start
 
 ```bash
-git clone <repository-url>
-cd saas-ecommerce-backend
-```
-
-### 2. Install Dependencies
-
-```bash
-npm install
-```
-
-### 3. Environment Setup
-
-```bash
-# Copy environment template
 cp .env.example .env
-
-# Edit .env with your actual values
-# Required: MongoDB URI, JWT secrets, email settings
+# Fill in DBURI, JWTSECRET, etc.
+npm install
+npm run dev    # Starts on :5050 with nodemon
 ```
 
-### 4. Start the Server
+## API Routes
 
-```bash
-# Development mode (with auto-restart)
-npm run dev
+| Prefix | Purpose |
+|---|---|
+| `/api/auth` | Login, register, OTP, refresh, password reset, user management |
+| `/api/orders` | Create, process, cancel, track, analytics |
+| `/api/packages` | CRUD, by-provider, stats |
+| `/api/bundles` | CRUD, pricing, by-package, analytics |
+| `/api/providers` | CRUD, public listing, analytics |
+| `/api/wallet` | Balance, transactions, top-up, Paystack verify, payouts |
+| `/api/storefront` | Public store pages, ordering, tracking; agent storefront management |
+| `/api/announcements` | CRUD, broadcast, active/public endpoints |
+| `/api/notifications` | Read/unread, clear, preferences |
+| `/api/analytics` | Superadmin, agent, summary, charts, realtime |
+| `/api/commissions` | Process, withdraw, balance, leaderboard |
+| `/api/referrals` | Dashboard, tree, leaderboard |
+| `/api/settings` | Site status, wallet/payout/fee settings, signup approval |
+| `/api/push` | Subscribe, unsubscribe, preferences |
+| `/api/upload` | Image upload |
+| `/api/audit-logs` | User timeline, export, stats |
+| `/api/webhooks/paystack` | Paystack charge success webhook |
+| `GET /health` | Health check |
 
-# Production mode
-npm start
-```
+## Background Jobs (11)
 
-The server will start on `http://localhost:5050`
+| Job | Schedule |
+|---|---|
+| `orderProcessing` | Every 10s — processes pending orders |
+| `dailyCommissionProcessing` | Daily — processes agent commissions |
+| `paystackVerificationRetry` | Every 5min — retries failed Paystack verifications |
+| `pendingPaymentExpiry` | Every 15min — auto-cancels expired pending payments |
+| `momoPendingExpiry` | Every 30min — expires stale MoMo transactions |
+| `cancelledStorefrontOrdersCleanup` | Daily — purges old cancelled orders |
+| `reportedOrdersCleanup` | Daily — cleans up reported orders |
+| `payoutReconciliationJob` | Every 30min — reconciles stuck payouts |
+| `inactiveStoreSuspension` | Daily — auto-suspends inactive stores |
+| `announcementExpiration` | Every 30min — expires scheduled announcements |
+| `clearOldNotifications` | Daily — notification cleanup |
 
-## 🔧 Environment Variables
+## Models
 
-### Required
+`User`, `Order`, `Bundle`, `Package`, `Provider`, `AgentStorefront`, `StorefrontPricing`, `WalletTransaction`, `PayoutRequest`, `PaystackVerificationTask`, `Commission`, `EarningsTransaction`, `Notification`, `Announcement`, `AuditLog`, `Otp`, `Settings`
 
-- `DBURI` - MongoDB connection string
-- `JWTSECRET` - JWT signing secret (generate a strong random string)
-- `REFRESH_TOKEN_SECRET` - Refresh token secret
-- `EMAIL_USER` - Gmail address for notifications
-- `EMAIL_PASSWORD` - Gmail app password
+## App-Aware Features
 
-### Optional
-
-- `PORT` - Server port (default: 5050)
-- `NODE_ENV` - Environment mode (development/production)
-- `FRONTEND_URL` - Frontend application URL
-
-## 📊 API Endpoints
-
-The API provides comprehensive endpoints for:
-
-- User authentication and management
-- Product and order management
-- Notification management
-- Settings and configuration
-
-### Health Checks
-
-- `GET /` - Welcome page with system status
-- `GET /health` - General health check
-
-## 🔒 Security Features
-
-- JWT-based authentication
-- Password hashing with bcrypt
-- CORS protection
-- Helmet security headers
-- Input validation with Joi
-
-## 📈 Performance
-
-- Connection pooling for database efficiency
-- Optimized queries and indexing
-- Background job processing
-
-## 🧪 Development
-
-```bash
-# Run linter
-npm run lint
-
-# Fix linting issues
-npm run lint:fix
-
-# Check code quality
-npm run build
-```
-
-## 📚 Documentation
-
-API documentation is available in the `/docs/` folder.
-
-## 🚀 Deployment
-
-### Render (Recommended for Free Tier)
-
-1. Connect your GitHub repository
-2. Set environment variables in Render dashboard
-3. Deploy automatically on git push
-
-### Other Platforms
-
-- Vercel
-- Railway
-- Heroku
-- DigitalOcean App Platform
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests and linting
-5. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the ISC License.
-
-## 🆘 Support
-
-For support and questions, please check the documentation or create an issue in the repository.
+The backend differentiates between brands (`app_a` / BryteLinks, `app_b` / Directdata) for:
+- Order number prefixes (ORD-, DRD-)
+- Agent code prefixes (BLA-, DDA-)
+- Storefront prefixes (BAGS-, DDST-)
+- Analytics scoping
+- CORS origin validation
