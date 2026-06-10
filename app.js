@@ -17,7 +17,6 @@ import { initializeReportedOrdersCleanupJob } from "./src/jobs/reportedOrdersCle
 import { initializeCancelledStorefrontOrdersCleanupJob } from "./src/jobs/cancelledStorefrontOrdersCleanup.js";
 import announcementExpirationJob from "./src/jobs/announcementExpiration.js";
 import { initializePendingPaymentExpiryJob } from "./src/jobs/pendingPaymentExpiry.js";
-import { initializeMomoPendingExpiryJob } from "./src/jobs/momoPendingExpiry.js";
 import { schedulePaystackVerificationRetryJob } from "./src/jobs/paystackVerificationRetry.js";
 import { schedulePayoutReconciliationJob } from "./src/jobs/payoutReconciliationJob.js";
 import { scheduleDailyCommissionProcessing } from "./src/jobs/dailyCommissionProcessing.js";
@@ -62,23 +61,10 @@ logger.info("Starting SaaS E-Commerce backend...");
   try {
     await connectDB();
 
-    // One-off immediate cleanup: mark existing pending MoMo top-ups as rejected
-    try {
-      const result = await walletService.markAllPendingMomoAsRejected();
-      logger.info(
-        `[Startup] Auto-rejected ${result.rejectedCount || 0} pending MoMo top-up(s)`,
-      );
-    } catch (err) {
-      logger.warn(
-        `[Startup] Auto-reject pending MoMo top-ups failed: ${err.message}`,
-      );
-    }
-
     // ─── Background Jobs ───────────────────────────────────────────────────────
     scheduleNotificationCleanup();
     initializeReportedOrdersCleanupJob();
     initializePendingPaymentExpiryJob();
-    initializeMomoPendingExpiryJob();
     initializeCancelledStorefrontOrdersCleanupJob();
     announcementExpirationJob();
     // Retry background Paystack verification for storefront orders and wallet top-ups

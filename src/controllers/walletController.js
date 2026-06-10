@@ -665,46 +665,6 @@ class WalletController {
     }
   }
 
-  async initiateMomoTopUp(req, res) {
-    try {
-      const { userId } = req.user;
-      const { amount, phoneNumber } = req.body;
-
-      const result = await walletService.initiateMomoTopUp(
-        userId,
-        parseFloat(amount),
-        phoneNumber,
-      );
-      res.status(202).json({
-        success: true,
-        message: "Payment request sent to your phone. Please approve it.",
-        referenceId: result.referenceId,
-      });
-    } catch (err) {
-      logger.error(`[initiateMomoTopUp] ${err.message}`);
-      res.status(400).json({ success: false, message: err.message });
-    }
-  }
-
-  async verifyMomoTopUp(req, res) {
-    try {
-      const { referenceId } = req.params;
-      const { userId } = req.user;
-
-      const result = await walletService.verifyAndCreditMomoTopUp(
-        userId,
-        referenceId,
-      );
-      res.json({
-        success: true,
-        message: "Wallet credited successfully",
-        transaction: result,
-      });
-    } catch (err) {
-      logger.error(`[verifyMomoTopUp] ${err.message}`);
-      res.status(400).json({ success: false, message: err.message });
-    }
-  }
 }
 
 export default new WalletController();

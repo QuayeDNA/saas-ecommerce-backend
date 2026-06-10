@@ -45,10 +45,6 @@ const settingsSchema = new mongoose.Schema(
     },
 
     // API Settings
-    mtnApiKey: {
-      type: String,
-      default: "",
-    },
     telecelApiKey: {
       type: String,
       default: "",
@@ -68,11 +64,6 @@ const settingsSchema = new mongoose.Schema(
       default: false,
     },
     paystackWalletTopUpEnabled: {
-      type: Boolean,
-      default: false,
-    },
-    // Whether MTN Mobile Money (MoMo) can be used for wallet top-ups
-    mtnWalletTopUpEnabled: {
       type: Boolean,
       default: false,
     },
