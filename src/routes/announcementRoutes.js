@@ -80,11 +80,6 @@ router.get(
   announcementController.getPublicActiveAnnouncements
 );
 
-router.get(
-  "/unread/public",
-  announcementController.getPublicUnreadAnnouncements
-);
-
 router.post("/:id/view", authenticate, announcementController.markAsViewed);
 
 router.post(

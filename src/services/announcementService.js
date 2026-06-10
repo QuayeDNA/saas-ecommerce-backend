@@ -167,13 +167,6 @@ class AnnouncementService {
   }
 
   /**
-   * Get unread announcements for public customers (same as active)
-   */
-  async getUnreadAnnouncementsForPublic(storefront = null) {
-    return this.getActiveAnnouncementsForPublic(storefront);
-  }
-
-  /**
    * Get a single announcement by ID
    */
   async getAnnouncementById(announcementId) {
@@ -430,8 +423,8 @@ class AnnouncementService {
 
       // Get eligible user count
       const query = {};
-      if (announcement.targetAudience !== "all") {
-        query.userType = announcement.targetAudience;
+      if (announcement.targetAudience && announcement.targetAudience.length > 0) {
+        query.userType = { $in: announcement.targetAudience };
       }
       const totalEligibleUsers = await User.countDocuments(query);
 
