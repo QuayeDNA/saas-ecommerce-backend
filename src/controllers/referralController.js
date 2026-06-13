@@ -1,4 +1,5 @@
 import referralService from "../services/referralService.js";
+import analyticsService from "../services/analyticsService.js";
 
 class ReferralController {
   async getDashboard(req, res, next) {
@@ -16,9 +17,10 @@ class ReferralController {
 
   async getLeaderboard(req, res, next) {
     try {
-      const { timeframe, limit } = req.query;
+      const { timeframe, page, limit } = req.query;
       const data = await referralService.getLeaderboard(
         timeframe || "all-time",
+        parseInt(page) || 1,
         parseInt(limit) || 20,
       );
       res.json({ success: true, data });
@@ -43,7 +45,7 @@ class ReferralController {
 
   async getAdminStats(req, res, next) {
     try {
-      const data = await referralService.getAdminStats();
+      const data = await analyticsService.getReferralStatistics();
       res.json({ success: true, data });
     } catch (error) {
       next(error);
@@ -59,6 +61,18 @@ class ReferralController {
       );
       res.json({ success: true, data });
     } catch (error) {
+      next(error);
+    }
+  }
+
+  async getAdminUserDetail(req, res, next) {
+    try {
+      const data = await referralService.getAdminUserDetail(req.params.id);
+      res.json({ success: true, data });
+    } catch (error) {
+      if (error.message === "User not found") {
+        return res.status(404).json({ success: false, message: error.message });
+      }
       next(error);
     }
   }

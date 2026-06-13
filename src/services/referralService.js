@@ -58,18 +58,18 @@ class ReferralService {
     };
   }
 
-  async getLeaderboard(timeframe = "all-time", limit = 20) {
-    const match = { status: "credited" };
+  async getLeaderboard(timeframe = "all-time", page = 1, limit = 20) {
+    const match = {};
 
-    if (timeframe !== "all-time") {
+    if (timeframe !== "all-time" && timeframe !== "all") {
       const now = new Date();
       let startDate;
-      if (timeframe === "this-month") {
+      if (timeframe === "this-month" || timeframe === "monthly") {
         startDate = new Date(now.getFullYear(), now.getMonth(), 1);
       } else if (timeframe === "this-quarter") {
         const quarterStartMonth = Math.floor(now.getMonth() / 3) * 3;
         startDate = new Date(now.getFullYear(), quarterStartMonth, 1);
-      } else if (timeframe === "this-week") {
+      } else if (timeframe === "this-week" || timeframe === "weekly") {
         const day = now.getDay();
         startDate = new Date(now);
         startDate.setDate(now.getDate() - day);
@@ -78,43 +78,76 @@ class ReferralService {
       if (startDate) match.createdAt = { $gte: startDate };
     }
 
-    const leaderboard = await Commission.aggregate([
-      { $match: match },
-      {
-        $group: {
-          _id: "$referrer",
-          commissionsEarned: { $sum: "$amount" },
-          totalOrders: { $sum: "$ordersCount" },
-          totalReferred: { $sum: "$qualifiedUsersCount" },
-          batchCount: { $sum: 1 },
+    const allReferrerIds = await User.distinct("referredBy", {
+      referredBy: { $exists: true, $ne: null },
+    });
+
+    if (allReferrerIds.length === 0) {
+      return { entries: [], pagination: { page, limit, total: 0, totalPages: 0, hasNext: false, hasPrev: false } };
+    }
+
+    const [referralCounts, commissionAgg] = await Promise.all([
+      User.aggregate([
+        { $match: { referredBy: { $in: allReferrerIds } } },
+        { $group: { _id: "$referredBy", count: { $sum: 1 } } },
+      ]),
+      Commission.aggregate([
+        { $match: { referrer: { $in: allReferrerIds }, status: "credited", ...match } },
+        {
+          $group: {
+            _id: "$referrer",
+            commissionsEarned: { $sum: "$amount" },
+            totalOrders: { $sum: "$ordersCount" },
+            batchCount: { $sum: 1 },
+          },
         },
-      },
-      { $sort: { commissionsEarned: -1 } },
-      { $limit: limit },
-      {
-        $lookup: {
-          from: "users",
-          localField: "_id",
-          foreignField: "_id",
-          as: "referrer",
-        },
-      },
-      { $unwind: "$referrer" },
-      {
-        $project: {
-          _id: 0,
-          referrerId: "$referrer._id",
-          fullName: "$referrer.fullName",
-          referralCode: "$referrer.referralCode",
-          commissionsEarned: 1,
-          totalOrders: 1,
-          totalReferred: 1,
-          batchCount: 1,
-        },
-      },
+      ]),
     ]);
 
-    return leaderboard;
+    const countMap = {};
+    for (const r of referralCounts) {
+      countMap[r._id.toString()] = r.count;
+    }
+
+    const commissionMap = {};
+    for (const c of commissionAgg) {
+      commissionMap[c._id.toString()] = c;
+    }
+
+    const referrerUsers = await User.find({ _id: { $in: allReferrerIds } })
+      .select("fullName referralCode")
+      .lean();
+
+    let entries = referrerUsers
+      .map((u) => ({
+        referrerId: u._id,
+        fullName: u.fullName,
+        referralCode: u.referralCode,
+        commissionsEarned: commissionMap[u._id.toString()]?.commissionsEarned || 0,
+        totalOrders: commissionMap[u._id.toString()]?.totalOrders || 0,
+        totalReferred: countMap[u._id.toString()] || 0,
+        batchCount: commissionMap[u._id.toString()]?.batchCount || 0,
+      }))
+      .filter((e) => e.totalReferred > 0);
+
+    entries.sort((a, b) => b.totalReferred - a.totalReferred);
+
+    const total = entries.length;
+    const totalPages = Math.ceil(total / limit);
+    const skip = (page - 1) * limit;
+    const paginated = entries.slice(skip, skip + limit);
+
+    return {
+      entries: paginated,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNext: page * limit < total,
+        hasPrev: page > 1,
+      },
+    };
   }
 
   async getReferralTree(userId, depth = 2) {
@@ -151,11 +184,35 @@ class ReferralService {
 
     const descendants = result.descendants || [];
 
+    const allDescendantIds = descendants.map((d) => d._id);
+    const orderCounts = await Order.aggregate([
+      { $match: { createdBy: { $in: allDescendantIds } } },
+      { $group: { _id: "$createdBy", count: { $sum: 1 } } },
+    ]);
+    const orderMap = {};
+    for (const o of orderCounts) {
+      orderMap[o._id.toString()] = o.count;
+    }
+
+    const injectOrders = (nodes) =>
+      nodes.map((d) => ({
+        user: {
+          _id: d._id,
+          fullName: d.fullName,
+          email: d.email,
+          phone: d.phone,
+          referralCode: d.referralCode,
+          createdAt: d.createdAt,
+          totalOrders: orderMap[d._id.toString()] || 0,
+        },
+        children: [],
+      }));
+
     const buildTree = (parentId, currentDepth) => {
       if (currentDepth >= depth) return [];
       return descendants
-        .filter(d => d.referredBy && d.referredBy.toString() === parentId.toString())
-        .map(d => ({
+        .filter((d) => d.referredBy && d.referredBy.toString() === parentId.toString())
+        .map((d) => ({
           user: {
             _id: d._id,
             fullName: d.fullName,
@@ -163,12 +220,16 @@ class ReferralService {
             phone: d.phone,
             referralCode: d.referralCode,
             createdAt: d.createdAt,
+            totalOrders: orderMap[d._id.toString()] || 0,
           },
           children: buildTree(d._id, currentDepth + 1),
         }));
     };
 
-    return buildTree(userId, 0);
+    const tree = buildTree(userId, 0);
+    if (tree.length === 0) return [];
+
+    return tree;
   }
 
   async getAdminStats() {
@@ -251,7 +312,7 @@ class ReferralService {
 
     const [users, total] = await Promise.all([
       User.find(query)
-        .select("fullName email phone referralCode referredBy status createdAt walletBalance commissionBalance")
+        .select("fullName email phone referralCode referredBy status createdAt")
         .populate("referredBy", "fullName email referralCode")
         .sort({ [sortBy]: sortOrder })
         .skip(skip)
@@ -261,41 +322,19 @@ class ReferralService {
     ]);
 
     const userIds = users.map((u) => u._id);
-
-    const commissionStats = await Commission.aggregate([
-      { $match: { referrer: { $in: userIds } } },
-      {
-        $group: {
-          _id: "$referrer",
-          totalEarned: {
-            $sum: { $cond: [{ $eq: ["$status", "credited"] }, "$amount", 0] },
-          },
-          totalOrders: { $sum: "$ordersCount" },
-          batchCount: { $sum: 1 },
-        },
-      },
+    const orderCounts = await Order.aggregate([
+      { $match: { createdBy: { $in: userIds } } },
+      { $group: { _id: "$createdBy", count: { $sum: 1 } } },
     ]);
-
-    const statsMap = {};
-    for (const s of commissionStats) {
-      statsMap[s._id.toString()] = s;
+    const orderCountMap = {};
+    for (const o of orderCounts) {
+      orderCountMap[o._id.toString()] = o.count;
     }
 
-    const enriched = users.map((u) => {
-      const stats = statsMap[u._id.toString()] || {
-        totalEarned: 0,
-        totalOrders: 0,
-        batchCount: 0,
-      };
-      return {
-        ...u,
-        commissionStats: {
-          totalEarned: stats.totalEarned,
-          totalOrders: stats.totalOrders,
-          batchCount: stats.batchCount,
-        },
-      };
-    });
+    const enriched = users.map((u) => ({
+      ...u,
+      orderCount: orderCountMap[u._id.toString()] || 0,
+    }));
 
     return {
       users: enriched,
@@ -306,6 +345,73 @@ class ReferralService {
         totalPages: Math.ceil(total / limit),
         hasNext: page * limit < total,
         hasPrev: page > 1,
+      },
+    };
+  }
+
+  async getAdminUserDetail(userId) {
+    const user = await User.findById(userId)
+      .select("fullName email phone referralCode referredBy status createdAt walletBalance commissionBalance")
+      .populate("referredBy", "fullName email referralCode")
+      .lean();
+    if (!user) throw new Error("User not found");
+
+    const [referralCount, orderStats, commissionStats] = await Promise.all([
+      User.countDocuments({ referredBy: userId }),
+      Order.aggregate([
+        { $match: { createdBy: new mongoose.Types.ObjectId(userId) } },
+        {
+          $group: {
+            _id: null,
+            totalOrders: { $sum: 1 },
+            totalValue: { $sum: "$total" },
+            lastOrderDate: { $max: "$createdAt" },
+          },
+        },
+      ]),
+      Commission.aggregate([
+        { $match: { referrer: new mongoose.Types.ObjectId(userId) } },
+        {
+          $group: {
+            _id: null,
+            totalEarned: {
+              $sum: { $cond: [{ $eq: ["$status", "credited"] }, "$amount", 0] },
+            },
+            batchCount: { $sum: 1 },
+            totalCommissionOrders: { $sum: "$ordersCount" },
+          },
+        },
+      ]),
+    ]);
+
+    const orders = orderStats[0] || {
+      totalOrders: 0, totalValue: 0, lastOrderDate: null,
+    };
+    const commissions = commissionStats[0] || {
+      totalEarned: 0, batchCount: 0, totalCommissionOrders: 0,
+    };
+
+    return {
+      _id: user._id,
+      fullName: user.fullName,
+      email: user.email,
+      phone: user.phone,
+      referralCode: user.referralCode,
+      referredBy: user.referredBy || null,
+      status: user.status,
+      createdAt: user.createdAt,
+      walletBalance: user.walletBalance || 0,
+      commissionBalance: user.commissionBalance || 0,
+      totalReferred: referralCount,
+      orderStats: {
+        totalOrders: orders.totalOrders,
+        totalOrderValue: orders.totalValue,
+        lastOrderDate: orders.lastOrderDate,
+      },
+      commissionAsReferrer: {
+        totalEarned: commissions.totalEarned,
+        totalOrders: commissions.totalCommissionOrders,
+        batchCount: commissions.batchCount,
       },
     };
   }

@@ -24,5 +24,10 @@ router.get(
   authorize("super_admin", "admin"),
   referralController.getAdminUsers,
 );
+router.get(
+  "/admin/users/:id",
+  authorize("super_admin", "admin"),
+  referralController.getAdminUserDetail,
+);
 
 export default router;

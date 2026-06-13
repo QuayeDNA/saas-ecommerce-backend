@@ -2284,33 +2284,52 @@ class AnalyticsService {
         referredBy: { $exists: true, $ne: null },
       });
 
-      const [commissionAgg, referredCount] = await Promise.all([
-        Commission.aggregate([
-          { $match: { status: "credited", ...match } },
-          {
-            $group: {
-              _id: null,
-              totalCommissionsPaid: { $sum: "$amount" },
-              totalOrdersFromReferrals: { $sum: "$ordersCount" },
-              activeReferrers: { $addToSet: "$referrer" },
+      const allReferredUserIds = await User.find({
+        referredBy: { $exists: true, $ne: null },
+      }).distinct("_id");
+
+      const [commissionAgg, referredCount, referredWithOrdersCount] =
+        await Promise.all([
+          Commission.aggregate([
+            { $match: { status: "credited", ...match } },
+            {
+              $group: {
+                _id: null,
+                totalCommissionsPaid: { $sum: "$amount" },
+                totalOrdersFromReferrals: { $sum: "$ordersCount" },
+                totalBatches: { $sum: 1 },
+                activeReferrers: { $addToSet: "$referrer" },
+              },
             },
-          },
-        ]),
-        User.countDocuments({ referredBy: { $exists: true, $ne: null } }),
-      ]);
+          ]),
+          User.countDocuments({ referredBy: { $exists: true, $ne: null } }),
+          Order.distinct("createdBy", {
+            createdBy: { $in: allReferredUserIds },
+          }),
+        ]);
 
       const data = commissionAgg[0] || {
         totalCommissionsPaid: 0,
         totalOrdersFromReferrals: 0,
+        totalBatches: 0,
         activeReferrers: [],
       };
+
+      const referredWithOrders = referredWithOrdersCount.length;
+      const referralConversionRate =
+        referredCount > 0
+          ? Math.round((referredWithOrders / referredCount) * 10000) / 100
+          : 0;
 
       return {
         totalReferrers,
         activeReferrers: data.activeReferrers?.length || 0,
         totalCommissionsPaid: data.totalCommissionsPaid,
         totalOrdersFromReferrals: data.totalOrdersFromReferrals,
+        totalBatches: data.totalBatches,
         totalReferred: referredCount,
+        referredWithOrders,
+        referralConversionRate,
       };
     } catch (error) {
       logger.error(`Referral statistics error: ${error.message}`);
@@ -2319,7 +2338,10 @@ class AnalyticsService {
         activeReferrers: 0,
         totalCommissionsPaid: 0,
         totalOrdersFromReferrals: 0,
+        totalBatches: 0,
         totalReferred: 0,
+        referredWithOrders: 0,
+        referralConversionRate: 0,
       };
     }
   }
