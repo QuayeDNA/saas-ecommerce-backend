@@ -6,6 +6,10 @@ import {
 } from "../utils/orderNumberGenerator.js";
 import { getCurrentRequestContext } from "../utils/requestContext.js";
 import { normalizeAppId } from "../utils/appContextResolver.js";
+import {
+  STOREFRONT_PAYMENT_METHODS,
+  ALL_PAYMENT_METHODS,
+} from "../constants/paymentMethods.js";
 
 const orderItemSchema = new mongoose.Schema(
   {
@@ -126,7 +130,7 @@ const orderSchema = new mongoose.Schema(
       paymentMethod: {
         type: {
           type: String,
-          enum: ["mobile_money", "bank_transfer", "paystack"],
+          enum: STOREFRONT_PAYMENT_METHODS,
           required: function () {
             return this.orderType === "storefront";
           },
@@ -235,7 +239,7 @@ const orderSchema = new mongoose.Schema(
     },
     paymentMethod: {
       type: String,
-      enum: ["cash", "card", "mobile_money", "bank_transfer", "wallet"],
+      enum: ALL_PAYMENT_METHODS,
       default: "wallet",
     },
     paymentReference: String,

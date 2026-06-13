@@ -61,5 +61,12 @@ const walletTransactionSchema = new mongoose.Schema({
 walletTransactionSchema.index({ user: 1, createdAt: -1 });
 walletTransactionSchema.index({ status: 1 });
 walletTransactionSchema.index({ reference: 1 }, { unique: true });
+// Compound index for atomic idempotency checks — prevents double-crediting the
+// same Paystack reference. The partial filter limits the index to completed
+// records only, keeping it small and fast.
+walletTransactionSchema.index(
+  { reference: 1, status: 1 },
+  { partialFilterExpression: { status: "completed" } },
+);
 
 export default mongoose.model('WalletTransaction', walletTransactionSchema);

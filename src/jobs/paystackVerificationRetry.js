@@ -3,6 +3,7 @@ import cron from "node-cron";
 import paystackService from "../services/paystackService.js";
 import storefrontService from "../services/storefrontService.js";
 import Order from "../models/Order.js";
+import WalletTransaction from "../models/WalletTransaction.js";
 import PaystackVerificationTask from "../models/PaystackVerificationTask.js";
 import logger from "../utils/logger.js";
 
@@ -133,8 +134,7 @@ function schedulePaystackVerificationRetryJob() {
     async () => {
       logger.info("=== Paystack verification retry job started ===");
       try {
-        // Seed tasks for any storefront orders that are stuck in pending_payment
-        // (e.g. payment succeeded but verification endpoint call failed).
+        // Seed tasks for any storefront orders stuck in pending_payment.
         const strandedOrders = await Order.find({
           orderType: "storefront",
           status: "pending_payment",
@@ -156,6 +156,34 @@ function schedulePaystackVerificationRetryJob() {
             );
           } catch (err) {
             // ignore duplicates or other transient issues
+          }
+        }
+
+        // Seed tasks for wallet top-up transactions stuck in "processing" state.
+        // These are transactions where the Paystack payment was received but the
+        // webhook may have failed and the atomic idempotency guard left them in
+        // "processing" status (mid-credit crash recovery path).
+        const strandedWalletTxns = await WalletTransaction.find({
+          type: "credit",
+          status: "processing",
+          reference: /^wallet_/,
+        })
+          .limit(50)
+          .lean();
+        for (const txn of strandedWalletTxns) {
+          try {
+            await PaystackVerificationTask.updateOne(
+              { reference: txn.reference },
+              {
+                $setOnInsert: {
+                  kind: "wallet",
+                  userId: txn.user,
+                },
+              },
+              { upsert: true },
+            );
+          } catch (err) {
+            // ignore
           }
         }
 

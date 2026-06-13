@@ -130,9 +130,12 @@ class StorefrontController {
         const customerPhone = (
           order.storefrontData.customerInfo?.phone || ""
         ).replace(/\D/g, "");
+        // Use customer email when available, otherwise generate a deterministic
+        // email so Paystack always has a valid recipient. Never use the agent's
+        // email here — Paystack sends receipts to this address.
         const customerEmail =
           rawCustomerEmail ||
-          `customer-${customerPhone}@storefront.brytelink.com`;
+          `customer-${order._id}@storefront.paystack`;
 
         await paystackService.ensureKeys().catch((e) =>
           logger.warn("[createStorefrontOrder] ensureKeys failed", {
@@ -154,7 +157,7 @@ class StorefrontController {
           ? process.env.PUBLIC_URL.replace(/\/$/, "")
           : null;
         const callbackUrl = publicBase
-          ? `${publicBase}/wallet/topup/callback`
+          ? `${publicBase}/storefront/callback`
           : `${frontendBase}/storefront/callback`;
 
         const init = await initializePaystackCheckout({
@@ -164,10 +167,17 @@ class StorefrontController {
           callbackUrl,
           metadata: {
             // orderId in metadata is kept for backward compatibility with old webhook handlers
+            type: "storefront",
             orderId: order._id.toString(),
             orderNumber: order.orderNumber,
             storefrontId: order.storefrontData.storefrontId?.toString(),
           },
+        });
+
+        // Persist the actual Paystack reference on the order so retry verification
+        // always uses the correct reference regardless of the client-provided one.
+        await Order.findByIdAndUpdate(order._id, {
+          "storefrontData.paymentMethod.reference": reference,
         });
 
         // Build response – include fee breakdown when fees were delegated

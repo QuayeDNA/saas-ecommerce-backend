@@ -247,6 +247,8 @@ class WalletController {
         message: "Paystack checkout ready",
         data: {
           reference: result.reference,
+          accessCode: result.accessCode,
+          authorizationUrl: result.authorizationUrl,
           publicKey: result.publicKey || null,
           amount: result.amount,
           chargeAmount: result.chargeAmount,

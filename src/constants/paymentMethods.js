@@ -1,0 +1,16 @@
+export const PAYMENT_METHOD_TYPES = {
+  CASH: "cash",
+  CARD: "card",
+  MOBILE_MONEY: "mobile_money",
+  BANK_TRANSFER: "bank_transfer",
+  WALLET: "wallet",
+  PAYSTACK: "paystack",
+};
+
+export const ALL_PAYMENT_METHODS = Object.values(PAYMENT_METHOD_TYPES);
+
+export const STOREFRONT_PAYMENT_METHODS = [
+  PAYMENT_METHOD_TYPES.MOBILE_MONEY,
+  PAYMENT_METHOD_TYPES.BANK_TRANSFER,
+  PAYMENT_METHOD_TYPES.PAYSTACK,
+];

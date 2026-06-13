@@ -81,8 +81,9 @@ class PaystackController {
         message: err.message,
         stack: err.stack,
       });
-      // Return 200 to avoid retry storms, but log the error for investigation
-      return res.status(200).json({ received: true, error: err.message });
+      // Return 500 so Paystack retries the webhook (up to 72h for live mode).
+      // Returning 200 on error would silently swallow failures and lose payments.
+      return res.status(500).json({ error: "Webhook processing failed" });
     }
   }
 

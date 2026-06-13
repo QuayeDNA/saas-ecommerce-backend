@@ -34,6 +34,10 @@ const paystackVerificationTaskSchema = new mongoose.Schema(
     },
     lastAttemptAt: Date,
     lastError: String,
+    metadata: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
   },
   {
     timestamps: true,

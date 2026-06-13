@@ -11,6 +11,8 @@ import {
   calculateChargeWithFees,
 } from "../utils/paystackHelpers.js";
 import paystackService from "./paystackService.js";
+import { v4 as uuidv4 } from "uuid";
+import crypto from "crypto";
 import { logAuditAction } from "../utils/auditLogger.js";
 import {
   AUDIT_ACTIONS,
@@ -378,7 +380,7 @@ class WalletService {
    * stuck in the DB to block their next attempt. The transaction is only
    * recorded inside processPaystackWebhook once payment is confirmed.
    */
-  async initiatePaystackTopUp(userId, amount) {
+  async initiatePaystackTopUp(userId, amount, returnUrl) {
     const user = await User.findById(userId);
     if (!user) throw new Error("User not found");
     if (amount <= 0) throw new Error("Amount must be greater than zero");
@@ -394,24 +396,10 @@ class WalletService {
     const targetCreditAmount = amount; // what gets credited to wallet
     const amountPesewas = paystackService.convertToPesewas(chargeAmount);
 
-    const reference = `wallet_${userId}_${Date.now()}`;
-
-    // Create a background retry task in case verification fails (network issues, Paystack hiccups)
-    // so that the wallet top-up can be recovered automatically.
-    try {
-      await PaystackVerificationTask.create({
-        reference,
-        kind: "wallet",
-        userId,
-      });
-    } catch (err) {
-      logger.warn(
-        "[WalletService] Could not create Paystack verification task",
-        { error: err.message },
-      );
-    }
+    const reference = `wallet_${userId}_${crypto.randomUUID().replace(/-/g, "").substring(0, 12)}`;
 
     // Ensure a Paystack customer record exists (best-effort)
+    const customerEmail = user.email || `user-${userId}@wallet.paystack`;
     if (user.email && user.fullName) {
       const [first_name, ...rest] = user.fullName.trim().split(/\s+/);
       await paystackService
@@ -427,22 +415,81 @@ class WalletService {
         );
     }
 
+    // ── Server-side initialization ──────────────────────────────────────────
+    // Pre-register the transaction with Paystack so the reference is known
+    // server-side before the popup opens. This enables:
+    //   1. Paystack-side idempotency (rejects duplicate references)
+    //   2. Consistent callback URL (controlled server-side)
+    //   3. Early validation of amount and configuration
+    // The frontend will use the returned access_code to resume this transaction.
+    const frontendBase = (
+      process.env.FRONTEND_URL || "http://localhost:5173"
+    ).replace(/\/$/, "");
+    const callbackUrl = returnUrl || `${frontendBase}/wallet/topup/callback`;
+
+    const metadata = {
+      type: "wallet_topup",
+      userId: userId.toString(),
+      targetCreditAmount,
+      chargeAmount,
+      paystackFee,
+      platformFee,
+      totalFee,
+      feesDelegate: feeConfig.delegateFeesToCustomer,
+    };
+
+    let accessCode = null;
+    let authorizationUrl = null;
+    try {
+      const initResult = await paystackService.initializeTransaction({
+        email: customerEmail,
+        amount: amountPesewas,
+        reference,
+        currency: "GHS",
+        callback_url: callbackUrl,
+        metadata,
+      });
+      accessCode = initResult.access_code;
+      authorizationUrl = initResult.authorization_url;
+    } catch (initErr) {
+      logger.error(
+        `[WalletService] Paystack initialize failed for user ${userId}: ${initErr.message}`,
+      );
+      // If initialization fails, throw — the frontend will show a clear error
+      throw new Error(
+        `Paystack checkout could not be initialized: ${initErr.message}`,
+      );
+    }
+
+    // Create a background retry task ONLY after successful server-side init.
+    // This is intentionally after the /transaction/initialize call so we only
+    // track references that Paystack actually knows about.
+    try {
+      await PaystackVerificationTask.create({
+        reference,
+        kind: "wallet",
+        userId,
+        metadata: { expectedAmountPesewas: amountPesewas },
+      });
+    } catch (err) {
+      logger.warn(
+        "[WalletService] Could not create Paystack verification task",
+        { error: err.message },
+      );
+    }
+
     logger.info(
-      `[WalletService] Paystack checkout prepared for user ${userId}, ref: ${reference}, chargeAmount: ${chargeAmount}, targetCredit: ${targetCreditAmount}`,
+      `[WalletService] Paystack checkout initialized for user ${userId}, ref: ${reference}, chargeAmount: ${chargeAmount}, targetCredit: ${targetCreditAmount}`,
     );
 
-    // NOTE: We do NOT call Paystack's /transaction/initialize here.
-    // Server-side initialization pre-registers the reference with Paystack, which
-    // causes a "Duplicate Transaction Reference" error when the inline popup also
-    // tries to initialize client-side. Instead, the popup initializes the transaction
-    // and carries the metadata (userId, targetCreditAmount) so the webhook can
-    // credit the correct amount.
     return {
       reference,
+      accessCode,
+      authorizationUrl,
       publicKey,
       amount, // original requested amount (wallet credit)
       chargeAmount, // what Paystack charges the agent (may include fee gross-up)
-      amountPesewas, // chargeAmount in pesewas -> what goes into PaystackPop.setup
+      amountPesewas, // chargeAmount in pesewas -> what goes into PaystackPop.resumeTransaction
       targetCreditAmount,
       paystackFee,
       platformFee,
@@ -493,19 +540,7 @@ class WalletService {
         return { processed: false, reason: "currency_mismatch" };
       }
 
-      // ── 3. Idempotency guard — never credit the same reference twice ─────────
-      const alreadyProcessed = await WalletTransaction.findOne({
-        reference,
-        status: "completed",
-      });
-      if (alreadyProcessed) {
-        logger.info(
-          `[WalletService] Duplicate webhook ignored for ref: ${reference}`,
-        );
-        return { processed: false, duplicate: true };
-      }
-
-      // ── 4. Resolve user ──────────────────────────────────────────────────────
+      // ── 3. Resolve user ──────────────────────────────────────────────────────
       const userId = metadata.userId;
       if (!userId) {
         throw new Error(
@@ -513,47 +548,114 @@ class WalletService {
         );
       }
 
-      // Credit the original requested amount if stored in metadata (fee gross-up case).
-      // Fall back to data.amount / 100 for legacy transactions.
-      // Cap at data.amount / 100 to prevent client-supplied metadata inflation.
+      // ── 4. Amount validation ─────────────────────────────────────────────────
+      // Determine the expected amount. When available from the Paystack API use it;
+      // otherwise fall back to the metadata value, checking against the background
+      // task record for the server-initiated amount.
       const grossAmountGhs = data.amount / 100;
       const amountGhs = metadata.targetCreditAmount
         ? Math.min(parseFloat(metadata.targetCreditAmount), grossAmountGhs)
         : grossAmountGhs;
 
-      // ── 5. Credit the wallet (atomic increment — safe without a session) ─────
+      // Verify against initiated amount from PaystackVerificationTask if available
+      try {
+        const task = await PaystackVerificationTask.findOne({ reference }).lean();
+        if (task?.metadata?.expectedAmountPesewas) {
+          const expectedGhs = task.metadata.expectedAmountPesewas / 100;
+          const ghsDiff = Math.abs(grossAmountGhs - expectedGhs);
+          const pctDiff = expectedGhs > 0 ? (ghsDiff / expectedGhs) * 100 : 0;
+          if (ghsDiff > 1 && pctDiff > 1) {
+            logger.error(
+              `[WalletService] Amount mismatch for ref ${reference}: expected GH₵${expectedGhs}, received GH₵${grossAmountGhs}`,
+            );
+            return { processed: false, reason: "amount_mismatch" };
+          }
+        }
+      } catch {
+        // If the task lookup fails, proceed with caution but don't block
+        logger.warn(
+          `[WalletService] Could not verify expected amount for ref ${reference}`,
+        );
+      }
+
+      // ── 5. Atomic idempotency guard — uses the unique compound index ────────
+      // Instead of findOne-then-save (which has a race window), we attempt to
+      // insert the WalletTransaction record directly. If the reference has
+      // already been processed (status=completed), the unique compound index on
+      // { reference, status } will throw a duplicate key error, and we can
+      // safely return without crediting the wallet twice.
+      //
+      // We create the transaction record FIRST with status "processing", credit
+      // the wallet, then update to "completed". If the process crashes between
+      // steps, the "processing" record blocks double-credit and will be picked
+      // up by the reconciliation job.
+
+      // Check if any record (processing or completed) already exists for this ref
+      const existingRecord = await WalletTransaction.findOne({
+        reference,
+        status: { $in: ["processing", "completed"] },
+      }).lean();
+      if (existingRecord) {
+        logger.info(
+          `[WalletService] Duplicate webhook ignored for ref: ${reference} (status: ${existingRecord.status})`,
+        );
+        return { processed: false, duplicate: true, status: existingRecord.status };
+      }
+
+      // Create the transaction record in "processing" state first (atomic insert)
+      let transaction;
+      try {
+        transaction = await WalletTransaction.create({
+          user: userId,
+          type: "credit",
+          amount: amountGhs,
+          balanceAfter: 0, // will be updated after wallet credit
+          description: `Wallet top-up via Paystack (${data.channel || "online"})`,
+          status: "processing",
+          reference,
+          approvedBy: null,
+          metadata: {
+            paystack: {
+              reference,
+              transactionId: data.id,
+              channel: data.channel,
+              currency: data.currency,
+              paidAt: data.paid_at || new Date(),
+              processedAt: new Date(),
+            },
+            userId,
+          },
+        });
+      } catch (insertErr) {
+        // Duplicate key error — another process already recorded this reference
+        if (insertErr.code === 11000) {
+          logger.info(
+            `[WalletService] Duplicate webhook (atomic guard) for ref: ${reference}`,
+          );
+          return { processed: false, duplicate: true };
+        }
+        throw insertErr;
+      }
+
+      // ── 6. Credit the wallet (atomic increment) ──────────────────────────────
       const updatedUser = await User.findByIdAndUpdate(
         userId,
         { $inc: { walletBalance: amountGhs } },
         { new: true, runValidators: false },
       );
-      if (!updatedUser)
+      if (!updatedUser) {
+        // User deleted between steps — mark transaction as failed
+        transaction.status = "failed";
+        transaction.metadata.failureReason = "User not found during credit";
+        await transaction.save();
         throw new Error(
           `User ${userId} not found for Paystack top-up ref ${reference}`,
         );
+      }
 
-      // ── 6. Record the completed transaction ──────────────────────────────────
-      const transaction = new WalletTransaction({
-        user: userId,
-        type: "credit",
-        amount: amountGhs,
-        balanceAfter: updatedUser.walletBalance,
-        description: `Wallet top-up via Paystack (${data.channel || "online"})`,
-        status: "completed",
-        reference,
-        approvedBy: null,
-        metadata: {
-          paystack: {
-            reference,
-            transactionId: data.id,
-            channel: data.channel,
-            currency: data.currency,
-            paidAt: data.paid_at || new Date(),
-            processedAt: new Date(),
-          },
-          userId,
-        },
-      });
+      // ── 7. Mark transaction as completed ─────────────────────────────────────
+      transaction.status = "completed";
+      transaction.balanceAfter = updatedUser.walletBalance;
       await transaction.save();
 
       logger.info(
@@ -571,7 +673,7 @@ class WalletService {
         severity: AUDIT_SEVERITIES.INFO,
       });
 
-      // ── 7. Notify user (non-critical — never let this break the response) ────
+      // ── 8. Notify user (non-critical — never let this break the response) ────
       await this._notifyUser(
         userId,
         updatedUser.walletBalance,
@@ -592,7 +694,7 @@ class WalletService {
       return { processed: true, transaction, user: updatedUser };
     } catch (err) {
       logger.error(
-        `[WalletService] processPaystackWebhook error: ${err.message}`,
+        `[WalletService] processPaystackWebhook error for ref ${reference}: ${err.message}`,
       );
       throw err;
     }

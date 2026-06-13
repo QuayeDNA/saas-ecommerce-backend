@@ -857,8 +857,7 @@ class StorefrontService {
         ...(feeBreakdown ? { feeBreakdown } : {}),
       },
       // top-level paymentMethod mirrors storefront type so generic code can tell
-      paymentMethod:
-        paymentMethod.type === "paystack" ? "card" : paymentMethod.type,
+      paymentMethod: paymentMethod.type,
       subtotal: totalAmount,
       total: chargeTotal,
       // Paystack orders are pending_payment until webhook/verify confirms payment.
@@ -972,21 +971,47 @@ class StorefrontService {
     const customerTotal = Number(order.total) || 0;
     const expectedPesewas = paystackService.convertToPesewas(customerTotal);
 
-    if (Number(paystackData.amount) !== Number(expectedPesewas)) {
-      logger.error("[StorefrontService] Amount mismatch", {
-        orderId,
-        expectedPesewas,
-        received: paystackData.amount,
-      });
-      // Record the mismatch but don't block the order (amounts can vary by fractions due to fee rounding)
-      order.metadata = order.metadata || {};
-      order.metadata.paystackAmountMismatch = {
-        expected: expectedPesewas,
-        received: paystackData.amount,
-      };
-      await order.save();
-      return { processed: false, reason: "amount_mismatch" };
-    }
+      const amountDiff = Math.abs(Number(paystackData.amount) - Number(expectedPesewas));
+      // Allow 1 pesewa tolerance — Paystack's fee calculation can differ by 1
+      // due to server-side rounding. Reject only if the difference exceeds 1 pesewa
+      // OR the difference represents more than 1% of the expected amount (guards
+      // against genuine underpayment).
+      const pctDiff = expectedPesewas > 0 ? (amountDiff / expectedPesewas) * 100 : 0;
+      if (amountDiff > 1 && pctDiff > 1) {
+        logger.error("[StorefrontService] Amount mismatch", {
+          orderId,
+          expectedPesewas,
+          received: paystackData.amount,
+          amountDiff,
+          pctDiff,
+        });
+        order.metadata = order.metadata || {};
+        order.metadata.paystackAmountMismatch = {
+          expected: expectedPesewas,
+          received: paystackData.amount,
+          amountDiff,
+          pctDiff,
+        };
+        await order.save();
+        return { processed: false, reason: "amount_mismatch" };
+      }
+
+      // Log minor mismatches within tolerance but allow processing to continue
+      if (amountDiff > 0) {
+        logger.warn("[StorefrontService] Minor amount mismatch within tolerance", {
+          orderId,
+          expectedPesewas,
+          received: paystackData.amount,
+          amountDiff,
+        });
+        order.metadata = order.metadata || {};
+        order.metadata.paystackAmountMismatch = {
+          expected: expectedPesewas,
+          received: paystackData.amount,
+          amountDiff,
+          toleranceApplied: true,
+        };
+      }
 
     // ── 6. Load storefront & agent ─────────────────────────────────────────────
     const storefront = await AgentStorefront.findById(

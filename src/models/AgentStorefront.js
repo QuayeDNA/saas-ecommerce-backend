@@ -1,5 +1,6 @@
 // src/models/AgentStorefront.js
 import mongoose from 'mongoose';
+import { STOREFRONT_PAYMENT_METHODS } from '../constants/paymentMethods.js';
 
 function slugifyBusinessName(value) {
   if (!value) return value;
@@ -60,7 +61,7 @@ const agentStorefrontSchema = new mongoose.Schema({
   paymentMethods: [{
     type: { 
       type: String, 
-      enum: ['mobile_money', 'bank_transfer', 'paystack'], 
+      enum: STOREFRONT_PAYMENT_METHODS, 
       required: true 
     },
     details: {
