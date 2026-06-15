@@ -90,8 +90,7 @@ app.use(
         process.env.STOREFRONT_URL, // dedicated public-store domain
         "https://brytelinks.com",
         "https://www.brytelinks.com",
-        "https://brytelink-chi.vercel.app",
-        "https://saas-ecommerce.vercel.app",
+        "https://directdata.shop"
       ].filter(Boolean);
 
       // Allow requests with no origin (mobile apps, curl, Postman, etc.)
