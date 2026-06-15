@@ -4,6 +4,7 @@ import Package from "../models/Package.js";
 import Provider from "../models/Provider.js";
 import logger from "../utils/logger.js";
 import { enhanceBundleWithPricing } from "../utils/pricingHelpers.js";
+import { toPublicBundle, toAdminBundle, pickBundle } from "../utils/dto.js";
 import mongoose from "mongoose";
 
 const bundleService = {
@@ -110,53 +111,8 @@ const bundleService = {
 
       // Filter sensitive data based on user type and enhance with pricing
       const filteredBundles = bundles.map((bundle) => {
-        // Enhance bundle with user-specific pricing
-        const enhancedBundle = enhanceBundleWithPricing(bundle, userType);
-
-        const baseBundle = {
-          _id: enhancedBundle._id,
-          name: enhancedBundle.name,
-          description: enhancedBundle.description,
-          dataVolume: enhancedBundle.dataVolume,
-          dataUnit: enhancedBundle.dataUnit,
-          validity: enhancedBundle.validity,
-          validityUnit: enhancedBundle.validityUnit,
-          price: enhancedBundle.price,
-          userPrice: enhancedBundle.userPrice, // User-specific price
-          currency: enhancedBundle.currency,
-          features: enhancedBundle.features,
-          isActive: enhancedBundle.isActive,
-          bundleCode: enhancedBundle.bundleCode,
-          category: enhancedBundle.category,
-          tags: enhancedBundle.tags,
-          // AFA-specific fields
-          requiresGhanaCard: enhancedBundle.requiresGhanaCard,
-          afaRequirements: enhancedBundle.afaRequirements,
-          packageId: enhancedBundle.packageId,
-          providerId: enhancedBundle.providerId,
-          createdAt: enhancedBundle.createdAt,
-          updatedAt: enhancedBundle.updatedAt,
-          formattedDataVolume: enhancedBundle.formattedDataVolume,
-          formattedValidity: enhancedBundle.formattedValidity,
-          isAvailable: enhancedBundle.isAvailable,
-        };
-
-        // Only include sensitive fields for admin users
-        if (userType === "admin" || userType === "super_admin") {
-          return {
-            ...baseBundle,
-            pricingTiers: enhancedBundle.pricingTiers, // Include pricing tiers for admins
-            pricingSummary: enhancedBundle.pricingSummary, // Include pricing summary for admins
-            tenantId: enhancedBundle.tenantId,
-            createdBy: enhancedBundle.createdBy,
-            updatedBy: enhancedBundle.updatedBy,
-            isDeleted: enhancedBundle.isDeleted,
-            deletedAt: enhancedBundle.deletedAt,
-            deletedBy: enhancedBundle.deletedBy,
-          };
-        }
-
-        return baseBundle;
+        const enhanced = enhanceBundleWithPricing(bundle, userType);
+        return pickBundle(enhanced, userType);
       });
 
       const totalPages = Math.ceil(total / limit);
@@ -190,8 +146,9 @@ const bundleService = {
         return null;
       }
 
-      // Enhance with user-specific pricing
-      return enhanceBundleWithPricing(bundle, userType);
+      // Enhance with user-specific pricing and apply DTO
+      const enhanced = enhanceBundleWithPricing(bundle, userType);
+      return pickBundle(enhanced, userType);
     } catch (error) {
       logger.error("Error in getBundleById:", error);
       throw error;
@@ -201,7 +158,7 @@ const bundleService = {
   // Get bundles by provider
   getBundlesByProvider: async (providerCode, options = {}) => {
     try {
-      const { page = 1, limit = 10 } = options;
+      const { page = 1, limit = 10, userType = "agent" } = options;
       const skip = (page - 1) * limit;
 
       // First find the provider by code
@@ -234,10 +191,11 @@ const bundleService = {
         Bundle.countDocuments({ providerId: provider._id, isActive: true }),
       ]);
 
+      const filteredBundles = bundles.map((b) => pickBundle(b, userType));
       const totalPages = Math.ceil(total / limit);
 
       return {
-        bundles,
+        bundles: filteredBundles,
         pagination: {
           page,
           limit,
@@ -274,10 +232,11 @@ const bundleService = {
         Bundle.countDocuments(query),
       ]);
 
+      const filteredBundles = bundles.map((b) => pickBundle(b, userType));
       const totalPages = Math.ceil(total / limit);
 
       return {
-        bundles,
+        bundles: filteredBundles,
         pagination: {
           page,
           limit,
@@ -360,35 +319,7 @@ const bundleService = {
         .populate("providerId", "name logo code")
         .populate("packageId", "name description");
 
-      // Return filtered data for security
-      const filteredBundle = {
-        _id: populatedBundle._id,
-        name: populatedBundle.name,
-        description: populatedBundle.description,
-        dataVolume: populatedBundle.dataVolume,
-        dataUnit: populatedBundle.dataUnit,
-        validity: populatedBundle.validity,
-        validityUnit: populatedBundle.validityUnit,
-        price: populatedBundle.price,
-        currency: populatedBundle.currency,
-        features: populatedBundle.features,
-        isActive: populatedBundle.isActive,
-        bundleCode: populatedBundle.bundleCode,
-        category: populatedBundle.category,
-        tags: populatedBundle.tags,
-        // AFA-specific fields
-        requiresGhanaCard: populatedBundle.requiresGhanaCard,
-        afaRequirements: populatedBundle.afaRequirements,
-        packageId: populatedBundle.packageId,
-        providerId: populatedBundle.providerId,
-        createdAt: populatedBundle.createdAt,
-        updatedAt: populatedBundle.updatedAt,
-        formattedDataVolume: populatedBundle.formattedDataVolume,
-        formattedValidity: populatedBundle.formattedValidity,
-        isAvailable: populatedBundle.isAvailable,
-      };
-
-      return filteredBundle;
+      return toAdminBundle(populatedBundle.toObject ? populatedBundle.toObject() : populatedBundle);
     } catch (error) {
       logger.error("Error in createBundle:", error);
       throw error;
@@ -486,34 +417,7 @@ const bundleService = {
       }
 
       // Return filtered data for security
-      const filteredBundle = {
-        _id: bundle._id,
-        name: bundle.name,
-        description: bundle.description,
-        dataVolume: bundle.dataVolume,
-        dataUnit: bundle.dataUnit,
-        validity: bundle.validity,
-        validityUnit: bundle.validityUnit,
-        price: bundle.price,
-        currency: bundle.currency,
-        features: bundle.features,
-        isActive: bundle.isActive,
-        bundleCode: bundle.bundleCode,
-        category: bundle.category,
-        tags: bundle.tags,
-        // AFA-specific fields
-        requiresGhanaCard: bundle.requiresGhanaCard,
-        afaRequirements: bundle.afaRequirements,
-        packageId: bundle.packageId,
-        providerId: bundle.providerId,
-        createdAt: bundle.createdAt,
-        updatedAt: bundle.updatedAt,
-        formattedDataVolume: bundle.formattedDataVolume,
-        formattedValidity: bundle.formattedValidity,
-        isAvailable: bundle.isAvailable,
-      };
-
-      return filteredBundle;
+      return toAdminBundle(bundle.toObject ? bundle.toObject() : bundle);
     } catch (error) {
       logger.error("Error in updateBundle:", error);
       throw error;

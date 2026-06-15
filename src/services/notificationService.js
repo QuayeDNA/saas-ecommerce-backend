@@ -24,14 +24,17 @@ class NotificationService {
       agent: {
         wallet: "/agent/dashboard/wallet",
         orders: "/agent/dashboard/orders",
+        apiMarketplace: "/agent/dashboard/api-marketplace",
       },
       super_admin: {
         wallet: "/superadmin/wallet",
         orders: "/superadmin/orders",
+        apiMarketplace: "/superadmin/api-marketplace",
       },
       admin: {
         wallet: "/admin/wallet",
         orders: "/admin/orders",
+        apiMarketplace: "/admin/dashboard/api-marketplace",
       },
     };
 
@@ -95,6 +98,7 @@ class NotificationService {
    * @param {string} message - Notification message
    * @param {string} type - Notification type (success, error, warning, info)
    * @param {object} metadata - Additional data
+   * @param {string} category - Notification category (system, order, wallet, announcement, commission, api)
    * @returns {Promise<object>} Created notification
    */
   async createInAppNotification(
@@ -103,6 +107,7 @@ class NotificationService {
     message,
     type = "info",
     metadata = {},
+    category = "system",
   ) {
     try {
       const notification = new Notification({
@@ -110,6 +115,7 @@ class NotificationService {
         title,
         message,
         type,
+        category,
         metadata,
         read: false,
       });
@@ -150,6 +156,9 @@ class NotificationService {
           } else if (notificationType === "announcement") {
             typeSpecificEnabled =
               user.pushNotificationPreferences?.announcements !== false;
+          } else if (notificationType === "api_update") {
+            typeSpecificEnabled =
+              user.pushNotificationPreferences?.apiUpdates !== false;
           }
 
           const prefsEnabled = globalEnabled && typeSpecificEnabled;

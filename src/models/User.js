@@ -184,6 +184,10 @@ const userSchema = new mongoose.Schema({
       type: Boolean,
       default: true,
     },
+    apiUpdates: {
+      type: Boolean,
+      default: true,
+    },
   },
   // AFA Registration fields
   afaRegistration: {

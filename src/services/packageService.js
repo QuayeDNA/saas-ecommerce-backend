@@ -2,6 +2,7 @@
 import Package from "../models/Package.js";
 import Provider from "../models/Provider.js";
 import logger from "../utils/logger.js";
+import { toPublicPackage, toAdminPackage, pickPackage } from "../utils/dto.js";
 
 class PackageService {
   // Create a new package
@@ -26,7 +27,7 @@ class PackageService {
       logger.info(
         `Package created: ${packageGroup._id} by user ${packageData.createdBy}`,
       );
-      return packageGroup;
+      return toAdminPackage(packageGroup.toObject ? packageGroup.toObject() : packageGroup);
     } catch (error) {
       logger.error(`Package creation failed: ${error.message}`);
       throw error;
@@ -34,7 +35,7 @@ class PackageService {
   }
 
   // Get packages with filtering and pagination
-  async getPackages(filters = {}, pagination = {}) {
+  async getPackages(filters = {}, pagination = {}, userType = "agent") {
     const {
       page = 1,
       limit = 20,
@@ -101,7 +102,7 @@ class PackageService {
     ]);
 
     return {
-      packages,
+      packages: packages.map((p) => pickPackage(p, userType)),
       pagination: {
         total,
         page: Number(page),
@@ -112,7 +113,7 @@ class PackageService {
   }
 
   // Get single package by ID
-  async getPackageById(packageId) {
+  async getPackageById(packageId, userType = "agent") {
     const packageGroup = await Package.findOne({
       _id: packageId,
       isDeleted: false,
@@ -124,11 +125,11 @@ class PackageService {
       throw new Error("Package not found");
     }
 
-    return packageGroup;
+    return pickPackage(packageGroup, userType);
   }
 
   // Get single package by stable slug or package name
-  async getPackageBySlug(packageSlug) {
+  async getPackageBySlug(packageSlug, userType = "agent") {
     const normalizedSlug = packageSlug.toString().trim().toLowerCase();
     const slugPattern = new RegExp(
       normalizedSlug.replace(/[-_]+/g, "\\s*"),
@@ -150,7 +151,7 @@ class PackageService {
       throw new Error("Package not found");
     }
 
-    return packageGroup;
+    return pickPackage(packageGroup, userType);
   }
 
   // Update package
@@ -192,7 +193,7 @@ class PackageService {
     await packageGroup.save();
 
     logger.info(`Package updated: ${packageId} by user ${userId}`);
-    return packageGroup;
+    return toAdminPackage(packageGroup.toObject ? packageGroup.toObject() : packageGroup);
   }
 
   // Soft delete package
@@ -216,7 +217,7 @@ class PackageService {
 
     await packageGroup.softDelete(userId);
     logger.info(`Package deleted: ${packageId} by user ${userId}`);
-    return packageGroup;
+    return toAdminPackage(packageGroup.toObject ? packageGroup.toObject() : packageGroup);
   }
 
   // Restore package
@@ -240,25 +241,29 @@ class PackageService {
 
     await packageGroup.restore();
     logger.info(`Package restored: ${packageId} by user ${userId}`);
-    return packageGroup;
+    return toAdminPackage(packageGroup.toObject ? packageGroup.toObject() : packageGroup);
   }
 
   // Get packages by provider
-  async getPackagesByProvider(provider) {
-    return await Package.find({
+  async getPackagesByProvider(provider, userType = "agent") {
+    const packages = await Package.find({
       provider,
       isActive: true,
       isDeleted: false,
     }).populate("createdBy", "fullName email");
+
+    return packages.map((p) => pickPackage(p, userType));
   }
 
   // Get packages by category
-  async getPackagesByCategory(category) {
-    return await Package.find({
+  async getPackagesByCategory(category, userType = "agent") {
+    const packages = await Package.find({
       category,
       isActive: true,
       isDeleted: false,
     }).populate("createdBy", "fullName email");
+
+    return packages.map((p) => pickPackage(p, userType));
   }
 
   // Get package statistics

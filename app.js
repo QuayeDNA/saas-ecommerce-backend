@@ -21,7 +21,6 @@ import { schedulePaystackVerificationRetryJob } from "./src/jobs/paystackVerific
 import { schedulePayoutReconciliationJob } from "./src/jobs/payoutReconciliationJob.js";
 import { scheduleDailyCommissionProcessing } from "./src/jobs/dailyCommissionProcessing.js";
 import { scheduleInactiveStoreSuspension } from "./src/jobs/inactiveStoreSuspension.js";
-import walletService from "./src/services/walletService.js";
 import authRoutes from "./src/routes/authRoutes.js";
 import orderRouter from "./src/routes/orderRoutes.js";
 import packageRoutes from "./src/routes/packageRoutes.js";
@@ -41,6 +40,8 @@ import auditLogRoutes from "./src/routes/auditLogRoutes.js";
 import commissionRoutes from "./src/routes/commissionRoutes.js";
 import referralRoutes from "./src/routes/referralRoutes.js";
 import uploadRoutes from "./src/routes/uploadRoutes.js";
+import marketplaceRoutes from "./src/routes/marketplaceRoutes.js";
+import adminMarketplaceRoutes from "./src/routes/adminMarketplaceRoutes.js";
 import appContextMiddleware from "./src/middlewares/appContext.js";
 import requestContextMiddleware from "./src/middlewares/requestContext.js";
 import auditLogger from "./src/middlewares/auditLogger.js";
@@ -97,6 +98,8 @@ app.use(
       if (!origin) return callback(null, true);
       // Allow any localhost origin regardless of port
       if (/^https?:\/\/localhost(:\d+)?$/.test(origin)) return callback(null, true);
+      // Allow null origin in dev (file:// protocol for test pages, etc.)
+      if (origin === "null" && process.env.NODE_ENV === "development") return callback(null, true);
       // Allow any Vercel preview for this project
       if (
         allowed.includes(origin) ||
@@ -222,6 +225,8 @@ app.use("/api/webhooks/paystack", paystackRoutes);
 app.use("/api/audit-logs", auditLogRoutes);
 app.use("/api/commissions", commissionRoutes);
 app.use("/api/referrals", referralRoutes);
+app.use("/api/marketplace", marketplaceRoutes);
+app.use("/api/admin/marketplace", adminMarketplaceRoutes);
 app.use("/api", publicRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────────────────────

@@ -79,10 +79,12 @@ const bundleController = {
     try {
       const { providerId } = req.params; // This is actually the provider code
       const { page = 1, limit = 10 } = req.query;
+      const userType = req.user?.userType || "agent";
 
       const result = await bundleService.getBundlesByProvider(providerId, {
         page: parseInt(page),
         limit: parseInt(limit),
+        userType,
       });
 
       res.json({
