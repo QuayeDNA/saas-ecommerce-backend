@@ -7,6 +7,7 @@ const VALID_PERMISSIONS = [
   "bundles:read",
   "storefront:read",
   "orders:write",
+  "momo:write",
 ];
 const KEY_STATUSES = ["active", "suspended", "revoked"];
 
