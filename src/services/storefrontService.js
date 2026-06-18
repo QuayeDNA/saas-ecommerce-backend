@@ -467,7 +467,6 @@ class StorefrontService {
           description: 1,
           "branding.logoUrl": 1,
           "branding.tagline": 1,
-          "settings.theme": 1,
         },
       },
     ]);
