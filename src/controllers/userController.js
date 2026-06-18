@@ -20,8 +20,29 @@ import {
   AUDIT_CATEGORIES,
   AUDIT_SEVERITIES,
 } from "../constants/audit.js";
+import userService from "../services/userService.js";
+import { buildFileUrl, deleteFileByUrl } from "../utils/assetUpload.js";
+import fs from "fs";
 
 class UserController {
+  // Build absolute asset URL from request context
+  assetUrl(req, url) {
+    if (!url || !url.startsWith("/")) return url;
+    const proto = req.headers["x-forwarded-proto"] || req.protocol;
+    const host = req.headers["x-forwarded-host"] || req.headers.host;
+    if (proto && host) return `${proto}://${host}${url}`;
+    return url;
+  }
+
+  // Return user with absolute profilePicture URL
+  userWithAbsolutePicture(req, user) {
+    const obj = typeof user?.toJSON === "function" ? user.toJSON() : { ...user };
+    if (obj.profilePicture) {
+      obj.profilePicture = this.assetUrl(req, obj.profilePicture);
+    }
+    return obj;
+  }
+
   async logAudit(req, payload) {
     try {
       if (!req?.logAuditAction) return;
@@ -47,7 +68,7 @@ class UserController {
 
       res.json({
         success: true,
-        user: user.toJSON(),
+        user: this.userWithAbsolutePicture(req, user),
       });
     } catch (error) {
       logger.error(`Get profile error: ${error.message}`);
@@ -117,7 +138,7 @@ class UserController {
       res.json({
         success: true,
         message: "Profile updated successfully",
-        user: user.toJSON(),
+        user: this.userWithAbsolutePicture(req, user),
       });
     } catch (error) {
       logger.error(`Update profile error: ${error.message}`);
@@ -128,29 +149,17 @@ class UserController {
     }
   }
 
-  // Update profile picture
-  async updateProfilePicture(req, res) {
+  // Upload profile picture (multipart, replaces old file)
+  async uploadProfilePicture(req, res) {
     try {
-      const { profilePicture } = req.body;
-      const userId = req.user.userId;
-
-      if (!profilePicture || typeof profilePicture !== "string") {
+      if (!req.file) {
         return res.status(400).json({
           success: false,
-          message: "profilePicture URL is required",
+          message: "No file provided",
         });
       }
-
-      const user = await User.findById(userId);
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: "User not found",
-        });
-      }
-
-      user.profilePicture = profilePicture;
-      await user.save();
+      const userId = req.user.userId;
+      const user = await userService.uploadProfilePicture(userId, req.file);
 
       await this.logAudit(req, {
         userId,
@@ -158,22 +167,64 @@ class UserController {
         action: AUDIT_ACTIONS.USER_UPDATED,
         category: AUDIT_CATEGORIES.USER,
         resource: { userId },
-        changes: { before: null, after: { profilePicture } },
-        metadata: { source: "user.updateProfilePicture" },
+        changes: { before: null, after: { profilePicture: user.profilePicture } },
+        metadata: { source: "user.uploadProfilePicture" },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
+
+      const url = this.assetUrl(req, buildFileUrl(req.file.filename, userId));
+
+      res.json({
+        success: true,
+        message: "Profile picture uploaded",
+        data: {
+          url,
+          user: this.userWithAbsolutePicture(req, user),
+        },
+      });
+    } catch (error) {
+      if (req.file) {
+        try { fs.unlinkSync(req.file.path); } catch {}
+      }
+      const status = error.statusCode || 500;
+      const msg =
+        status === 404
+          ? "User not found"
+          : "Failed to upload profile picture";
+      logger.error(`Upload profile picture error: ${error.message}`);
+      res.status(status).json({ success: false, message: msg });
+    }
+  }
+
+  // Delete profile picture — removes file from disk and clears field
+  async deleteProfilePicture(req, res) {
+    try {
+      const userId = req.user.userId;
+      await userService.deleteProfilePicture(userId);
+
+      await this.logAudit(req, {
+        userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.USER_UPDATED,
+        category: AUDIT_CATEGORIES.USER,
+        resource: { userId },
+        changes: { before: null, after: { profilePicture: null } },
+        metadata: { source: "user.deleteProfilePicture" },
         severity: AUDIT_SEVERITIES.INFO,
       });
 
       res.json({
         success: true,
-        message: "Profile picture updated",
-        user: user.toJSON(),
+        message: "Profile picture removed",
       });
     } catch (error) {
-      logger.error(`Update profile picture error: ${error.message}`);
-      res.status(500).json({
-        success: false,
-        message: "Failed to update profile picture",
-      });
+      const status = error.statusCode || 500;
+      const msg =
+        status === 400
+          ? error.message
+          : "Failed to delete profile picture";
+      logger.error(`Delete profile picture error: ${error.message}`);
+      res.status(status).json({ success: false, message: msg });
     }
   }
 
@@ -416,7 +467,7 @@ class UserController {
 
       res.json({
         success: true,
-        user: user.toJSON(),
+        user: this.userWithAbsolutePicture(req, user),
       });
     } catch (error) {
       logger.error(`Get user by ID error: ${error.message}`);
@@ -511,7 +562,7 @@ class UserController {
       res.json({
         success: true,
         message: "User status updated successfully",
-        user: user.toJSON(),
+        user: this.userWithAbsolutePicture(req, user),
       });
     } catch (error) {
       logger.error(`Update user status error: ${error.message}`);
@@ -1441,7 +1492,8 @@ const userController = new UserController();
 export default {
   getProfile: userController.getProfile.bind(userController),
   updateProfile: userController.updateProfile.bind(userController),
-  updateProfilePicture: userController.updateProfilePicture.bind(userController),
+  uploadProfilePicture: userController.uploadProfilePicture.bind(userController),
+  deleteProfilePicture: userController.deleteProfilePicture.bind(userController),
   changePassword: userController.changePassword.bind(userController),
   getUsers: userController.getUsers.bind(userController),
   getUsersWithWallet: userController.getUsersWithWallet.bind(userController),

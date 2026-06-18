@@ -128,6 +128,7 @@ const agentStorefrontSchema = new mongoose.Schema({
   // Branding & Customization
   branding: {
     logoUrl: String,
+    bannerUrl: String,
     tagline: {
       type: String,
       maxLength: 120,

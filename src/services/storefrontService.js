@@ -18,6 +18,7 @@ import {
   getFeeConfig,
   calculateChargeWithFees,
 } from "../utils/paystackHelpers.js";
+import { deleteFileByUrl, buildFileUrl } from "../utils/assetUpload.js";
 import logger from "../utils/logger.js";
 import websocketService from "./websocketService.js";
 import PaystackVerificationTask from "../models/PaystackVerificationTask.js";
@@ -2141,6 +2142,36 @@ class StorefrontService {
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
     };
+  }
+
+  // ── Storefront Asset Management (Logo / Banner) ────────────────────────
+
+  async uploadStorefrontAsset(storefrontId, userId, file, field) {
+    if (!field || !["logoUrl", "bannerUrl"].includes(field)) {
+      throw new Error("Invalid asset field");
+    }
+    const url = buildFileUrl(file.filename, userId);
+    const sf = await AgentStorefront.findById(storefrontId);
+    if (!sf) throw new Error("Storefront not found");
+    const oldUrl = sf.branding?.[field];
+    const update = { $set: { [`branding.${field}`]: url } };
+    await AgentStorefront.findByIdAndUpdate(storefrontId, update, { new: true });
+    if (oldUrl) deleteFileByUrl(oldUrl);
+    return { url, branding: { ...(sf.branding?.toObject?.() || sf.branding), [field]: url } };
+  }
+
+  async deleteStorefrontAsset(storefrontId, userId, field) {
+    if (!field || !["logoUrl", "bannerUrl"].includes(field)) {
+      throw new Error("Invalid asset field");
+    }
+    const sf = await AgentStorefront.findById(storefrontId);
+    if (!sf) throw new Error("Storefront not found");
+    const oldUrl = sf.branding?.[field];
+    if (!oldUrl) throw new Error(`No ${field} to delete`);
+    deleteFileByUrl(oldUrl);
+    const update = { $unset: { [`branding.${field}`]: "" } };
+    await AgentStorefront.findByIdAndUpdate(storefrontId, update, { new: true });
+    return { branding: { ...(sf.branding?.toObject?.() || sf.branding), [field]: undefined } };
   }
 }
 

@@ -3,6 +3,7 @@ import storefrontService from "../services/storefrontService.js";
 import paystackService from "../services/paystackService.js";
 import { initializePaystackCheckout } from "../utils/paystackHelpers.js";
 import { validationResult } from "express-validator";
+import fs from "fs";
 import logger from "../utils/logger.js";
 import Order from "../models/Order.js";
 import PaystackVerificationTask from "../models/PaystackVerificationTask.js";
@@ -42,7 +43,14 @@ function badRequest(res, message) {
   return res.status(400).json({ success: false, message });
 }
 
-// ─── Controller ───────────────────────────────────────────────────────────────
+function assetUrl(req, relativePath) {
+  if (!relativePath || relativePath.startsWith("http")) return relativePath;
+  const proto = req.headers?.["x-forwarded-proto"] || req.protocol || "https";
+  const host = req.headers?.["x-forwarded-host"] || req.headers?.host;
+  return host ? `${proto}://${host}${relativePath}` : relativePath;
+}
+
+// ─── Controller ──────────────────────────────────────────────────────────────
 
 class StorefrontController {
   // =========================================================================
@@ -938,6 +946,106 @@ class StorefrontController {
       res
         .status(500)
         .json({ success: false, message: "Failed to load storefronts" });
+    }
+  }
+
+  // =========================================================================
+  // Storefront Asset Uploads (Logo / Banner)
+  // =========================================================================
+
+  async uploadLogo(req, res) {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ success: false, message: "No file provided" });
+      }
+      const sf = await storefrontService.getAgentStorefront(req.user.userId);
+      if (!sf) {
+        // Clean up orphaned file
+        try { fs.unlinkSync(req.file.path); } catch {}
+        return res.status(404).json({ success: false, message: "Storefront not found" });
+      }
+      const result = await storefrontService.uploadStorefrontAsset(
+        sf._id,
+        req.user.userId,
+        req.file,
+        "logoUrl",
+      );
+      result.url = assetUrl(req, result.url);
+      res.json({
+        success: true,
+        message: "Logo uploaded",
+        data: { url: result.url, branding: result.branding },
+      });
+    } catch (err) {
+      // Clean up orphaned file on error
+      if (req.file?.path) {
+        try { fs.unlinkSync(req.file.path); } catch {}
+      }
+      logger.error(`[uploadLogo] ${err.message}`);
+      badRequest(res, err.message);
+    }
+  }
+
+  async deleteLogo(req, res) {
+    try {
+      const sf = await storefrontService.getAgentStorefront(req.user.userId);
+      if (!sf) return res.status(404).json({ success: false, message: "Storefront not found" });
+      const result = await storefrontService.deleteStorefrontAsset(
+        sf._id,
+        req.user.userId,
+        "logoUrl",
+      );
+      res.json({ success: true, message: "Logo removed", data: result });
+    } catch (err) {
+      logger.error(`[deleteLogo] ${err.message}`);
+      badRequest(res, err.message);
+    }
+  }
+
+  async uploadBanner(req, res) {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ success: false, message: "No file provided" });
+      }
+      const sf = await storefrontService.getAgentStorefront(req.user.userId);
+      if (!sf) {
+        try { fs.unlinkSync(req.file.path); } catch {}
+        return res.status(404).json({ success: false, message: "Storefront not found" });
+      }
+      const result = await storefrontService.uploadStorefrontAsset(
+        sf._id,
+        req.user.userId,
+        req.file,
+        "bannerUrl",
+      );
+      result.url = assetUrl(req, result.url);
+      res.json({
+        success: true,
+        message: "Banner uploaded",
+        data: { url: result.url, branding: result.branding },
+      });
+    } catch (err) {
+      if (req.file?.path) {
+        try { fs.unlinkSync(req.file.path); } catch {}
+      }
+      logger.error(`[uploadBanner] ${err.message}`);
+      badRequest(res, err.message);
+    }
+  }
+
+  async deleteBanner(req, res) {
+    try {
+      const sf = await storefrontService.getAgentStorefront(req.user.userId);
+      if (!sf) return res.status(404).json({ success: false, message: "Storefront not found" });
+      const result = await storefrontService.deleteStorefrontAsset(
+        sf._id,
+        req.user.userId,
+        "bannerUrl",
+      );
+      res.json({ success: true, message: "Banner removed", data: result });
+    } catch (err) {
+      logger.error(`[deleteBanner] ${err.message}`);
+      badRequest(res, err.message);
     }
   }
 }

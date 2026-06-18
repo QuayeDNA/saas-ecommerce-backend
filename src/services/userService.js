@@ -9,6 +9,7 @@ import {
 } from "../utils/userTypeHelpers.js";
 import mongoose from "mongoose";
 import settingsService from "../services/settingsService.js";
+import { buildFileUrl, deleteFileByUrl } from "../utils/assetUpload.js";
 
 class UserService {
   /**
@@ -479,6 +480,63 @@ class UserService {
       return { agent, agentCode, userType, userStatus, referralCode: agent.referralCode };
     } catch (error) {
       logger.error(`Register agent error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Upload profile picture — replaces old file on disk
+   * @param {string} userId
+   * @param {Object} file - multer file object
+   * @returns {Promise<Object>} updated user
+   */
+  async uploadProfilePicture(userId, file) {
+    try {
+      const url = buildFileUrl(file.filename, userId);
+      const user = await User.findById(userId);
+      if (!user) {
+        const err = new Error("User not found");
+        err.statusCode = 404;
+        throw err;
+      }
+      const oldUrl = user.profilePicture;
+      user.profilePicture = url;
+      await user.save();
+      if (oldUrl) deleteFileByUrl(oldUrl);
+      logger.info(`Profile picture updated for user: ${user.email}`);
+      return user;
+    } catch (error) {
+      logger.error(`Upload profile picture error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete profile picture — removes file from disk and clears field
+   * @param {string} userId
+   * @returns {Promise<Object>} updated user
+   */
+  async deleteProfilePicture(userId) {
+    try {
+      const user = await User.findById(userId);
+      if (!user) {
+        const err = new Error("User not found");
+        err.statusCode = 404;
+        throw err;
+      }
+      const oldUrl = user.profilePicture;
+      if (!oldUrl) {
+        const err = new Error("No profile picture to delete");
+        err.statusCode = 400;
+        throw err;
+      }
+      deleteFileByUrl(oldUrl);
+      user.profilePicture = null;
+      await user.save();
+      logger.info(`Profile picture removed for user: ${user.email}`);
+      return user;
+    } catch (error) {
+      logger.error(`Delete profile picture error: ${error.message}`);
       throw error;
     }
   }
