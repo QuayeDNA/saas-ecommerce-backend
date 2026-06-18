@@ -220,7 +220,7 @@ app.get("/wallet/topup/callback", async (req, res) => {
 
 // ─── Static uploads ───────────────────────────────────────────────────────────
 const uploadsDir = process.env.UPLOADS_PATH
-  || path.resolve(process.env.NODE_ENV === "production" ? "/uploads" : "/uploads/dev");
+  || path.resolve(process.cwd(), process.env.NODE_ENV === "production" ? "uploads" : "uploads/dev");
 
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
