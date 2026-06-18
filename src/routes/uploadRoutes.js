@@ -66,7 +66,10 @@ router.post(
     if (!req.file) {
       return res.status(400).json({ success: false, message: "No file provided" });
     }
-    const url = `/uploads/${req.file.filename}`;
+    const base = process.env.UPLOADS_BASE_URL || process.env.API_ENDPOINT || "";
+    const url = base
+      ? `${base.replace(/\/+$/, "")}/uploads/${req.file.filename}`
+      : `/uploads/${req.file.filename}`;
     res.json({ success: true, url });
   },
 );
