@@ -4,6 +4,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 import { createServer } from "http";
 
@@ -218,11 +219,18 @@ app.get("/wallet/topup/callback", async (req, res) => {
 });
 
 // ─── Static uploads ───────────────────────────────────────────────────────────
+const uploadsDir = process.env.UPLOADS_PATH
+  || path.resolve(process.env.NODE_ENV === "production" ? "/uploads" : "/uploads/dev");
+
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
 app.use("/uploads", (req, res, next) => {
   res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
   next();
 });
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+app.use("/uploads", express.static(uploadsDir));
 
 // ─── API Routes ───────────────────────────────────────────────────────────────
 

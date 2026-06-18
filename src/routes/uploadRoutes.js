@@ -11,7 +11,8 @@ const __dirname = path.dirname(__filename);
 const router = express.Router();
 
 // ── Multer config ────────────────────────────────────────────────────────────
-const UPLOAD_DIR = path.join(__dirname, "../../uploads");
+const UPLOAD_DIR = process.env.UPLOADS_PATH
+  || path.resolve(process.env.NODE_ENV === "production" ? "/uploads" : "/uploads/dev");
 
 if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
