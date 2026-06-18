@@ -16,6 +16,11 @@ router.put(
   validate(userValidation.updateProfile),
   userController.updateProfile,
 );
+router.patch(
+  "/profile-picture",
+  authenticate,
+  userController.updateProfilePicture,
+);
 router.post(
   "/change-password",
   authenticate,

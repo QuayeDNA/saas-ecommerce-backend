@@ -158,6 +158,11 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
+  // Profile picture URL
+  profilePicture: {
+    type: String,
+    default: null,
+  },
   // Push notification subscription
   pushSubscription: {
     endpoint: String,

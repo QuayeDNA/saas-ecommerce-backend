@@ -128,6 +128,55 @@ class UserController {
     }
   }
 
+  // Update profile picture
+  async updateProfilePicture(req, res) {
+    try {
+      const { profilePicture } = req.body;
+      const userId = req.user.userId;
+
+      if (!profilePicture || typeof profilePicture !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "profilePicture URL is required",
+        });
+      }
+
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      user.profilePicture = profilePicture;
+      await user.save();
+
+      await this.logAudit(req, {
+        userId,
+        userType: req.user?.userType,
+        action: AUDIT_ACTIONS.USER_UPDATED,
+        category: AUDIT_CATEGORIES.USER,
+        resource: { userId },
+        changes: { before: null, after: { profilePicture } },
+        metadata: { source: "user.updateProfilePicture" },
+        severity: AUDIT_SEVERITIES.INFO,
+      });
+
+      res.json({
+        success: true,
+        message: "Profile picture updated",
+        user: user.toJSON(),
+      });
+    } catch (error) {
+      logger.error(`Update profile picture error: ${error.message}`);
+      res.status(500).json({
+        success: false,
+        message: "Failed to update profile picture",
+      });
+    }
+  }
+
   // Change password
   async changePassword(req, res) {
     try {
@@ -1392,6 +1441,7 @@ const userController = new UserController();
 export default {
   getProfile: userController.getProfile.bind(userController),
   updateProfile: userController.updateProfile.bind(userController),
+  updateProfilePicture: userController.updateProfilePicture.bind(userController),
   changePassword: userController.changePassword.bind(userController),
   getUsers: userController.getUsers.bind(userController),
   getUsersWithWallet: userController.getUsersWithWallet.bind(userController),
