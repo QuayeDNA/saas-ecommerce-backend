@@ -18,7 +18,12 @@ if (!fs.existsSync(UPLOAD_DIR)) {
 }
 
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+  destination: (req, _file, cb) => {
+    const userId = req.user?.userId || "anonymous";
+    const userDir = path.join(UPLOAD_DIR, userId);
+    fs.mkdirSync(userDir, { recursive: true });
+    cb(null, userDir);
+  },
   filename: (_req, file, cb) => {
     const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
     const ext = path.extname(file.originalname).toLowerCase();
@@ -66,10 +71,11 @@ router.post(
     if (!req.file) {
       return res.status(400).json({ success: false, message: "No file provided" });
     }
-    const base = process.env.UPLOADS_BASE_URL || process.env.API_ENDPOINT || "";
+    const userId = req.user?.userId || "anonymous";
+    const base = process.env.UPLOADS_BASE_URL || "";
     const url = base
-      ? `${base.replace(/\/+$/, "")}/uploads/${req.file.filename}`
-      : `/uploads/${req.file.filename}`;
+      ? `${base.replace(/\/+$/, "")}/uploads/${userId}/${req.file.filename}`
+      : `/uploads/${userId}/${req.file.filename}`;
     res.json({ success: true, url });
   },
 );
