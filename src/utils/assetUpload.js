@@ -10,16 +10,21 @@ export function getUploadDir() {
 
 export function deleteFileByUrl(url) {
   if (!url) return false;
-  const relativePath = url.replace(/^\/uploads\//, "");
+  // Handle both relative (/uploads/...) and absolute (https://...//uploads/...) URLs
+  let relativePath;
+  try {
+    const parsed = new URL(url);
+    relativePath = parsed.pathname.replace(/^\/uploads\//, "");
+  } catch {
+    relativePath = url.replace(/^\/uploads\//, "");
+  }
   const filePath = path.join(UPLOAD_DIR, relativePath);
   try {
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
       return true;
     }
-  } catch {
-    // Ignore — file may already be gone
-  }
+  } catch {}
   return false;
 }
 
