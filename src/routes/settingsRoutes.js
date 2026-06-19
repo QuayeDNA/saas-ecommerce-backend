@@ -32,6 +32,9 @@ router.get("/api", settingsController.getApiSettings);
 // BryteLinks — GET available to all authenticated users (agents need to check payment gate)
 router.get("/brytelinks", settingsController.getBryteLinksSettings);
 
+// MoMo Bridge — GET available to all authenticated users (agents need it for checkout)
+router.get("/momobridge", settingsController.getMomoBridgeSettings);
+
 // All other routes require super admin authorization
 router.use(authorize("super_admin"));
 
@@ -83,5 +86,8 @@ router.put("/referral", settingsController.updateReferralSettings);
 
 // BryteLinks — Storefront Payment Gate & Auto-Suspend Settings (PUT only)
 router.put("/brytelinks", settingsController.updateBryteLinksSettings);
+
+// MoMo Bridge — Mobile Money Payment Verification Settings (PUT only)
+router.put("/momobridge", settingsController.updateMomoBridgeSettings);
 
 export default router;

@@ -256,6 +256,28 @@ const settingsSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+
+    // ==========================================================================
+    // MoMo Bridge — Mobile Money Payment Verification
+    // ==========================================================================
+    momoBridgeApiKey: {
+      type: String,
+      default: "",
+    },
+    momoBridgeRelayUrl: {
+      type: String,
+      default: "https://momobridge-relay.onrender.com",
+    },
+    momoBridgeEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    momoBridgeClaimFeePercent: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
   },
   {
     timestamps: true,

@@ -2,6 +2,7 @@
 import express from "express";
 import walletController from "../controllers/walletController.js";
 import payoutController from "../controllers/payoutController.js";
+import momoBridgeController from "../controllers/momoBridgeController.js";
 import {
   authenticate,
   authorize,
@@ -53,6 +54,22 @@ router.get(
   "/paystack/verify",
   authenticate,
   walletController.verifyPaystackTransaction,
+);
+
+// ── MoMo Bridge — Instant Claim (wallet credit via mobile money verification) ──
+router.get(
+  "/momo/config",
+  authenticate,
+  authorizeWalletUser,
+  validate(walletValidation.momoConfig),
+  momoBridgeController.getConfig,
+);
+router.post(
+  "/momo/verify",
+  authenticate,
+  authorizeWalletUser,
+  validate(walletValidation.momoVerify),
+  momoBridgeController.verifyClaim,
 );
 
 // ── Earnings & payouts ────────────────────────────────────────────────────────

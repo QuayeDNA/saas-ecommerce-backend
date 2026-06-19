@@ -719,6 +719,69 @@ class SettingsService {
       throw error;
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // MoMo Bridge — Mobile Money Payment Verification
+  // ---------------------------------------------------------------------------
+
+  async getMomoBridgeSettings() {
+    try {
+      const settings = await Settings.getInstance();
+      return {
+        momoBridgeApiKey: settings.momoBridgeApiKey || "",
+        momoBridgeRelayUrl:
+          settings.momoBridgeRelayUrl ||
+          "https://momobridge-relay.onrender.com",
+        momoBridgeEnabled: settings.momoBridgeEnabled ?? false,
+        momoBridgeClaimFeePercent:
+          settings.momoBridgeClaimFeePercent ?? 0,
+      };
+    } catch (error) {
+      logger.error(
+        `Error getting MoMo Bridge settings: ${error.message}`,
+      );
+      throw error;
+    }
+  }
+
+  async updateMomoBridgeSettings(momoSettings) {
+    try {
+      const settings = await Settings.getInstance();
+
+      if (momoSettings.momoBridgeApiKey !== undefined) {
+        settings.momoBridgeApiKey = momoSettings.momoBridgeApiKey;
+      }
+      if (momoSettings.momoBridgeRelayUrl !== undefined) {
+        settings.momoBridgeRelayUrl = momoSettings.momoBridgeRelayUrl;
+      }
+      if (momoSettings.momoBridgeEnabled !== undefined) {
+        settings.momoBridgeEnabled = Boolean(
+          momoSettings.momoBridgeEnabled,
+        );
+      }
+      if (momoSettings.momoBridgeClaimFeePercent !== undefined) {
+        settings.momoBridgeClaimFeePercent = Number(
+          momoSettings.momoBridgeClaimFeePercent,
+        );
+      }
+
+      await settings.save();
+
+      logger.info("MoMo Bridge settings updated:", {
+        ...momoSettings,
+        momoBridgeApiKey: momoSettings.momoBridgeApiKey
+          ? "[HIDDEN]"
+          : "",
+      });
+
+      return this.getMomoBridgeSettings();
+    } catch (error) {
+      logger.error(
+        `Error updating MoMo Bridge settings: ${error.message}`,
+      );
+      throw error;
+    }
+  }
 }
 
 export default new SettingsService();

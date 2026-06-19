@@ -358,6 +358,33 @@ class SettingsController {
         .json({ success: false, error: "Failed to update BryteLinks settings" });
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // MoMo Bridge — Mobile Money Payment Verification
+  // ---------------------------------------------------------------------------
+  async getMomoBridgeSettings(req, res) {
+    try {
+      const settings = await settingsService.getMomoBridgeSettings();
+      res.json({ success: true, data: settings });
+    } catch (error) {
+      logger.error("Error getting MoMo Bridge settings:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to get MoMo Bridge settings" });
+    }
+  }
+
+  async updateMomoBridgeSettings(req, res) {
+    try {
+      const settings = await settingsService.updateMomoBridgeSettings(req.body);
+      res.json({ success: true, data: settings });
+    } catch (error) {
+      logger.error("Error updating MoMo Bridge settings:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to update MoMo Bridge settings" });
+    }
+  }
 }
 
 export default new SettingsController();
