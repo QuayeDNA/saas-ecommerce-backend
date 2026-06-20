@@ -1,43 +1,11 @@
 // src/routes/userRoutes.js
 import express from "express";
-import multer from "multer";
-import path from "path";
-import fs from "fs";
 import userController from "../controllers/userController.js";
 import { BUSINESS_ROLES } from "../constants/roles.js";
 import { authenticate, authorize } from "../middlewares/auth.js";
 import validate from "../middlewares/validate.js";
 import { userValidation } from "../validators/userValidator.js";
-
-// ── Multer config for profile picture uploads ──────────────────────────────
-const UPLOAD_DIR = process.env.UPLOADS_PATH
-  || path.resolve(process.cwd(), process.env.NODE_ENV === "production" ? "uploads" : "uploads/dev");
-
-const storage = multer.diskStorage({
-  destination: (req, _file, cb) => {
-    const userId = req.user?.userId || "anonymous";
-    const userDir = path.join(UPLOAD_DIR, userId);
-    fs.mkdirSync(userDir, { recursive: true });
-    cb(null, userDir);
-  },
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const name = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}${ext}`;
-    cb(null, name);
-  },
-});
-
-const upload = multer({
-  storage,
-  limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    const allowed = /\.(jpg|jpeg|png|gif|webp|bmp)$/i;
-    if (!allowed.test(path.extname(file.originalname))) {
-      return cb(new Error("Only image files are allowed (jpg, jpeg, png, gif, webp, bmp)"));
-    }
-    cb(null, true);
-  },
-});
+import { handleUpload } from "../middleware/uploadMiddleware.js";
 
 const router = express.Router();
 
@@ -52,17 +20,7 @@ router.put(
 router.post(
   "/profile-picture",
   authenticate,
-  (req, res, next) => {
-    upload.single("file")(req, res, (err) => {
-      if (err) {
-        const msg = err instanceof multer.MulterError
-          ? `Upload error: ${err.message}`
-          : err.message || "Upload failed";
-        return res.status(400).json({ success: false, message: msg });
-      }
-      next();
-    });
-  },
+  handleUpload("profile"),
   userController.uploadProfilePicture,
 );
 router.delete(

@@ -21,26 +21,12 @@ import {
   AUDIT_SEVERITIES,
 } from "../constants/audit.js";
 import userService from "../services/userService.js";
-import { buildFileUrl, deleteFileByUrl } from "../utils/assetUpload.js";
-import fs from "fs";
+import { enrichUserAssets } from "../utils/assetUpload.js";
 
 class UserController {
-  // Build absolute asset URL from request context
-  assetUrl(req, url) {
-    if (!url || !url.startsWith("/")) return url;
-    const proto = req.headers["x-forwarded-proto"] || req.protocol;
-    const host = req.headers["x-forwarded-host"] || req.headers.host;
-    if (proto && host) return `${proto}://${host}${url}`;
-    return url;
-  }
-
-  // Return user with absolute profilePicture URL
+  // Return user with absolute profilePicture URL (falls back to initials SVG)
   userWithAbsolutePicture(req, user) {
-    const obj = typeof user?.toJSON === "function" ? user.toJSON() : { ...user };
-    if (obj.profilePicture) {
-      obj.profilePicture = this.assetUrl(req, obj.profilePicture);
-    }
-    return obj;
+    return enrichUserAssets(req, user);
   }
 
   async logAudit(req, payload) {
@@ -172,20 +158,16 @@ class UserController {
         severity: AUDIT_SEVERITIES.INFO,
       });
 
-      const url = this.assetUrl(req, buildFileUrl(req.file.filename, userId));
-
+      const enriched = this.userWithAbsolutePicture(req, user);
       res.json({
         success: true,
         message: "Profile picture uploaded",
         data: {
-          url,
-          user: this.userWithAbsolutePicture(req, user),
+          url: enriched.profilePicture,
+          user: enriched,
         },
       });
     } catch (error) {
-      if (req.file) {
-        try { fs.unlinkSync(req.file.path); } catch {}
-      }
       const status = error.statusCode || 500;
       const msg =
         status === 404

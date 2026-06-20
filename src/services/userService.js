@@ -9,7 +9,7 @@ import {
 } from "../utils/userTypeHelpers.js";
 import mongoose from "mongoose";
 import settingsService from "../services/settingsService.js";
-import { buildFileUrl, deleteFileByUrl } from "../utils/assetUpload.js";
+import { buildFileUrl, deleteFileByUrl, validateMagicBytes, processImage } from "../utils/assetUpload.js";
 
 class UserService {
   /**
@@ -492,7 +492,9 @@ class UserService {
    */
   async uploadProfilePicture(userId, file) {
     try {
-      const url = buildFileUrl(file.filename, userId);
+      validateMagicBytes(file.path, "profile");
+      const processedFilename = await processImage(file.path, "profile");
+      const url = buildFileUrl(processedFilename, userId, "profile");
       const user = await User.findById(userId);
       if (!user) {
         const err = new Error("User not found");

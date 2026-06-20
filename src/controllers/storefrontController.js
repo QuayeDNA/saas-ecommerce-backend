@@ -3,8 +3,8 @@ import storefrontService from "../services/storefrontService.js";
 import paystackService from "../services/paystackService.js";
 import { initializePaystackCheckout } from "../utils/paystackHelpers.js";
 import { validationResult } from "express-validator";
-import fs from "fs";
 import logger from "../utils/logger.js";
+import { enrichStorefrontAssets } from "../utils/assetUpload.js";
 import Order from "../models/Order.js";
 import PaystackVerificationTask from "../models/PaystackVerificationTask.js";
 import { logAuditAction } from "../utils/auditLogger.js";
@@ -43,13 +43,6 @@ function badRequest(res, message) {
   return res.status(400).json({ success: false, message });
 }
 
-function assetUrl(req, relativePath) {
-  if (!relativePath || relativePath.startsWith("http")) return relativePath;
-  const proto = req.headers?.["x-forwarded-proto"] || req.protocol || "https";
-  const host = req.headers?.["x-forwarded-host"] || req.headers?.host;
-  return host ? `${proto}://${host}${relativePath}` : relativePath;
-}
-
 // ─── Controller ──────────────────────────────────────────────────────────────
 
 class StorefrontController {
@@ -65,6 +58,9 @@ class StorefrontController {
       const data = await storefrontService.getPublicStorefront(
         req.params.businessName,
       );
+      if (data?.storefront) {
+        data.storefront = enrichStorefrontAssets(req, data.storefront);
+      }
       res.json({ success: true, data });
     } catch (err) {
       logger.error(`[getPublicStorefront] ${err.message}`);
@@ -412,16 +408,18 @@ class StorefrontController {
           .status(404)
           .json({ success: false, message: "No storefront found" });
 
+      const enriched = enrichStorefrontAssets(req, storefront);
+
       if (storefront.suspendedByAdmin) {
         return res.json({
           success: true,
-          data: storefront,
+          data: enriched,
           suspended: true,
           suspensionMessage: `Your storefront has been suspended by an administrator.${storefront.suspensionReason ? ` Reason: ${storefront.suspensionReason}` : ""} Contact support.`,
         });
       }
 
-      res.json({ success: true, data: storefront });
+      res.json({ success: true, data: enriched });
     } catch (err) {
       logger.error(`[getAgentStorefront] ${err.message}`);
       serverError(res, "Internal server error");
@@ -453,7 +451,7 @@ class StorefrontController {
       res.json({
         success: true,
         message: "Storefront updated successfully",
-        data: updated,
+        data: enrichStorefrontAssets(req, updated),
       });
     } catch (err) {
       logger.error(`[updateStorefront] ${err.message}`);
@@ -940,7 +938,8 @@ class StorefrontController {
     try {
       const limit = Math.min(parseInt(req.query.limit) || 6, 12);
       const data = await storefrontService.getRandomStorefronts(limit);
-      res.json({ success: true, data });
+      const enriched = (data || []).map((sf) => enrichStorefrontAssets(req, sf));
+      res.json({ success: true, data: enriched });
     } catch (err) {
       logger.error(`[getRandomStorefronts] ${err.message}`);
       res
@@ -960,8 +959,6 @@ class StorefrontController {
       }
       const sf = await storefrontService.getAgentStorefront(req.user.userId);
       if (!sf) {
-        // Clean up orphaned file
-        try { fs.unlinkSync(req.file.path); } catch {}
         return res.status(404).json({ success: false, message: "Storefront not found" });
       }
       const result = await storefrontService.uploadStorefrontAsset(
@@ -970,17 +967,15 @@ class StorefrontController {
         req.file,
         "logoUrl",
       );
-      result.url = assetUrl(req, result.url);
+      const sfPlain = typeof sf?.toObject === "function" ? sf.toObject() : { ...sf };
+      const branding = { ...(sf.branding && typeof sf.branding.toObject === "function" ? sf.branding.toObject() : sf.branding), logoUrl: result.url };
+      const enriched = enrichStorefrontAssets(req, { ...sfPlain, branding });
       res.json({
         success: true,
         message: "Logo uploaded",
-        data: { url: result.url, branding: result.branding },
+        data: { url: enriched.branding.logoUrl, branding: enriched.branding },
       });
     } catch (err) {
-      // Clean up orphaned file on error
-      if (req.file?.path) {
-        try { fs.unlinkSync(req.file.path); } catch {}
-      }
       logger.error(`[uploadLogo] ${err.message}`);
       badRequest(res, err.message);
     }
@@ -995,7 +990,9 @@ class StorefrontController {
         req.user.userId,
         "logoUrl",
       );
-      res.json({ success: true, message: "Logo removed", data: result });
+      const sfPlain = typeof sf?.toObject === "function" ? sf.toObject() : { ...sf };
+      const enriched = enrichStorefrontAssets(req, { ...sfPlain, branding: { ...result.branding } });
+      res.json({ success: true, message: "Logo removed", data: { branding: enriched.branding } });
     } catch (err) {
       logger.error(`[deleteLogo] ${err.message}`);
       badRequest(res, err.message);
@@ -1009,7 +1006,6 @@ class StorefrontController {
       }
       const sf = await storefrontService.getAgentStorefront(req.user.userId);
       if (!sf) {
-        try { fs.unlinkSync(req.file.path); } catch {}
         return res.status(404).json({ success: false, message: "Storefront not found" });
       }
       const result = await storefrontService.uploadStorefrontAsset(
@@ -1018,16 +1014,15 @@ class StorefrontController {
         req.file,
         "bannerUrl",
       );
-      result.url = assetUrl(req, result.url);
+      const sfPlain = typeof sf?.toObject === "function" ? sf.toObject() : { ...sf };
+      const branding = { ...(sf.branding && typeof sf.branding.toObject === "function" ? sf.branding.toObject() : sf.branding), bannerUrl: result.url };
+      const enriched = enrichStorefrontAssets(req, { ...sfPlain, branding });
       res.json({
         success: true,
         message: "Banner uploaded",
-        data: { url: result.url, branding: result.branding },
+        data: { url: enriched.branding.bannerUrl, branding: enriched.branding },
       });
     } catch (err) {
-      if (req.file?.path) {
-        try { fs.unlinkSync(req.file.path); } catch {}
-      }
       logger.error(`[uploadBanner] ${err.message}`);
       badRequest(res, err.message);
     }
@@ -1042,7 +1037,9 @@ class StorefrontController {
         req.user.userId,
         "bannerUrl",
       );
-      res.json({ success: true, message: "Banner removed", data: result });
+      const sfPlain = typeof sf?.toObject === "function" ? sf.toObject() : { ...sf };
+      const enriched = enrichStorefrontAssets(req, { ...sfPlain, branding: { ...result.branding } });
+      res.json({ success: true, message: "Banner removed", data: { branding: enriched.branding } });
     } catch (err) {
       logger.error(`[deleteBanner] ${err.message}`);
       badRequest(res, err.message);

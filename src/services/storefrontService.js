@@ -18,7 +18,7 @@ import {
   getFeeConfig,
   calculateChargeWithFees,
 } from "../utils/paystackHelpers.js";
-import { deleteFileByUrl, buildFileUrl } from "../utils/assetUpload.js";
+import { deleteFileByUrl, buildFileUrl, validateMagicBytes, processImage } from "../utils/assetUpload.js";
 import logger from "../utils/logger.js";
 import websocketService from "./websocketService.js";
 import PaystackVerificationTask from "../models/PaystackVerificationTask.js";
@@ -171,6 +171,15 @@ class StorefrontService {
     delete updateData.isApproved;
     delete updateData.suspendedByAdmin;
     delete updateData.agentId;
+
+    // Merge branding fields instead of replacing the entire subdocument.
+    // This preserves logoUrl/bannerUrl set independently by upload/delete endpoints.
+    if (updateData.branding) {
+      const existingBranding =
+        (storefront.branding?.toObject?.() || storefront.branding || {});
+      storefront.branding = { ...existingBranding, ...updateData.branding };
+      delete updateData.branding;
+    }
 
     Object.assign(storefront, updateData);
     storefront.lastActivityAt = new Date();
@@ -2150,7 +2159,10 @@ class StorefrontService {
     if (!field || !["logoUrl", "bannerUrl"].includes(field)) {
       throw new Error("Invalid asset field");
     }
-    const url = buildFileUrl(file.filename, userId);
+    const assetType = field === "logoUrl" ? "logo" : "banner";
+    validateMagicBytes(file.path, assetType);
+    const processedFilename = await processImage(file.path, assetType);
+    const url = buildFileUrl(processedFilename, userId, assetType);
     const sf = await AgentStorefront.findById(storefrontId);
     if (!sf) throw new Error("Storefront not found");
     const oldUrl = sf.branding?.[field];
