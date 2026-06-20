@@ -60,5 +60,5 @@ dist/
 scripts/*
 !scripts/migrate-storefront-earnings-ledger.js
 
-# Uploaded assets
-uploads/
+# Uploaded assets (dev only — production uploads/ is tracked for deployment)
+uploads/dev/

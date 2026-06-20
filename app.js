@@ -224,6 +224,7 @@ const uploadsDir = process.env.UPLOADS_PATH
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
+logger.info(`Uploads directory: ${uploadsDir}`);
 
 app.use("/api/uploads", (req, res, next) => {
   res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
