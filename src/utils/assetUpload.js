@@ -12,9 +12,9 @@ export function deleteFileByUrl(url) {
   let relativePath;
   try {
     const parsed = new URL(url);
-    relativePath = parsed.pathname.replace(/^\/uploads\//, "");
+    relativePath = parsed.pathname.replace(/^\/api\/uploads\//, "");
   } catch {
-    relativePath = url.replace(/^\/uploads\//, "");
+    relativePath = url.replace(/^\/api\/uploads\//, "");
   }
   const filePath = path.join(UPLOAD_DIR, relativePath);
   try {
@@ -28,7 +28,7 @@ export function deleteFileByUrl(url) {
 
 export function buildFileUrl(filename, userId, assetType) {
   const base = process.env.UPLOADS_BASE_URL || "";
-  const urlPath = `/uploads/${userId}/${assetType}/${filename}`;
+  const urlPath = `/api/uploads/${userId}/${assetType}/${filename}`;
   return base
     ? `${base.replace(/\/+$/, "")}${urlPath}`
     : urlPath;

@@ -225,11 +225,11 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-app.use("/uploads", (req, res, next) => {
+app.use("/api/uploads", (req, res, next) => {
   res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
   next();
 });
-app.use("/uploads", express.static(uploadsDir));
+app.use("/api/uploads", express.static(uploadsDir));
 
 // ─── API Routes ───────────────────────────────────────────────────────────────
 
