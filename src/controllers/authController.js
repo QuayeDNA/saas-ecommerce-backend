@@ -13,7 +13,7 @@ import {
   AUDIT_CATEGORIES,
   AUDIT_SEVERITIES,
 } from "../constants/audit.js";
-import { enrichUserAssets } from "../utils/assetUpload.js";
+
 
 const AUTH_STATUS_CODE_FALLBACK = {
   400: "AUTH_BAD_REQUEST",
@@ -383,7 +383,7 @@ class AuthController {
         }
       }
 
-      const userData = enrichUserAssets(req, user);
+      const userData = user;
 
       res.json({
         success: true,
@@ -511,7 +511,7 @@ class AuthController {
         message,
         userType: user.userType,
         status: user.status,
-        user: enrichUserAssets(req, updatedUser),
+        user: updatedUser,
       });
     } catch (error) {
       logger.error(`Account verification error: ${error.message}`);
@@ -567,7 +567,7 @@ class AuthController {
       res.json({
         success: true,
         message: "Security PIN configured successfully",
-        user: enrichUserAssets(req, updatedUser),
+        user: updatedUser,
       });
     } catch (error) {
       logger.error(`Setup PIN error: ${error.message}`);
@@ -747,7 +747,7 @@ class AuthController {
         success: true,
         accessToken: newAccessToken,
         refreshToken: newRefreshToken,
-        user: enrichUserAssets(req, user),
+        user: user,
         requiresPinSetup: user.requiresPinSetup,
       });
     } catch (error) {
@@ -782,7 +782,7 @@ class AuthController {
       res.json({
         success: true,
         valid: true,
-        user: enrichUserAssets(req, user),
+        user: user,
         requiresPinSetup: user.requiresPinSetup,
       });
     } catch (error) {
@@ -942,7 +942,7 @@ class AuthController {
       res.json({
         success: true,
         message: "User preferences updated successfully",
-        user: enrichUserAssets(req, updatedUser),
+        user: updatedUser,
       });
     } catch (error) {
       logger.error(`Error updating first-time flag: ${error.message}`);
@@ -1155,7 +1155,7 @@ class AuthController {
         severity: AUDIT_SEVERITIES.INFO,
       });
 
-      res.json({ success: true, user: enrichUserAssets(req, updated) });
+      res.json({ success: true, user: updated });
     } catch (error) {
       logger.error(`Update user failed: ${error.message}`);
       return this.sendAuthError(

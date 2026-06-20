@@ -21,14 +21,7 @@ import {
   AUDIT_SEVERITIES,
 } from "../constants/audit.js";
 import userService from "../services/userService.js";
-import { enrichUserAssets } from "../utils/assetUpload.js";
-
 class UserController {
-  // Return user with absolute profilePicture URL (falls back to initials SVG)
-  userWithAbsolutePicture(req, user) {
-    return enrichUserAssets(req, user);
-  }
-
   async logAudit(req, payload) {
     try {
       if (!req?.logAuditAction) return;
@@ -54,7 +47,7 @@ class UserController {
 
       res.json({
         success: true,
-        user: this.userWithAbsolutePicture(req, user),
+        user: user,
       });
     } catch (error) {
       logger.error(`Get profile error: ${error.message}`);
@@ -124,7 +117,7 @@ class UserController {
       res.json({
         success: true,
         message: "Profile updated successfully",
-        user: this.userWithAbsolutePicture(req, user),
+        user: user,
       });
     } catch (error) {
       logger.error(`Update profile error: ${error.message}`);
@@ -158,7 +151,7 @@ class UserController {
         severity: AUDIT_SEVERITIES.INFO,
       });
 
-      const enriched = this.userWithAbsolutePicture(req, user);
+      const enriched = user;
       res.json({
         success: true,
         message: "Profile picture uploaded",
@@ -449,7 +442,7 @@ class UserController {
 
       res.json({
         success: true,
-        user: this.userWithAbsolutePicture(req, user),
+        user: user,
       });
     } catch (error) {
       logger.error(`Get user by ID error: ${error.message}`);
@@ -544,7 +537,7 @@ class UserController {
       res.json({
         success: true,
         message: "User status updated successfully",
-        user: this.userWithAbsolutePicture(req, user),
+        user: user,
       });
     } catch (error) {
       logger.error(`Update user status error: ${error.message}`);

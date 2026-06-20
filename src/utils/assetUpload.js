@@ -1,83 +1,64 @@
-import path from "path";
-import fs from "fs";
-import sharp from "sharp";
-import { UPLOAD_DIR, ASSET_TYPES, MAGIC_BYTES } from "../config/upload.js";
+import { Readable } from "stream";
+import cloudinary, { ASSET_TYPES } from "../config/upload.js";
 
-export function getUploadDir() {
-  return UPLOAD_DIR;
-}
-
-export function deleteFileByUrl(url) {
-  if (!url) return false;
-  let relativePath;
+export function getPublicIdFromUrl(url) {
+  if (!url) return null;
   try {
-    const parsed = new URL(url);
-    relativePath = parsed.pathname.replace(/^\/api\/uploads\//, "");
+    const parts = url.split("/");
+    const uploadIndex = parts.indexOf("upload");
+    if (uploadIndex === -1) return null;
+    const versionIndex = uploadIndex + 2;
+    const folderParts = parts.slice(uploadIndex + 2, -1);
+    const fileWithExt = parts[parts.length - 1];
+    const fileName = fileWithExt.replace(/\.[^.]+$/, "");
+    return [...folderParts, fileName].join("/");
   } catch {
-    relativePath = url.replace(/^\/api\/uploads\//, "");
+    return null;
   }
-  const filePath = path.join(UPLOAD_DIR, relativePath);
+}
+
+export async function uploadToCloudinary(file, userId, assetType) {
+  const config = ASSET_TYPES[assetType];
+  if (!config) throw new Error(`Unknown asset type: ${assetType}`);
+
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        folder: `${userId}/${config.folder}`,
+        resource_type: "image",
+        allowed_formats: config.allowedFormats,
+        transformation: [
+          {
+            width: config.maxWidth,
+            height: config.maxHeight,
+            crop: "fit",
+            without_enlargement: true,
+          },
+          { quality: "auto", fetch_format: "auto" },
+        ],
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve(result.secure_url);
+      },
+    );
+
+    const readable = new Readable();
+    readable.push(file.buffer);
+    readable.push(null);
+    readable.pipe(uploadStream);
+  });
+}
+
+export async function deleteFromCloudinary(url) {
+  const publicId = getPublicIdFromUrl(url);
+  if (!publicId) return false;
   try {
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-      return true;
-    }
-  } catch {}
-  return false;
-}
-
-export function buildFileUrl(filename, userId, assetType) {
-  const base = process.env.UPLOADS_BASE_URL || "";
-  const urlPath = `/api/uploads/${userId}/${assetType}/${filename}`;
-  return base
-    ? `${base.replace(/\/+$/, "")}${urlPath}`
-    : urlPath;
-}
-
-export function validateMagicBytes(filePath, assetType) {
-  const config = ASSET_TYPES[assetType];
-  if (!config) throw new Error(`Unknown asset type: ${assetType}`);
-
-  const ext = path.extname(filePath).toLowerCase().replace(".", "");
-  const expectedSig = MAGIC_BYTES[ext];
-  if (!expectedSig) return;
-
-  const buf = Buffer.alloc(8);
-  const fd = fs.openSync(filePath, "r");
-  fs.readSync(fd, buf, 0, 8, 0);
-  fs.closeSync(fd);
-
-  const matches = expectedSig.every((byte, i) => buf[i] === byte);
-  if (!matches) {
-    try { fs.unlinkSync(filePath); } catch {}
-    throw new Error(`Invalid ${ext} file — magic byte mismatch`);
+    const result = await cloudinary.uploader.destroy(publicId);
+    return result.result === "ok";
+  } catch {
+    return false;
   }
-}
-
-export async function processImage(filePath, assetType) {
-  const config = ASSET_TYPES[assetType];
-  if (!config) throw new Error(`Unknown asset type: ${assetType}`);
-
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext === ".svg") {
-    return path.basename(filePath);
-  }
-
-  const dir = path.dirname(filePath);
-  const baseName = path.basename(filePath, ext);
-  const outputPath = path.join(dir, `${baseName}.${config.outputFormat}`);
-
-  await sharp(filePath)
-    .resize(config.maxWidth, config.maxHeight, {
-      fit: "inside",
-      withoutEnlargement: true,
-    })
-    .webp({ quality: config.outputQuality })
-    .toFile(outputPath);
-
-  try { fs.unlinkSync(filePath); } catch {}
-
-  return `${baseName}.${config.outputFormat}`;
 }
 
 export function generateInitialsSvg(name, size = 200) {
@@ -101,35 +82,4 @@ export function generateInitialsSvg(name, size = 200) {
     font-family="system-ui, -apple-system, sans-serif" font-size="${fontSize}"
     font-weight="600" fill="white">${initials}</text>
 </svg>`;
-}
-
-export function assetUrl(req, relativePath) {
-  if (!relativePath) return relativePath;
-  if (relativePath.startsWith("http")) return relativePath;
-  const proto = req.headers?.["x-forwarded-proto"] || req.protocol || "https";
-  const host = req.headers?.["x-forwarded-host"] || req.headers?.host;
-  return host ? `${proto}://${host}${relativePath}` : relativePath;
-}
-
-export function enrichUserAssets(req, user) {
-  const obj = typeof user?.toJSON === "function" ? user.toJSON() : { ...user };
-  if (obj.profilePicture) {
-    obj.profilePicture = assetUrl(req, obj.profilePicture);
-  } else {
-    const name = obj.fullName || "User";
-    obj.profilePicture = assetUrl(
-      req,
-      `/api/assets/avatar?name=${encodeURIComponent(name)}&size=200`,
-    );
-  }
-  return obj;
-}
-
-export function enrichStorefrontAssets(req, sf) {
-  const obj = typeof sf?.toJSON === "function" ? sf.toJSON() : { ...sf };
-  if (obj.branding) {
-    if (obj.branding.logoUrl) obj.branding.logoUrl = assetUrl(req, obj.branding.logoUrl);
-    if (obj.branding.bannerUrl) obj.branding.bannerUrl = assetUrl(req, obj.branding.bannerUrl);
-  }
-  return obj;
 }

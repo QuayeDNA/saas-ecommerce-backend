@@ -4,7 +4,7 @@ import paystackService from "../services/paystackService.js";
 import { initializePaystackCheckout } from "../utils/paystackHelpers.js";
 import { validationResult } from "express-validator";
 import logger from "../utils/logger.js";
-import { enrichStorefrontAssets } from "../utils/assetUpload.js";
+
 import Order from "../models/Order.js";
 import PaystackVerificationTask from "../models/PaystackVerificationTask.js";
 import { logAuditAction } from "../utils/auditLogger.js";
@@ -59,7 +59,7 @@ class StorefrontController {
         req.params.businessName,
       );
       if (data?.storefront) {
-        data.storefront = enrichStorefrontAssets(req, data.storefront);
+
       }
       res.json({ success: true, data });
     } catch (err) {
@@ -408,7 +408,7 @@ class StorefrontController {
           .status(404)
           .json({ success: false, message: "No storefront found" });
 
-      const enriched = enrichStorefrontAssets(req, storefront);
+      const enriched = storefront;
 
       if (storefront.suspendedByAdmin) {
         return res.json({
@@ -451,7 +451,7 @@ class StorefrontController {
       res.json({
         success: true,
         message: "Storefront updated successfully",
-        data: enrichStorefrontAssets(req, updated),
+        data: updated,
       });
     } catch (err) {
       logger.error(`[updateStorefront] ${err.message}`);
@@ -938,7 +938,7 @@ class StorefrontController {
     try {
       const limit = Math.min(parseInt(req.query.limit) || 6, 12);
       const data = await storefrontService.getRandomStorefronts(limit);
-      const enriched = (data || []).map((sf) => enrichStorefrontAssets(req, sf));
+      const enriched = data || [];
       res.json({ success: true, data: enriched });
     } catch (err) {
       logger.error(`[getRandomStorefronts] ${err.message}`);
@@ -969,7 +969,7 @@ class StorefrontController {
       );
       const sfPlain = typeof sf?.toObject === "function" ? sf.toObject() : { ...sf };
       const branding = { ...(sf.branding && typeof sf.branding.toObject === "function" ? sf.branding.toObject() : sf.branding), logoUrl: result.url };
-      const enriched = enrichStorefrontAssets(req, { ...sfPlain, branding });
+      const enriched = { ...sfPlain, branding };
       res.json({
         success: true,
         message: "Logo uploaded",
@@ -991,7 +991,7 @@ class StorefrontController {
         "logoUrl",
       );
       const sfPlain = typeof sf?.toObject === "function" ? sf.toObject() : { ...sf };
-      const enriched = enrichStorefrontAssets(req, { ...sfPlain, branding: { ...result.branding } });
+      const enriched = { ...sfPlain, branding: { ...result.branding } };
       res.json({ success: true, message: "Logo removed", data: { branding: enriched.branding } });
     } catch (err) {
       logger.error(`[deleteLogo] ${err.message}`);
@@ -1016,7 +1016,7 @@ class StorefrontController {
       );
       const sfPlain = typeof sf?.toObject === "function" ? sf.toObject() : { ...sf };
       const branding = { ...(sf.branding && typeof sf.branding.toObject === "function" ? sf.branding.toObject() : sf.branding), bannerUrl: result.url };
-      const enriched = enrichStorefrontAssets(req, { ...sfPlain, branding });
+      const enriched = { ...sfPlain, branding };
       res.json({
         success: true,
         message: "Banner uploaded",
@@ -1038,7 +1038,7 @@ class StorefrontController {
         "bannerUrl",
       );
       const sfPlain = typeof sf?.toObject === "function" ? sf.toObject() : { ...sf };
-      const enriched = enrichStorefrontAssets(req, { ...sfPlain, branding: { ...result.branding } });
+      const enriched = { ...sfPlain, branding: { ...result.branding } };
       res.json({ success: true, message: "Banner removed", data: { branding: enriched.branding } });
     } catch (err) {
       logger.error(`[deleteBanner] ${err.message}`);

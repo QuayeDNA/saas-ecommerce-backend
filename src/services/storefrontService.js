@@ -18,7 +18,7 @@ import {
   getFeeConfig,
   calculateChargeWithFees,
 } from "../utils/paystackHelpers.js";
-import { deleteFileByUrl, buildFileUrl, validateMagicBytes, processImage } from "../utils/assetUpload.js";
+import { uploadToCloudinary, deleteFromCloudinary } from "../utils/assetUpload.js";
 import logger from "../utils/logger.js";
 import websocketService from "./websocketService.js";
 import PaystackVerificationTask from "../models/PaystackVerificationTask.js";
@@ -2160,15 +2160,13 @@ class StorefrontService {
       throw new Error("Invalid asset field");
     }
     const assetType = field === "logoUrl" ? "logo" : "banner";
-    validateMagicBytes(file.path, assetType);
-    const processedFilename = await processImage(file.path, assetType);
-    const url = buildFileUrl(processedFilename, userId, assetType);
+    const url = await uploadToCloudinary(file, userId, assetType);
     const sf = await AgentStorefront.findById(storefrontId);
     if (!sf) throw new Error("Storefront not found");
     const oldUrl = sf.branding?.[field];
     const update = { $set: { [`branding.${field}`]: url } };
     await AgentStorefront.findByIdAndUpdate(storefrontId, update, { new: true });
-    if (oldUrl) deleteFileByUrl(oldUrl);
+    if (oldUrl) deleteFromCloudinary(oldUrl);
     return { url, branding: { ...(sf.branding?.toObject?.() || sf.branding), [field]: url } };
   }
 
@@ -2180,7 +2178,7 @@ class StorefrontService {
     if (!sf) throw new Error("Storefront not found");
     const oldUrl = sf.branding?.[field];
     if (!oldUrl) throw new Error(`No ${field} to delete`);
-    deleteFileByUrl(oldUrl);
+    deleteFromCloudinary(oldUrl);
     const update = { $unset: { [`branding.${field}`]: "" } };
     await AgentStorefront.findByIdAndUpdate(storefrontId, update, { new: true });
     return { branding: { ...(sf.branding?.toObject?.() || sf.branding), [field]: undefined } };

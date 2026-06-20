@@ -9,7 +9,7 @@ import {
 } from "../utils/userTypeHelpers.js";
 import mongoose from "mongoose";
 import settingsService from "../services/settingsService.js";
-import { buildFileUrl, deleteFileByUrl, validateMagicBytes, processImage } from "../utils/assetUpload.js";
+import { uploadToCloudinary, deleteFromCloudinary } from "../utils/assetUpload.js";
 
 class UserService {
   /**
@@ -492,9 +492,7 @@ class UserService {
    */
   async uploadProfilePicture(userId, file) {
     try {
-      validateMagicBytes(file.path, "profile");
-      const processedFilename = await processImage(file.path, "profile");
-      const url = buildFileUrl(processedFilename, userId, "profile");
+      const url = await uploadToCloudinary(file, userId, "profile");
       const user = await User.findById(userId);
       if (!user) {
         const err = new Error("User not found");
@@ -504,7 +502,7 @@ class UserService {
       const oldUrl = user.profilePicture;
       user.profilePicture = url;
       await user.save();
-      if (oldUrl) deleteFileByUrl(oldUrl);
+      if (oldUrl) deleteFromCloudinary(oldUrl);
       logger.info(`Profile picture updated for user: ${user.email}`);
       return user;
     } catch (error) {
@@ -532,7 +530,7 @@ class UserService {
         err.statusCode = 400;
         throw err;
       }
-      deleteFileByUrl(oldUrl);
+      deleteFromCloudinary(oldUrl);
       user.profilePicture = null;
       await user.save();
       logger.info(`Profile picture removed for user: ${user.email}`);

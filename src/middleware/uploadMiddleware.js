@@ -1,8 +1,5 @@
 import multer from "multer";
-import path from "path";
-import fs from "fs";
-import { randomUUID } from "crypto";
-import { UPLOAD_DIR, ASSET_TYPES } from "../config/upload.js";
+import { ASSET_TYPES } from "../config/upload.js";
 
 const instances = {};
 
@@ -10,21 +7,11 @@ function createUpload(assetTypeKey) {
   const config = ASSET_TYPES[assetTypeKey];
   if (!config) throw new Error(`Unknown asset type: ${assetTypeKey}`);
 
-  const storage = multer.diskStorage({
-    destination: (req, _file, cb) => {
-      const userId = req.user?.userId || "anonymous";
-      const dir = path.join(UPLOAD_DIR, userId, config.key);
-      fs.mkdirSync(dir, { recursive: true });
-      cb(null, dir);
-    },
-    filename: (_req, file, cb) => {
-      const ext = path.extname(file.originalname).toLowerCase();
-      cb(null, `${randomUUID()}${ext}`);
-    },
-  });
+  const storage = multer.memoryStorage();
 
   const fileFilter = (_req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase().replace(".", "");
+    const parts = file.originalname.split(".");
+    const ext = parts.length > 1 ? parts.pop().toLowerCase() : "";
     if (!config.allowedFormats.includes(ext)) {
       return cb(new Error(`Invalid file type. Allowed: ${config.allowedFormats.join(", ")}`));
     }
