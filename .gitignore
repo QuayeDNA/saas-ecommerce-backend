@@ -59,6 +59,3 @@ dist/
 #scripts
 scripts/*
 !scripts/migrate-storefront-earnings-ledger.js
-
-# Uploaded files (saved to server disk, not repo)
-uploads/

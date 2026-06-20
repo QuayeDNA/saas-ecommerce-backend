@@ -8,6 +8,11 @@ const commissionSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    order: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Order",
+      required: true,
+    },
     amount: {
       type: Number,
       required: true,
@@ -22,21 +27,6 @@ const commissionSchema = new mongoose.Schema(
     date: {
       type: String,
       required: true,
-    },
-    batchTotal: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-    ordersCount: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-    qualifiedUsersCount: {
-      type: Number,
-      required: true,
-      min: 0,
     },
     status: {
       type: String,
@@ -56,7 +46,7 @@ const commissionSchema = new mongoose.Schema(
 );
 
 commissionSchema.index({ referrer: 1, status: 1 });
-commissionSchema.index({ date: 1, referrer: 1 }, { unique: true });
+commissionSchema.index({ order: 1 }, { unique: true });
 
 const Commission = mongoose.model("Commission", commissionSchema);
 

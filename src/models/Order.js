@@ -454,4 +454,19 @@ orderSchema.methods.updateStatus = async function () {
   return this;
 };
 
+orderSchema.post("save", async function (doc) {
+  if (doc.status === "completed") {
+    try {
+      const Commission = (await import("./Commission.js")).default;
+      const exists = await Commission.exists({ order: doc._id });
+      if (!exists) {
+        const commissionService = (await import("../services/commissionService.js")).default;
+        await commissionService.creditOrderCommission(doc._id);
+      }
+    } catch (err) {
+      console.error("[Order] Failed to credit referral commission:", err.message);
+    }
+  }
+});
+
 export default mongoose.model("Order", orderSchema);

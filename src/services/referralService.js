@@ -97,7 +97,7 @@ class ReferralService {
           $group: {
             _id: "$referrer",
             commissionsEarned: { $sum: "$amount" },
-            totalOrders: { $sum: "$ordersCount" },
+            totalOrders: { $sum: 1 },
             batchCount: { $sum: 1 },
           },
         },
@@ -251,7 +251,7 @@ class ReferralService {
             $group: {
               _id: null,
               totalCommissionsPaid: { $sum: "$amount" },
-              totalOrdersFromReferrals: { $sum: "$ordersCount" },
+              totalOrdersFromReferrals: { $sum: 1 },
               totalBatches: { $sum: 1 },
               uniqueReferrers: { $addToSet: "$referrer" },
             },
@@ -378,7 +378,7 @@ class ReferralService {
               $sum: { $cond: [{ $eq: ["$status", "credited"] }, "$amount", 0] },
             },
             batchCount: { $sum: 1 },
-            totalCommissionOrders: { $sum: "$ordersCount" },
+            totalCommissionOrders: { $sum: 1 },
           },
         },
       ]),

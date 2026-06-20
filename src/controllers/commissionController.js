@@ -1,22 +1,6 @@
 import commissionService from "../services/commissionService.js";
 
 class CommissionController {
-  async processDailyCommissions(req, res, next) {
-    try {
-      const dateFromBody = req.body?.date;
-      const dateFromQuery = req.query?.date;
-      const date = dateFromBody || dateFromQuery || null;
-      const result = await commissionService.processDailyCommissions(date);
-      res.json({
-        success: true,
-        message: result.message,
-        data: result,
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
   async withdrawCommission(req, res, next) {
     try {
       const { amount } = req.body;

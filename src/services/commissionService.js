@@ -15,213 +15,128 @@ import {
 } from "../constants/audit.js";
 
 class CommissionService {
-  async processDailyCommissions(dateStr) {
-    const targetDate = dateStr
-      ? new Date(dateStr + "T00:00:00.000Z")
-      : new Date(new Date().toDateString());
+  async creditOrderCommission(orderId) {
+    const order = await Order.findById(orderId);
+    if (!order) {
+      logger.warn(`[CommissionService] Order ${orderId} not found`);
+      return null;
+    }
 
-    const startOfDay = new Date(targetDate);
-    startOfDay.setUTCHours(0, 0, 0, 0);
+    if (order.status !== "completed") {
+      logger.warn(
+        `[CommissionService] Order ${orderId} status is ${order.status}, not completed`,
+      );
+      return null;
+    }
 
-    const endOfDay = new Date(targetDate);
-    endOfDay.setUTCHours(23, 59, 59, 999);
-
-    const dateKey = startOfDay.toISOString().slice(0, 10);
+    // Early idempotency check — avoids Settings/User lookups on duplicate calls
+    const alreadyCredited = await Commission.exists({ order: orderId });
+    if (alreadyCredited) return null;
 
     const settings = await Settings.getInstance();
     if (!settings.referralProgramEnabled) {
       logger.info(
-        "[CommissionService] Referral program is disabled, skipping daily batch",
+        "[CommissionService] Referral program disabled, skipping commission",
       );
-      return { processed: 0, message: "Referral program is disabled", date: dateKey };
+      return null;
     }
 
-    const minAmount = settings.minOrderAmountForCommission ?? 0;
     const rate = settings.referralCommissionPercent ?? 5.0;
-    const cap = settings.referralCommissionCap ?? 0;
 
-    // Step 1: group by (referrer, referredUser) — per-user daily totals
-    const perUserGroups = await Order.aggregate([
-      {
-        $match: {
-          status: "completed",
-          createdAt: { $gte: startOfDay, $lte: endOfDay },
-        },
-      },
-      {
-        $lookup: {
-          from: "users",
-          localField: "createdBy",
-          foreignField: "_id",
-          as: "creator",
-        },
-      },
-      { $unwind: "$creator" },
-      {
-        $match: {
-          "creator.referredBy": { $exists: true, $ne: null },
-        },
-      },
-      {
-        $group: {
-          _id: {
-            referrer: "$creator.referredBy",
-            referredUser: "$createdBy",
-          },
-          userTotal: { $sum: "$total" },
-          userOrderCount: { $sum: 1 },
-        },
-      },
-    ]);
-
-    if (perUserGroups.length === 0) {
-      logger.info(
-        `[CommissionService] No eligible orders found for ${dateKey}`,
-      );
-      return { processed: 0, message: "No eligible orders found", date: dateKey };
+    const creator = await User.findById(order.createdBy);
+    if (!creator || !creator.referredBy) {
+      return null;
     }
 
-    // Step 2: per-referred-user min check + commission calc, aggregate by referrer
-    const referrerMap = new Map();
+    const amount = (order.total * rate) / 100;
+    if (amount <= 0) return null;
 
-    for (const group of perUserGroups) {
-      const referrerId = group._id.referrer.toString();
-      const userTotal = group.userTotal;
+    const dateKey = order.createdAt.toISOString().slice(0, 10);
 
-      if (minAmount > 0 && userTotal < minAmount) {
-        logger.info(
-          `[CommissionService] Referred user ${group._id.referredUser} total ${userTotal} below minimum ${minAmount}, skipping`,
-        );
-        continue;
-      }
+    try {
+      await Commission.create({
+        referrer: creator.referredBy,
+        order: order._id,
+        amount,
+        rate,
+        date: dateKey,
+        status: "credited",
+        creditedAt: new Date(),
+      });
 
-      const userCommission = (userTotal * rate) / 100;
-      if (userCommission <= 0) continue;
+      await User.findByIdAndUpdate(creator.referredBy, {
+        $inc: { commissionBalance: amount },
+      });
 
-      if (!referrerMap.has(referrerId)) {
-        referrerMap.set(referrerId, {
-          totalCommission: 0,
-          totalOrders: 0,
-          qualifiedUsers: 0,
-          batchTotal: 0,
-        });
-      }
+      const referrer = await User.findById(creator.referredBy);
 
-      const entry = referrerMap.get(referrerId);
-      entry.totalCommission += userCommission;
-      entry.totalOrders += group.userOrderCount;
-      entry.qualifiedUsers++;
-      entry.batchTotal += userTotal;
-    }
-
-    if (referrerMap.size === 0) {
-      logger.info(
-        `[CommissionService] No referrers met the minimum threshold for ${dateKey}`,
-      );
-      return { processed: 0, message: "No referrers met minimum threshold", date: dateKey };
-    }
-
-    // Check which referrers already have a Commission doc for this date
-    const existingDocs = await Commission.find({
-      date: dateKey,
-      referrer: { $in: [...referrerMap.keys()].map(id => new mongoose.Types.ObjectId(id)) },
-    }).select("referrer").lean();
-    const existingReferrerSet = new Set(existingDocs.map(c => c.referrer.toString()));
-
-    let credited = 0;
-    let skipped = 0;
-
-    for (const [referrerId, data] of referrerMap) {
-      try {
-        if (existingReferrerSet.has(referrerId)) {
-          logger.info(`[CommissionService] Commission already exists for referrer ${referrerId} on ${dateKey}, skipping`);
-          skipped++;
-          continue;
-        }
-
-        // Step 3: apply cap per referrer for the day
-        let amount = data.totalCommission;
-        if (cap > 0 && amount > cap) {
-          amount = cap;
-        }
-
-        // Step 4: create Commission record + credit commissionBalance
-        await Commission.create({
-          referrer: referrerId,
-          date: dateKey,
+      await logAuditAction({
+        userId: creator.referredBy,
+        performedBy: creator.referredBy,
+        action: AUDIT_ACTIONS.REFERRAL_COMMISSION_CREDITED,
+        category: AUDIT_CATEGORIES.REFERRAL,
+        severity: AUDIT_SEVERITIES.INFO,
+        description: `Commission of ${amount} credited to referrer for order ${order._id}`,
+        metadata: {
+          referrer: creator.referredBy,
+          order: order._id,
           amount,
           rate,
-          batchTotal: data.batchTotal,
-          ordersCount: data.totalOrders,
-          qualifiedUsersCount: data.qualifiedUsers,
-          status: "credited",
-          creditedAt: new Date(),
-        });
+          orderTotal: order.total,
+        },
+        ip: null,
+        userAgent: null,
+      });
 
-        await User.findByIdAndUpdate(referrerId, {
-          $inc: { commissionBalance: amount },
-        });
-
-        await logAuditAction({
-          userId: referrerId,
-          performedBy: referrerId,
-          action: AUDIT_ACTIONS.REFERRAL_COMMISSION_CREDITED,
-          category: AUDIT_CATEGORIES.REFERRAL,
-          severity: AUDIT_SEVERITIES.INFO,
-          description: `Daily commission of ${amount} credited to referrer ${referrerId} for ${dateKey}`,
-          metadata: {
-            referrerId,
-            date: dateKey,
+      try {
+        await notificationService.createInAppNotification(
+          creator.referredBy.toString(),
+          "Commission Earned!",
+          `You earned GHS ${amount.toFixed(2)} commission from an order by your referral. Current commission balance: GHS ${(referrer?.commissionBalance ?? 0).toFixed(2)}.`,
+          "success",
+          {
+            type: "order_commission",
             amount,
-            rate,
-            batchTotal: data.batchTotal,
-            ordersCount: data.totalOrders,
-            qualifiedUsersCount: data.qualifiedUsers,
+            orderId: order._id.toString(),
+            orderNumber: order.orderNumber,
           },
-          ip: null,
-          userAgent: null,
-        });
-
-        try {
-          const referrer = await User.findById(referrerId);
-          await notificationService.createInAppNotification(
-            referrerId.toString(),
-            "Daily Commission Earned!",
-            `You earned GHS ${amount.toFixed(2)} in commissions today (${dateKey}) from ${data.qualifiedUsers} referred user(s) who met the minimum order threshold. Current commission balance: GHS ${(referrer?.commissionBalance ?? 0).toFixed(2)}.`,
-            "success",
-            {
-              type: "daily_commission",
-              amount,
-              date: dateKey,
-              qualifiedUsers: data.qualifiedUsers,
-              batchTotal: data.batchTotal,
-            },
-          );
-        } catch (notifError) {
-          logger.error(
-            `[CommissionService] Failed to send daily commission notification: ${notifError.message}`,
-          );
-        }
-
-        credited++;
-      } catch (err) {
-        logger.error(
-          `[CommissionService] Error processing referrer ${referrerId}: ${err.message}`,
         );
-        skipped++;
+      } catch (notifError) {
+        logger.error(
+          `[CommissionService] Failed to send commission notification: ${notifError.message}`,
+        );
       }
+
+      try {
+        websocketService.sendWalletUpdateToUser(
+          creator.referredBy.toString(),
+          {
+            commissionBalance: referrer?.commissionBalance ?? amount,
+          },
+        );
+      } catch (wsError) {
+        logger.error(
+          `[CommissionService] Failed to send wallet update: ${wsError.message}`,
+        );
+      }
+
+      logger.info(
+        `[CommissionService] Commission of ${amount} credited to referrer ${creator.referredBy} for order ${order._id}`,
+      );
+
+      return { referrer: creator.referredBy, amount, order: order._id };
+    } catch (err) {
+      if (err.code === 11000) {
+        logger.debug(
+          `[CommissionService] Commission already exists for order ${order._id} (race condition), skipping`,
+        );
+        return null;
+      }
+      logger.error(
+        `[CommissionService] Error crediting commission for order ${order._id}: ${err.message}`,
+      );
+      throw err;
     }
-
-    logger.info(
-      `[CommissionService] Daily batch for ${dateKey}: ${credited} credited, ${skipped} skipped`,
-    );
-
-    return {
-      processed: credited,
-      skipped,
-      message: `Processed ${credited} commission(s) for ${dateKey}`,
-      date: dateKey,
-    };
   }
 
   async withdrawCommission(userId, amount) {
@@ -433,6 +348,7 @@ class CommissionService {
         metadata: {
           commissionId: commission._id,
           referrerId: commission.referrer,
+          orderId: commission.order,
           date: commission.date,
           amount: commission.amount,
           previousStatus: commission.status,

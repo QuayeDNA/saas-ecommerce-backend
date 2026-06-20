@@ -7,6 +7,7 @@ import User from "../models/User.js"; // Added import for User
 import notificationService from "../services/notificationService.js"; // Added import for notificationService
 import walletService from "../services/walletService.js"; // Added import for walletService
 import websocketService from "../services/websocketService.js"; // Added import for WebSocket
+import commissionService from "../services/commissionService.js";
 import { logAuditAction } from "../utils/auditLogger.js";
 import {
   AUDIT_ACTIONS,
@@ -627,18 +628,23 @@ class OrderController {
         severity: AUDIT_SEVERITIES.INFO,
       });
 
-      // If storefront order moved to completed, credit profit via the service helper
-      if (
-        updatedOrder &&
-        updatedOrder.orderType === "storefront" &&
-        status === "completed"
-      ) {
+      // If order moved to completed, credit referral commission and storefront profit
+      if (updatedOrder && status === "completed") {
         try {
-          await orderService._creditStorefrontProfit(updatedOrder);
+          await commissionService.creditOrderCommission(updatedOrder._id);
         } catch (err) {
           logger.error(
-            `[OrderController] failed to credit storefront profit after manual status update for order ${updatedOrder._id}: ${err.message}`,
+            `[OrderController] failed to credit referral commission after manual status update for order ${updatedOrder._id}: ${err.message}`,
           );
+        }
+        if (updatedOrder.orderType === "storefront") {
+          try {
+            await orderService._creditStorefrontProfit(updatedOrder);
+          } catch (err) {
+            logger.error(
+              `[OrderController] failed to credit storefront profit after manual status update for order ${updatedOrder._id}: ${err.message}`,
+            );
+          }
         }
       }
 
@@ -1167,6 +1173,17 @@ class OrderController {
 
           if (action === "completed" && order.orderType === "storefront") {
             await orderService._creditStorefrontProfit(order);
+          }
+
+          // Credit referral commission for every completed order
+          if (action === "completed") {
+            try {
+              await commissionService.creditOrderCommission(order._id);
+            } catch (commissionError) {
+              logger.error(
+                `[BulkProcess] Failed to credit commission for order ${order._id}: ${commissionError.message}`,
+              );
+            }
           }
 
           // Accumulate creator updates for batching

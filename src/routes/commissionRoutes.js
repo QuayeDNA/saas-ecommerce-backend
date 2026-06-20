@@ -6,12 +6,6 @@ const router = Router();
 
 router.use(authenticate);
 
-router.post(
-  "/process-daily",
-  authorize("super_admin", "admin"),
-  commissionController.processDailyCommissions,
-);
-
 router.post("/withdraw", commissionController.withdrawCommission);
 router.get("/balance", commissionController.getCommissionBalance);
 router.get("/", commissionController.getUserCommissions);

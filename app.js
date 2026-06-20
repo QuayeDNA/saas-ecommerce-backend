@@ -20,7 +20,7 @@ import announcementExpirationJob from "./src/jobs/announcementExpiration.js";
 import { initializePendingPaymentExpiryJob } from "./src/jobs/pendingPaymentExpiry.js";
 import { schedulePaystackVerificationRetryJob } from "./src/jobs/paystackVerificationRetry.js";
 import { schedulePayoutReconciliationJob } from "./src/jobs/payoutReconciliationJob.js";
-import { scheduleDailyCommissionProcessing } from "./src/jobs/dailyCommissionProcessing.js";
+
 import { scheduleInactiveStoreSuspension } from "./src/jobs/inactiveStoreSuspension.js";
 import authRoutes from "./src/routes/authRoutes.js";
 import orderRouter from "./src/routes/orderRoutes.js";
@@ -73,7 +73,6 @@ logger.info("Starting SaaS E-Commerce backend...");
     schedulePaystackVerificationRetryJob();
     // Reconcile payouts stuck in 'processing' where the webhook never arrived
     schedulePayoutReconciliationJob();
-    scheduleDailyCommissionProcessing();
     scheduleInactiveStoreSuspension();
   } catch (e) {
     logger.error(`Startup initialization failed: ${e.message}`);
