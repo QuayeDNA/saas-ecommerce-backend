@@ -65,10 +65,13 @@ class MomoBridgeService {
     }
 
     const relayUrl = await this._relayUrl();
+    const settings = await settingsService.getMomoBridgeSettings();
 
     return {
       relayUrl,
       apiKey,
+      accountName: settings.momoBridgeAccountName || "",
+      accountNumber: settings.momoBridgeAccountNumber || "",
     };
   }
 
