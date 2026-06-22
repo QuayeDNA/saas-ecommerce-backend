@@ -288,6 +288,14 @@ const settingsSchema = new mongoose.Schema(
       min: 0,
       max: 100,
     },
+    momoBridgeAccountName: {
+      type: String,
+      default: "",
+    },
+    momoBridgeAccountNumber: {
+      type: String,
+      default: "",
+    },
   },
   {
     timestamps: true,

@@ -745,6 +745,10 @@ class SettingsService {
         momoBridgeEnabled: settings.momoBridgeEnabled ?? false,
         momoBridgeClaimFeePercent:
           settings.momoBridgeClaimFeePercent ?? 0,
+        momoBridgeAccountName:
+          settings.momoBridgeAccountName || "",
+        momoBridgeAccountNumber:
+          settings.momoBridgeAccountNumber || "",
       };
     } catch (error) {
       logger.error(
@@ -773,6 +777,12 @@ class SettingsService {
         settings.momoBridgeClaimFeePercent = Number(
           momoSettings.momoBridgeClaimFeePercent,
         );
+      }
+      if (momoSettings.momoBridgeAccountName !== undefined) {
+        settings.momoBridgeAccountName = momoSettings.momoBridgeAccountName;
+      }
+      if (momoSettings.momoBridgeAccountNumber !== undefined) {
+        settings.momoBridgeAccountNumber = momoSettings.momoBridgeAccountNumber;
       }
 
       await settings.save();
