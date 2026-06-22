@@ -110,6 +110,16 @@ const settingsSchema = new mongoose.Schema(
         default: 200.0,
         min: 0,
       },
+      elite_dealer: {
+        type: Number,
+        default: 300.0,
+        min: 0,
+      },
+      master_dealer: {
+        type: Number,
+        default: 500.0,
+        min: 0,
+      },
       default: {
         type: Number,
         default: 10.0,

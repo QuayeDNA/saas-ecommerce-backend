@@ -390,6 +390,8 @@ class SettingsService {
           super_agent: 50.0,
           dealer: 100.0,
           super_dealer: 200.0,
+          elite_dealer: 300.0,
+          master_dealer: 500.0,
           default: 10.0,
         },
         paystackMinimumTopUpAmount: settings.paystackMinimumTopUpAmount || 0.0,
@@ -424,6 +426,14 @@ class SettingsService {
           walletSettings.minimumTopUpAmounts.super_dealer ||
           settings.minimumTopUpAmounts?.super_dealer ||
           200.0,
+        elite_dealer:
+          walletSettings.minimumTopUpAmounts.elite_dealer ||
+          settings.minimumTopUpAmounts?.elite_dealer ||
+          300.0,
+        master_dealer:
+          walletSettings.minimumTopUpAmounts.master_dealer ||
+          settings.minimumTopUpAmounts?.master_dealer ||
+          500.0,
         default:
           walletSettings.minimumTopUpAmounts.default ||
           settings.minimumTopUpAmounts?.default ||
