@@ -88,6 +88,67 @@ class ApiUsageService {
     };
   }
 
+  /**
+   * Get per-key usage stats for an agent.
+   * Returns stats grouped by apiKeyId.
+   */
+  async getPerKeyStats(agentId) {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    const stats = await ApiUsageLog.aggregate([
+      {
+        $match: {
+          agentId: mongoose.Types.ObjectId.isValid(agentId)
+            ? new mongoose.Types.ObjectId(agentId)
+            : agentId,
+          timestamp: { $gte: todayStart },
+        },
+      },
+      {
+        $group: {
+          _id: "$apiKeyId",
+          totalRequests: { $sum: 1 },
+          errorCount: { $sum: { $cond: [{ $gte: ["$statusCode", 400] }, 1, 0] } },
+          avgLatency: { $avg: "$responseTimeMs" },
+        },
+      },
+      {
+        $lookup: {
+          from: "apikeys",
+          localField: "_id",
+          foreignField: "_id",
+          as: "keyInfo",
+        },
+      },
+      {
+        $unwind: { path: "$keyInfo", preserveNullAndEmptyArrays: true },
+      },
+      {
+        $project: {
+          apiKeyId: "$_id",
+          keyLabel: "$keyInfo.label",
+          keyPrefix: "$keyInfo.keyPrefix",
+          totalRequests: 1,
+          errorCount: 1,
+          avgLatency: { $round: ["$avgLatency", 0] },
+          errorRate: {
+            $cond: [
+              { $gt: ["$totalRequests", 0] },
+              { $multiply: [{"$divide": ["$errorCount", "$totalRequests"]}, 100] },
+              0,
+            ],
+          },
+        },
+      },
+      {
+        $sort: { totalRequests: -1 },
+      },
+    ]);
+
+    return stats;
+  }
+
   // =========================================================================
   // Admin methods (cross-agent aggregation)
   // =========================================================================

@@ -6,7 +6,10 @@ const VALID_PERMISSIONS = [
   "packages:read",
   "bundles:read",
   "storefront:read",
+  "orders:read",
   "orders:write",
+  "wallet:read",
+  "wallet:topup",
   "momo:write",
 ];
 const KEY_STATUSES = ["active", "suspended", "revoked"];
@@ -55,6 +58,16 @@ const apiKeySchema = new mongoose.Schema(
     expiresAt: {
       type: Date,
       default: null,
+    },
+    allowedIps: {
+      type: [String],
+      default: [],
+    },
+    rateLimitOverride: {
+      type: Number,
+      default: null,
+      min: 1,
+      max: 100000,
     },
   },
   { timestamps: true },

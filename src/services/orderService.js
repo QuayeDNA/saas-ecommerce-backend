@@ -1097,6 +1097,33 @@ class OrderService {
         );
       }
 
+      // Fire webhook for order status changes
+      try {
+        const event =
+          order.status === "completed"
+            ? "order.completed"
+            : order.status === "failed"
+              ? "order.failed"
+              : order.status === "processing"
+                ? "order.processing"
+                : null;
+
+        if (event) {
+          const MarketplaceController = (
+            await import("../controllers/marketplaceController.js")
+          ).default;
+          await MarketplaceController.triggerOrderWebhook(
+            order.tenantId?.toString() || order.createdBy?.toString(),
+            order,
+            event,
+          );
+        }
+      } catch (webhookErr) {
+        logger.error(
+          `Failed to fire order status webhook: ${webhookErr.message}`,
+        );
+      }
+
       return order;
     });
   }

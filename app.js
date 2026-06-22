@@ -43,6 +43,7 @@ import referralRoutes from "./src/routes/referralRoutes.js";
 import assetRoutes from "./src/routes/assetRoutes.js";
 import marketplaceRoutes from "./src/routes/marketplaceRoutes.js";
 import adminMarketplaceRoutes from "./src/routes/adminMarketplaceRoutes.js";
+import webhookRoutes from "./src/routes/webhookRoutes.js";
 import appContextMiddleware from "./src/middlewares/appContext.js";
 import requestContextMiddleware from "./src/middlewares/requestContext.js";
 import auditLogger from "./src/middlewares/auditLogger.js";
@@ -239,6 +240,7 @@ app.use("/api/commissions", commissionRoutes);
 app.use("/api/referrals", referralRoutes);
 app.use("/api/marketplace", marketplaceRoutes);
 app.use("/api/admin/marketplace", adminMarketplaceRoutes);
+app.use("/api/marketplace/webhooks", webhookRoutes);
 app.use("/api", publicRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────────────────────

@@ -8,16 +8,18 @@ import {
   authorize,
   authorizeWalletUser,
 } from "../middlewares/auth.js";
+import { apiEndpointLimits } from "../middlewares/advancedRateLimit.js";
 import validate from "../middlewares/validate.js";
 import { walletValidation } from "../validators/walletValidator.js";
 
 const router = express.Router();
 
-// ── Authenticated users ───────────────────────────────────────────────────────
-router.get("/info", authenticate, walletController.getWalletInfo);
+// ── Wallet-enabled users ──────────────────────────────────────────────────────
+router.get("/info", authenticate, authorizeWalletUser, walletController.getWalletInfo);
 router.get(
   "/transactions",
   authenticate,
+  authorizeWalletUser,
   validate(walletValidation.transactionHistory),
   walletController.getTransactionHistory,
 );
@@ -53,6 +55,7 @@ router.post(
 router.get(
   "/paystack/verify",
   authenticate,
+  authorizeWalletUser,
   walletController.verifyPaystackTransaction,
 );
 
@@ -76,13 +79,15 @@ router.post(
 router.get(
   "/earnings/dashboard",
   authenticate,
+  authorizeWalletUser,
   payoutController.getEarningsDashboard,
 );
-router.get("/payouts", authenticate, payoutController.getPayouts);
-router.post("/payouts/request", authenticate, payoutController.requestPayout);
+router.get("/payouts", authenticate, authorizeWalletUser, payoutController.getPayouts);
+router.post("/payouts/request", authenticate, authorizeWalletUser, apiEndpointLimits.highFrequency, payoutController.requestPayout);
 router.post(
   "/earnings/convert-to-wallet",
   authenticate,
+  authorizeWalletUser,
   payoutController.convertEarningsToWallet,
 );
 

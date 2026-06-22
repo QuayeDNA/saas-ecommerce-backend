@@ -7,6 +7,7 @@ import {
   authorize,
   authorizeBusinessUser,
 } from "../middlewares/auth.js";
+import { apiEndpointLimits } from "../middlewares/advancedRateLimit.js";
 import validate from "../middlewares/validate.js";
 import { orderValidation } from "../validators/orderValidator.js";
 import { checkSiteStatusForOrders } from "../middlewares/siteStatus.js";
@@ -19,6 +20,7 @@ router.post(
   authenticate,
   authorizeBusinessUser,
   checkSiteStatusForOrders,
+  apiEndpointLimits.highFrequency,
   validate(orderValidation.createSingle),
   orderController.createSingleOrder,
 );
@@ -28,6 +30,7 @@ router.post(
   authenticate,
   authorizeBusinessUser,
   checkSiteStatusForOrders,
+  apiEndpointLimits.highFrequency,
   validate(orderValidation.createBulk),
   orderController.createBulkOrder,
 );

@@ -118,6 +118,7 @@ const CATEGORY_LABELS = {
   settings: "Settings",
   bundle: "Bundles",
   referral: "Referral",
+  api_key: "API Key Management",
 };
 
 function getActionLabel(action) {

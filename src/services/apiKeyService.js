@@ -32,6 +32,9 @@ class ApiKeyService {
     });
 
     logger.info(`API key created for agent ${agentId}: ${keyPrefix}...`);
+    await this.logApiKeyOperation(agentId, "agent", "api_key.created", apiKey._id, {
+      after: { label: apiKey.label, keyPrefix: apiKey.keyPrefix, permissions: apiKey.permissions },
+    });
 
     return { rawKey, apiKey };
   }
@@ -70,10 +73,15 @@ class ApiKeyService {
     if (!key) throw new Error("API key not found");
     if (key.status === "revoked") throw new Error("API key is already revoked");
 
+    const oldStatus = key.status;
     key.status = "revoked";
     await key.save();
 
     logger.info(`API key revoked: ${key.keyPrefix}... (agent: ${agentId})`);
+    await this.logApiKeyOperation(agentId, "agent", "api_key.revoked", keyId, {
+      before: { status: oldStatus },
+      after: { status: "revoked" },
+    });
     return key;
   }
 
@@ -92,6 +100,7 @@ class ApiKeyService {
   async getKeyById(keyId, agentId) {
     const filter = { _id: keyId };
     if (agentId) filter.agentId = agentId;
+    await this.logApiKeyOperation(agentId, "agent", "api_key.viewed", keyId);
     return ApiKey.findOne(filter).select("-keyHash");
   }
 
@@ -109,6 +118,179 @@ class ApiKeyService {
    */
   async touchKey(keyId) {
     await ApiKey.findByIdAndUpdate(keyId, { lastUsedAt: new Date() });
+  }
+
+  // =========================================================================
+  // Agent methods (agent operations on their own keys)
+  // =========================================================================
+
+  /**
+   * Get a single API key by ID for an agent.
+   */
+  async getKeyByIdAgent(keyId, agentId) {
+    const filter = { _id: keyId };
+    if (agentId) filter.agentId = agentId;
+    await this.logApiKeyOperation(agentId, "agent", "api_key.viewed", keyId);
+    return ApiKey.findOne(filter).select("-keyHash");
+  }
+
+  /**
+   * Log an API key operation for audit purposes.
+   */
+  async logApiKeyOperation(userId, userType, action, resource, changes = null, metadata = {}) {
+    const auditLogService = (await import("../services/auditLogService.js")).default;
+    return auditLogService.logAction({
+      userId,
+      userType,
+      action,
+      category: "api_key",
+      resource,
+      changes,
+      metadata,
+      severity: "info",
+    });
+  }
+
+  /**
+   * Update API key label for an agent.
+   */
+  async updateKeyLabel(keyId, agentId, label) {
+    const key = await ApiKey.findOne({ _id: keyId, agentId });
+    if (!key) throw new Error("API key not found");
+
+    const oldLabel = key.label;
+    key.label = label;
+    await key.save();
+
+    logger.info(`API key label updated: ${key.keyPrefix}... (agent: ${agentId})`);
+    await this.logApiKeyOperation(agentId, "agent", "api_key.label_updated", keyId, {
+      before: { label: oldLabel },
+      after: { label },
+    });
+    return key;
+  }
+
+  /**
+   * Suspend an API key for an agent (agent can suspend their own key).
+   */
+  async suspendKeyAgent(keyId, agentId) {
+    const key = await ApiKey.findOne({ _id: keyId, agentId });
+    if (!key) throw new Error("API key not found");
+    if (key.status === "revoked") throw new Error("Cannot suspend a revoked key");
+    if (key.status === "suspended") throw new Error("API key is already suspended");
+
+    const oldStatus = key.status;
+    key.status = "suspended";
+    await key.save();
+
+    logger.info(`API key suspended by agent: ${key.keyPrefix}... (agent: ${agentId})`);
+    await this.logApiKeyOperation(agentId, "agent", "api_key.suspended", keyId, {
+      before: { status: oldStatus },
+      after: { status: "suspended" },
+    });
+    return key;
+  }
+
+  /**
+   * Activate a suspended API key for an agent (agent can activate their own key).
+   */
+  async activateKeyAgent(keyId, agentId) {
+    const key = await ApiKey.findOne({ _id: keyId, agentId });
+    if (!key) throw new Error("API key not found");
+    if (key.status === "revoked") throw new Error("Cannot activate a revoked key");
+    if (key.status === "active") throw new Error("API key is already active");
+
+    const oldStatus = key.status;
+    key.status = "active";
+    await key.save();
+
+    logger.info(`API key activated by agent: ${key.keyPrefix}... (agent: ${agentId})`);
+    await this.logApiKeyOperation(agentId, "agent", "api_key.activated", keyId, {
+      before: { status: oldStatus },
+      after: { status: "active" },
+    });
+    return key;
+  }
+
+  /**
+   * Regenerate an API key for an agent (creates new key, revokes old).
+   */
+  async regenerateKey(agentId, keyId) {
+    const key = await ApiKey.findOne({ _id: keyId, agentId });
+    if (!key) throw new Error("API key not found");
+    if (key.status === "revoked") throw new Error("Cannot regenerate a revoked key");
+
+    const rawKey = PREFIX + crypto.randomBytes(KEY_BYTES).toString("hex");
+    const keyHash = await bcrypt.hash(rawKey, SALT_ROUNDS);
+    const keyPrefix = rawKey.substring(0, PREFIX.length + 8);
+
+    const newKey = await ApiKey.create({
+      agentId,
+      label: key.label,
+      keyHash,
+      keyPrefix,
+      permissions: key.permissions,
+      status: "active",
+      expiresAt: key.expiresAt,
+      lastUsedAt: key.lastUsedAt,
+    });
+
+    const oldStatus = key.status;
+    key.status = "revoked";
+    await key.save();
+
+    logger.info(`API key regenerated: ${keyPrefix}... (agent: ${agentId})`);
+    await this.logApiKeyOperation(agentId, "agent", "api_key.regenerated", keyId, {
+      before: { status: oldStatus },
+      after: { status: "revoked" },
+    });
+    await this.logApiKeyOperation(agentId, "agent", "api_key.created", newKey._id, {
+      after: { label: newKey.label, keyPrefix: newKey.keyPrefix },
+    });
+    return { rawKey, apiKey: newKey };
+  }
+
+  /**
+   * Set expiration for an API key for an agent.
+   */
+  async setKeyExpiration(keyId, agentId, expiresAt) {
+    const key = await ApiKey.findOne({ _id: keyId, agentId });
+    if (!key) throw new Error("API key not found");
+
+    const oldExpiresAt = key.expiresAt;
+    key.expiresAt = expiresAt;
+    await key.save();
+
+    logger.info(`API key expiration set: ${key.keyPrefix}... (agent: ${agentId})`);
+    await this.logApiKeyOperation(agentId, "agent", "api_key.expiration_set", keyId, {
+      before: { expiresAt: oldExpiresAt },
+      after: { expiresAt },
+    });
+    return key;
+  }
+
+  /**
+   * Update permissions for an API key for an agent.
+   */
+  async updateKeyPermissions(keyId, agentId, permissions) {
+    const key = await ApiKey.findOne({ _id: keyId, agentId });
+    if (!key) throw new Error("API key not found");
+
+    const invalidPermissions = permissions.filter((p) => !ApiKey.VALID_PERMISSIONS.includes(p));
+    if (invalidPermissions.length > 0) {
+      throw new Error(`Invalid permissions: ${invalidPermissions.join(", ")}`);
+    }
+
+    const oldPermissions = key.permissions;
+    key.permissions = permissions;
+    await key.save();
+
+    logger.info(`API key permissions updated: ${key.keyPrefix}... (agent: ${agentId})`);
+    await this.logApiKeyOperation(agentId, "agent", "api_key.permissions_updated", keyId, {
+      before: { permissions: oldPermissions },
+      after: { permissions },
+    });
+    return key;
   }
 
   // =========================================================================

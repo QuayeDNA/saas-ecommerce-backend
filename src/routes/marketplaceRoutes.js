@@ -9,7 +9,7 @@ const router = express.Router();
 
 /**
  * Accepts either an API key (bl_live_*) or a session JWT.
- * - API key → authenticateApiKey (sets req.agentId, req.apiKey) — implicitly authorized
+ * - API key → authenticateApiKey (sets req.agentId, req.apiKey)
  * - Session JWT → authenticate + authorizeBusinessUser + maps req.user.userId to req.agentId
  */
 const authenticateMarketplaceUser = (req, res, next) => {
@@ -30,53 +30,84 @@ const authenticateMarketplaceUser = (req, res, next) => {
   });
 };
 
+/**
+ * Checks permissions only when an API key is in use.
+ * Session-authenticated requests (dashboard) skip permission checks
+ * since the user is already authorized as a business user.
+ */
+const requirePermissionIfApiKey = (...scopes) => (req, res, next) => {
+  if (!req.apiKey) return next();
+  const hasAll = scopes.every((scope) => req.apiKey.permissions.includes(scope));
+  if (!hasAll) {
+    return res.status(403).json({
+      success: false,
+      code: "FORBIDDEN_SCOPE",
+      message: `API key does not have required permission: ${scopes.join(", ")}`,
+      hint: `This endpoint requires: ${scopes.join(", ")}`,
+    });
+  }
+  next();
+};
+
 // ─── API Metadata (no auth — describes the API) ─────────────────────────────
 
 router.get("/", controller.getApiMetadata);
 
-// ─── Order Placement (API key auth with orders:write permission) ────────────
+// ─── Consumer API Endpoints (API key or session JWT) ────────────────────────
 
 router.post(
   "/orders",
-  authenticateApiKey,
-  requirePermission("orders:write"),
+  authenticateMarketplaceUser,
+  requirePermissionIfApiKey("orders:write"),
   controller.createOrder,
 );
 
-// ─── Data Endpoints (API key auth only — for external consumers) ────────────
+router.get(
+  "/orders",
+  authenticateMarketplaceUser,
+  requirePermissionIfApiKey("orders:read"),
+  controller.getOrders,
+);
+
+router.get(
+  "/orders/:id",
+  authenticateMarketplaceUser,
+  requirePermissionIfApiKey("orders:read"),
+  controller.getOrderById,
+);
 
 router.get(
   "/packages",
-  authenticateApiKey,
-  requirePermission("packages:read"),
+  authenticateMarketplaceUser,
+  requirePermissionIfApiKey("packages:read"),
   controller.getPackages,
 );
 
 router.get(
   "/packages/:id",
-  authenticateApiKey,
-  requirePermission("packages:read"),
+  authenticateMarketplaceUser,
+  requirePermissionIfApiKey("packages:read"),
   controller.getPackageById,
 );
 
 router.get(
   "/bundles",
-  authenticateApiKey,
-  requirePermission("bundles:read"),
+  authenticateMarketplaceUser,
+  requirePermissionIfApiKey("bundles:read"),
   controller.getBundles,
 );
 
 router.get(
   "/bundles/:id",
-  authenticateApiKey,
-  requirePermission("bundles:read"),
+  authenticateMarketplaceUser,
+  requirePermissionIfApiKey("bundles:read"),
   controller.getBundleById,
 );
 
 router.get(
   "/storefront",
-  authenticateApiKey,
-  requirePermission("storefront:read"),
+  authenticateMarketplaceUser,
+  requirePermissionIfApiKey("storefront:read"),
   controller.getStorefront,
 );
 
@@ -84,12 +115,43 @@ router.get(
 
 router.post("/keys", authenticateMarketplaceUser, controller.createKey);
 router.get("/keys", authenticateMarketplaceUser, controller.listKeys);
+router.get("/keys/:id", authenticateMarketplaceUser, controller.getKey);
+router.patch("/keys/:id", authenticateMarketplaceUser, controller.updateKeyLabel);
 router.post("/keys/:id/revoke", authenticateMarketplaceUser, controller.revokeKey);
+router.post("/keys/:id/suspend", authenticateMarketplaceUser, controller.suspendKey);
+router.post("/keys/:id/activate", authenticateMarketplaceUser, controller.activateKey);
+router.post("/keys/:id/regenerate", authenticateMarketplaceUser, controller.regenerateKey);
+router.patch("/keys/:id/expiry", authenticateMarketplaceUser, controller.setKeyExpiration);
+router.patch("/keys/:id/permissions", authenticateMarketplaceUser, controller.updateKeyPermissions);
 
 // ─── Usage Analytics (API key or session auth) ───────────────────────────────
 
 router.get("/usage/stats", authenticateMarketplaceUser, controller.getUsageStats);
 router.get("/usage/logs", authenticateMarketplaceUser, controller.getUsageLogs);
 router.get("/usage/daily-counts", authenticateMarketplaceUser, controller.getAgentDailyCounts);
+router.get("/usage/per-key", authenticateMarketplaceUser, controller.getPerKeyStats);
+
+// ─── Wallet Endpoints (API key or session JWT) ───────────────────────────────
+
+router.get(
+  "/wallet/balance",
+  authenticateMarketplaceUser,
+  requirePermissionIfApiKey("wallet:read"),
+  controller.getWalletBalance,
+);
+
+router.post(
+  "/wallet/topup",
+  authenticateMarketplaceUser,
+  requirePermissionIfApiKey("wallet:topup"),
+  controller.initiateTopup,
+);
+
+router.get(
+  "/wallet/topup/:reference",
+  authenticateMarketplaceUser,
+  requirePermissionIfApiKey("wallet:read"),
+  controller.getTopupStatus,
+);
 
 export default router;

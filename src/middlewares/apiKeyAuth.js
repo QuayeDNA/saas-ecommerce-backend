@@ -73,9 +73,27 @@ export const authenticateApiKey = async (req, res, next) => {
       });
     }
 
+    // Check IP whitelist if configured
+    if (apiKey.allowedIps && apiKey.allowedIps.length > 0) {
+      const clientIp = req.ip || req.connection?.remoteAddress || "";
+      const isAllowed = apiKey.allowedIps.some(
+        (allowedIp) => clientIp === allowedIp || clientIp.startsWith(allowedIp),
+      );
+      if (!isAllowed) {
+        return res.status(403).json({
+          success: false,
+          code: "IP_NOT_ALLOWED",
+          message: "Request from this IP address is not allowed for this API key",
+          hint: "The API key has IP restrictions configured. Contact support to update the allowed IPs.",
+        });
+      }
+    }
+
+    const effectiveLimit = apiKey.rateLimitOverride || RATE_LIMIT;
+
     const rateLimitResult = await apiRateLimiter.checkRateLimit(
       apiKey._id.toString(),
-      RATE_LIMIT,
+      effectiveLimit,
     );
 
     if (!rateLimitResult.allowed) {
@@ -91,6 +109,7 @@ export const authenticateApiKey = async (req, res, next) => {
       });
     }
 
+    res.set("X-RateLimit-Limit", effectiveLimit.toString());
     res.set("X-RateLimit-Remaining", rateLimitResult.remaining.toString());
     res.set("X-RateLimit-Reset", Math.floor(rateLimitResult.resetAt.getTime() / 1000).toString());
 
