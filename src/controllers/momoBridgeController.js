@@ -13,19 +13,8 @@ class MomoBridgeController {
   async getConfig(req, res) {
     try {
       const { userId } = req.user;
-      const { amount } = req.query;
 
-      if (!amount || Number(amount) <= 0) {
-        return res.status(400).json({
-          success: false,
-          message: "A valid amount is required",
-        });
-      }
-
-      const config = await momoBridgeService.getCheckoutConfig(
-        userId,
-        parseFloat(amount),
-      );
+      const config = await momoBridgeService.getCheckoutConfig(userId);
 
       res.json({ success: true, data: config });
     } catch (err) {
@@ -42,7 +31,7 @@ class MomoBridgeController {
   async verifyClaim(req, res) {
     try {
       const { userId, userType } = req.user;
-      const { reference, amount } = req.body;
+      const { reference } = req.body;
 
       if (!reference || !reference.trim()) {
         return res.status(400).json({
@@ -50,17 +39,10 @@ class MomoBridgeController {
           message: "Transaction reference is required",
         });
       }
-      if (!amount || Number(amount) <= 0) {
-        return res.status(400).json({
-          success: false,
-          message: "A valid amount is required",
-        });
-      }
 
       const result = await momoBridgeService.verifyAndCredit(
         userId,
         reference.trim(),
-        parseFloat(amount),
       );
 
       await logAuditAction(req, {
@@ -71,7 +53,10 @@ class MomoBridgeController {
         resource: { userId },
         metadata: {
           source: "momoBridgeController.verifyClaim",
-          amount: result.amount,
+          grossAmount: result.grossAmount,
+          netAmount: result.netAmount,
+          feeAmount: result.feeAmount,
+          feePercent: result.feePercent,
           momoReference: reference.trim(),
         },
         severity: AUDIT_SEVERITIES.INFO,
@@ -81,9 +66,10 @@ class MomoBridgeController {
         success: true,
         message: "Payment verified and wallet credited",
         data: {
-          amount: result.amount,
           grossAmount: result.grossAmount,
           feeAmount: result.feeAmount,
+          netAmount: result.netAmount,
+          feePercent: result.feePercent,
           reference: result.reference,
         },
       });

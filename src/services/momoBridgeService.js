@@ -49,7 +49,7 @@ class MomoBridgeService {
     }
   }
 
-  async getCheckoutConfig(userId, amount) {
+  async getCheckoutConfig(userId) {
     const enabled = await this._isEnabled();
     if (!enabled) {
       throw new Error(
@@ -65,27 +65,16 @@ class MomoBridgeService {
     }
 
     const relayUrl = await this._relayUrl();
-    const feePercent = await this._feePercent();
-
-    const feeAmount = amount * (feePercent / 100);
-    const netAmount = amount - feeAmount;
 
     return {
       relayUrl,
       apiKey,
-      amount: parseFloat(amount.toFixed(2)),
-      netAmount: parseFloat(netAmount.toFixed(2)),
-      feeAmount: parseFloat(feeAmount.toFixed(2)),
-      feePercent,
     };
   }
 
-  async verifyAndCredit(userId, reference, amount) {
+  async verifyAndCredit(userId, reference) {
     if (!reference || !reference.trim()) {
       throw new Error("Transaction reference is required");
-    }
-    if (!amount || amount <= 0) {
-      throw new Error("A valid amount is required");
     }
 
     const ref = reference.trim();
@@ -121,7 +110,6 @@ class MomoBridgeService {
         body: JSON.stringify({
           apiKey,
           reference: ref,
-          amount: parseFloat(amount),
         }),
         signal: AbortSignal.timeout(35000),
       });
@@ -150,10 +138,16 @@ class MomoBridgeService {
       throw new Error(msg);
     }
 
-    // ── Calculate fees ──────────────────────────────────────────────────────
+    // ── Extract actual amount from relay response ───────────────────────────
+    const grossAmount = relayResult.transaction?.amount;
+    if (!grossAmount || grossAmount <= 0) {
+      throw new Error("Relay did not return a valid transaction amount");
+    }
+
+    // ── Calculate platform fee on the relay-returned amount ─────────────────
     const feePercent = await this._feePercent();
-    const feeAmount = amount * (feePercent / 100);
-    const netAmount = amount - feeAmount;
+    const feeAmount = grossAmount * (feePercent / 100);
+    const netAmount = grossAmount - feeAmount;
 
     // ── Credit wallet (atomic $inc) ─────────────────────────────────────────
     const updatedUser = await User.findByIdAndUpdate(
@@ -180,13 +174,14 @@ class MomoBridgeService {
         metadata: {
           source: "momobridge",
           momoReference: ref,
-          originalAmount: amount,
+          grossAmount,
           feePercent,
           feeAmount,
-          grossAmount: amount,
+          netAmount,
           relayResponse: {
             confirmed: relayResult.confirmed,
             message: relayResult.message,
+            transaction: relayResult.transaction,
           },
         },
       });
@@ -211,7 +206,7 @@ class MomoBridgeService {
     }
 
     logger.info(
-      `[MomoBridge] Wallet credited GH₵${netAmount} for user ${userId} (ref: ${ref}, gross: GH₵${amount})`,
+      `[MomoBridge] Wallet credited GH₵${netAmount} for user ${userId} (ref: ${ref}, gross: GH₵${grossAmount}, fee: ${feePercent}%)`,
     );
     await logAuditAction(null, {
       userId,
@@ -220,8 +215,10 @@ class MomoBridgeService {
       resource: { userId },
       metadata: {
         source: "momoBridgeService.verifyAndCredit",
-        amount: netAmount,
-        grossAmount: amount,
+        grossAmount,
+        feeAmount,
+        netAmount,
+        feePercent,
         momoReference: ref,
       },
       severity: AUDIT_SEVERITIES.INFO,
@@ -236,9 +233,10 @@ class MomoBridgeService {
     return {
       success: true,
       confirmed: true,
-      amount: netAmount,
-      grossAmount: amount,
+      grossAmount,
       feeAmount,
+      netAmount,
+      feePercent,
       reference: ref,
       transaction,
     };

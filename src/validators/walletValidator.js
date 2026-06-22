@@ -71,12 +71,8 @@ export const walletValidation = {
       .isString().withMessage('Reference must be a string')
   ],
 
-  // ── MoMo Bridge — Instant Claim ──────────────────────────────────────────────
-  momoConfig: [
-    query('amount')
-      .notEmpty().withMessage('Amount is required')
-      .isFloat({ min: 0.01 }).withMessage('Amount must be a positive number'),
-  ],
+  // ── MoMo Bridge — Instant Claim (no amount — relay returns the actual amount) ──
+  momoConfig: [],
 
   momoVerify: [
     body('reference')
@@ -84,8 +80,5 @@ export const walletValidation = {
       .isString().withMessage('Reference must be a string')
       .trim()
       .isLength({ min: 3, max: 100 }).withMessage('Reference must be between 3 and 100 characters'),
-    body('amount')
-      .notEmpty().withMessage('Amount is required')
-      .isFloat({ min: 0.01 }).withMessage('Amount must be a positive number'),
   ],
 };
