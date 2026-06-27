@@ -286,6 +286,11 @@ class StorefrontService {
   // Bundle & Pricing
   // =========================================================================
 
+  // REFACTOR TODO: Once bundle queries check parent Package.isActive and
+  // Provider.isActive at query time (Path B), the cascade in
+  // providerService/packageService no longer needs to touch bundle flags.
+  // At that point, all Bundle.find() below should verify parent status instead
+  // of relying on `isActive` being set by cascade.
   async getAgentBundlesForPricing(userId) {
     const user = await User.findById(userId);
     if (!user) throw new Error("User not found");

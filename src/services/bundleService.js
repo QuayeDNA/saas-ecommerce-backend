@@ -93,6 +93,10 @@ const bundleService = {
         query.packageId = packageId;
       }
 
+      // REFACTOR TODO: Add lookup join here to filter out bundles whose
+      // parent Package.isActive !== true or Provider.isActive !== true.
+      // Once added, the cascade in providerService/packageService no longer
+      // needs to touch bundle/storefront-pricing flags directly.
       const sortOptions = {};
       sortOptions[sortBy] = sortOrder === "asc" ? 1 : -1;
 
@@ -217,6 +221,8 @@ const bundleService = {
       const { page = 1, limit = 10, userType = "agent" } = options;
       const skip = (page - 1) * limit;
 
+      // REFACTOR TODO: When implementing parent-status lookup (Path B),
+      // this query should also check that the parent Package.isActive is true.
       // Build query - return all bundles (both active and inactive)
       // Frontend will handle role-based filtering and UI restrictions
       const query = { packageId };

@@ -1,5 +1,7 @@
 // src/services/packageService.js
 import Package from "../models/Package.js";
+import Bundle from "../models/Bundle.js";
+import StorefrontPricing from "../models/StorefrontPricing.js";
 import Provider from "../models/Provider.js";
 import logger from "../utils/logger.js";
 import { toPublicPackage, toAdminPackage, pickPackage } from "../utils/dto.js";
@@ -188,12 +190,67 @@ class PackageService {
       }
     }
 
+    // ── Cascade deactivation when package is turned off ─────────────────────
+    if (updateData.isActive === false && packageGroup.isActive !== false) {
+      await this._cascadePackageDeactivation(packageId, userId);
+    }
+
+    // ── Cascade reactivation when package is turned on ──────────────────────
+    if (updateData.isActive === true && packageGroup.isActive !== true) {
+      await this._cascadePackageReactivation(packageId, userId);
+    }
+
     updateData.updatedBy = userId;
     Object.assign(packageGroup, updateData);
     await packageGroup.save();
 
     logger.info(`Package updated: ${packageId} by user ${userId}`);
     return toAdminPackage(packageGroup.toObject ? packageGroup.toObject() : packageGroup);
+  }
+
+  // REFACTOR TODO: Remove cascade to bundles/storefront-pricing once bundle queries
+  // check parent Package.isActive at query time (bundleService, storefrontService).
+  // When that's done, this method should be a no-op (packages stand alone).
+  async _cascadePackageDeactivation(packageId, userId) {
+    const bundles = await Bundle.find({ packageId, isDeleted: false }).select('_id');
+    const bundleIds = bundles.map((b) => b._id);
+
+    if (bundleIds.length > 0) {
+      await Bundle.updateMany(
+        { _id: { $in: bundleIds } },
+        { isActive: false },
+      );
+
+      await StorefrontPricing.updateMany(
+        { bundleId: { $in: bundleIds } },
+        { isActive: false },
+      );
+    }
+
+    logger.info(
+      `[PackageService] Deactivated ${bundleIds.length} bundle(s) and their storefront pricing for package ${packageId}`,
+    );
+  }
+
+  async _cascadePackageReactivation(packageId, userId) {
+    const bundles = await Bundle.find({ packageId, isDeleted: false }).select('_id');
+    const bundleIds = bundles.map((b) => b._id);
+
+    if (bundleIds.length > 0) {
+      await Bundle.updateMany(
+        { _id: { $in: bundleIds } },
+        { isActive: true },
+      );
+
+      await StorefrontPricing.updateMany(
+        { bundleId: { $in: bundleIds } },
+        { isActive: true },
+      );
+    }
+
+    logger.info(
+      `[PackageService] Reactivated ${bundleIds.length} bundle(s) and their storefront pricing for package ${packageId}`,
+    );
   }
 
   // Soft delete package
@@ -214,6 +271,15 @@ class PackageService {
     if (!packageGroup) {
       throw new Error("Package not found");
     }
+
+    // Cascade deactivation before soft-delete
+    await this._cascadePackageDeactivation(packageId, userId);
+
+    // Also soft-delete associated bundles
+    await Bundle.updateMany(
+      { packageId, isDeleted: false },
+      { isDeleted: true, deletedAt: new Date(), deletedBy: userId, isActive: false },
+    );
 
     await packageGroup.softDelete(userId);
     logger.info(`Package deleted: ${packageId} by user ${userId}`);

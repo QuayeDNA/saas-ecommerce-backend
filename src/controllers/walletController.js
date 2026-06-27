@@ -621,6 +621,7 @@ class WalletController {
           { "metadata.debitedBy": adminId },
           { "metadata.adminAction": true, approvedBy: adminId },
           { "metadata.paystack": { $exists: true } },
+          { "metadata.source": "momobridge" },
         ],
       };
 

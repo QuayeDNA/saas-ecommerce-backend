@@ -1,6 +1,8 @@
 // src/services/providerService.js
 import Provider from '../models/Provider.js';
 import Package from '../models/Package.js';
+import Bundle from '../models/Bundle.js';
+import StorefrontPricing from '../models/StorefrontPricing.js';
 import logger from '../utils/logger.js';
 
 class ProviderService {
@@ -103,21 +105,27 @@ class ProviderService {
         delete updateData.code;
       }
       
-      const provider = await Provider.findOneAndUpdate(
-        { 
-          _id: id, 
-          isDeleted: false 
-        },
-        {
-          ...updateData,
-          updatedBy: userId
-        },
-        { new: true }
-      );
+      const provider = await Provider.findOne({ 
+        _id: id, 
+        isDeleted: false 
+      });
       
       if (!provider) {
         throw new Error('Provider not found');
       }
+      
+      // ── Cascade deactivation when provider is turned off ────────────────
+      if (updateData.isActive === false && provider.isActive !== false) {
+        await this._cascadeProviderDeactivation(provider, userId);
+      }
+
+      // ── Cascade reactivation when provider is turned on ─────────────────
+      if (updateData.isActive === true && provider.isActive !== true) {
+        await this._cascadeProviderReactivation(provider, userId);
+      }
+
+      Object.assign(provider, updateData, { updatedBy: userId });
+      await provider.save();
       
       logger.info(`Provider updated: ${id} by user ${userId}`);
       return provider;
@@ -125,6 +133,73 @@ class ProviderService {
       logger.error(`Provider update failed: ${error.message}`);
       throw error;
     }
+  }
+
+  // REFACTOR TODO: Remove cascade to bundles/storefront-pricing once bundle queries
+  // check parent Package.isActive and Provider.isActive at query time (Path B).
+  // When that's done, this method should only cascade to Package records.
+  async _cascadeProviderDeactivation(provider, userId) {
+    const providerCode = provider.code;
+    const providerId = provider._id;
+
+    // Deactivate all packages under this provider
+    await Package.updateMany(
+      { provider: providerCode, isDeleted: false },
+      { isActive: false, updatedBy: userId },
+    );
+
+    // Deactivate all bundles linked to this provider
+    const bundles = await Bundle.find({ providerId, isDeleted: false }).select('_id');
+    const bundleIds = bundles.map((b) => b._id);
+
+    if (bundleIds.length > 0) {
+      await Bundle.updateMany(
+        { _id: { $in: bundleIds } },
+        { isActive: false },
+      );
+
+      // Deactivate storefront pricing for these bundles
+      await StorefrontPricing.updateMany(
+        { bundleId: { $in: bundleIds } },
+        { isActive: false },
+      );
+    }
+
+    logger.info(
+      `[ProviderService] Deactivated ${bundleIds.length} bundle(s) and their storefront pricing for provider ${providerCode}`,
+    );
+  }
+
+  async _cascadeProviderReactivation(provider, userId) {
+    const providerCode = provider.code;
+    const providerId = provider._id;
+
+    // Reactivate all packages under this provider
+    await Package.updateMany(
+      { provider: providerCode, isDeleted: false },
+      { isActive: true, updatedBy: userId },
+    );
+
+    // Reactivate all bundles linked to this provider
+    const bundles = await Bundle.find({ providerId, isDeleted: false }).select('_id');
+    const bundleIds = bundles.map((b) => b._id);
+
+    if (bundleIds.length > 0) {
+      await Bundle.updateMany(
+        { _id: { $in: bundleIds } },
+        { isActive: true },
+      );
+
+      // Reactivate storefront pricing for these bundles
+      await StorefrontPricing.updateMany(
+        { bundleId: { $in: bundleIds } },
+        { isActive: true },
+      );
+    }
+
+    logger.info(
+      `[ProviderService] Reactivated ${bundleIds.length} bundle(s) and their storefront pricing for provider ${providerCode}`,
+    );
   }
 
   // Soft delete provider (Admin/Super Admin only)
@@ -138,6 +213,21 @@ class ProviderService {
       if (!provider) {
         throw new Error('Provider not found or already deleted');
       }
+      
+      // Cascade deactivation before soft-delete
+      await this._cascadeProviderDeactivation(provider, userId);
+      
+      // Also soft-delete associated packages
+      await Package.updateMany(
+        { provider: provider.code, isDeleted: false },
+        { isDeleted: true, deletedAt: new Date(), deletedBy: userId, isActive: false, updatedBy: userId },
+      );
+      
+      // Also soft-delete associated bundles
+      await Bundle.updateMany(
+        { providerId: provider._id, isDeleted: false },
+        { isDeleted: true, deletedAt: new Date(), deletedBy: userId, isActive: false },
+      );
       
       await provider.softDelete(userId);
       
