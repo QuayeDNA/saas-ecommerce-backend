@@ -452,7 +452,7 @@ const bundleService = {
 
       for (const bundleData of bundles) {
         try {
-          await this.createBundle(bundleData);
+          await bundleService.createBundle(bundleData);
           results.created++;
         } catch (error) {
           results.failed++;
@@ -482,7 +482,7 @@ const bundleService = {
       for (const bundleData of bundles) {
         try {
           const { id, ...updateData } = bundleData;
-          await this.updateBundle(id, updateData);
+          await bundleService.updateBundle(id, updateData);
           results.updated++;
         } catch (error) {
           results.failed++;
@@ -511,7 +511,7 @@ const bundleService = {
 
       for (const id of bundleIds) {
         try {
-          await this.deleteBundle(id);
+          await bundleService.deleteBundle(id);
           results.deleted++;
         } catch (error) {
           results.failed++;
