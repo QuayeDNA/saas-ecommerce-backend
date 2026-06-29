@@ -3,6 +3,7 @@ import bcrypt from "bcrypt";
 import crypto from "crypto";
 import ApiKey from "../models/ApiKey.js";
 import logger from "../utils/logger.js";
+import { AUDIT_CATEGORIES } from "../constants/audit.js";
 
 const SALT_ROUNDS = 10;
 const KEY_BYTES = 32;
@@ -143,7 +144,7 @@ class ApiKeyService {
       userId,
       userType,
       action,
-      category: "api_key",
+      category: AUDIT_CATEGORIES.API_KEY,
       resource,
       changes,
       metadata,
