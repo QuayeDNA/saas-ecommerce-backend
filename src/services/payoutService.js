@@ -274,9 +274,11 @@ class PayoutService {
       }
       const network = this._detectNetwork(destination.phoneNumber);
       if (network !== destination.mobileProvider) {
-        throw new Error(
-          `Phone number does not match ${destination.mobileProvider} network`,
-        );
+        logger.warn("[Payout] Network prefix mismatch — possible ported number", {
+          phoneNumber: destination.phoneNumber,
+          detectedNetwork: network,
+          declaredNetwork: destination.mobileProvider,
+        });
       }
       destination.accountName = String(destination.accountName).trim();
       destination.recipientName = destination.accountName;
@@ -303,7 +305,7 @@ class PayoutService {
   _detectNetwork(phone) {
     const last9 = String(phone).replace(/\D/g, "").slice(-9);
     const prefix = last9.slice(0, 2);
-    if (["24", "54", "55", "59"].includes(prefix)) return "MTN";
+    if (["24", "53", "54", "55", "59"].includes(prefix)) return "MTN";
     if (["20", "50"].includes(prefix)) return "TELECEL";
     if (["27", "57", "26", "56"].includes(prefix)) return "AT";
     return null;
