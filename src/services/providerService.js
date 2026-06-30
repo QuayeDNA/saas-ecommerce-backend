@@ -32,8 +32,8 @@ class ProviderService {
   // Get providers with filtering (accessible to all users)
   async getProviders(filters = {}, pagination = {}) {
     try {
-      const { page = 1, limit = 20, sortBy = 'name', sortOrder = 1 } = pagination;
-      const { search, isActive = true, includeDeleted = false } = filters;
+      const { page = 1, limit = 20 } = pagination;
+      const { search, isActive, includeDeleted = false } = filters;
       
       const query = {};
       
@@ -53,15 +53,24 @@ class ProviderService {
         ];
       }
       
-      const [providers, total] = await Promise.all([
+      const [allProviders, total] = await Promise.all([
         Provider.find(query)
           .populate('createdBy', 'fullName email')
           .populate('updatedBy', 'fullName email')
-          .skip((page - 1) * limit)
-          .limit(Number(limit))
-          .sort({ [sortBy]: sortOrder }),
+          .lean(),
         Provider.countDocuments(query)
       ]);
+      
+      const providerPriority = { MTN: 1, TELECEL: 2, AT: 3, AFA: 4 };
+      allProviders.sort((a, b) => {
+        const priA = providerPriority[a.code] ?? 999;
+        const priB = providerPriority[b.code] ?? 999;
+        if (priA !== priB) return priA - priB;
+        return (a.name || '').localeCompare(b.name || '');
+      });
+      
+      const skip = (page - 1) * limit;
+      const providers = allProviders.slice(skip, skip + Number(limit));
       
       return {
         providers,

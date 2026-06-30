@@ -41,8 +41,6 @@ class PackageService {
     const {
       page = 1,
       limit = 20,
-      sortBy = "createdAt",
-      sortOrder = -1,
     } = pagination;
     const {
       search,
@@ -93,15 +91,24 @@ class PackageService {
           ];
     }
 
-    const [packages, total] = await Promise.all([
+    const [allPackages, total] = await Promise.all([
       Package.find(query)
         .populate("createdBy", "fullName email")
         .populate("updatedBy", "fullName email")
-        .skip((page - 1) * limit)
-        .limit(Number(limit))
-        .sort({ [sortBy]: sortOrder }),
+        .lean(),
       Package.countDocuments(query),
     ]);
+
+    const providerPriority = { MTN: 1, TELECEL: 2, AT: 3, AFA: 4 };
+    allPackages.sort((a, b) => {
+      const priA = providerPriority[a.provider] ?? 999;
+      const priB = providerPriority[b.provider] ?? 999;
+      if (priA !== priB) return priA - priB;
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    });
+
+    const skip = (page - 1) * limit;
+    const packages = allPackages.slice(skip, skip + Number(limit));
 
     return {
       packages: packages.map((p) => pickPackage(p, userType)),
@@ -327,7 +334,15 @@ class PackageService {
       category,
       isActive: true,
       isDeleted: false,
-    }).populate("createdBy", "fullName email");
+    }).populate("createdBy", "fullName email").lean();
+
+    const providerPriority = { MTN: 1, TELECEL: 2, AT: 3, AFA: 4 };
+    packages.sort((a, b) => {
+      const priA = providerPriority[a.provider] ?? 999;
+      const priB = providerPriority[b.provider] ?? 999;
+      if (priA !== priB) return priA - priB;
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    });
 
     return packages.map((p) => pickPackage(p, userType));
   }

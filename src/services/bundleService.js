@@ -19,8 +19,8 @@ const bundleService = {
         providerId,
         packageId,
         provider, // Add provider filter by code
-        sortBy = "createdAt",
-        sortOrder = "desc",
+        sortBy = "dataVolume",
+        sortOrder = "asc",
         userType = "agent", // Add user type for security
       } = options;
 
@@ -188,7 +188,7 @@ const bundleService = {
         Bundle.find({ providerId: provider._id, isActive: true })
           .populate("packageId", "name description")
           .populate("providerId", "name logo code")
-          .sort({ createdAt: -1 })
+          .sort({ dataVolume: 1 })
           .skip(skip)
           .limit(limit)
           .lean(),
