@@ -18,7 +18,6 @@ const SENSITIVE = ["isDeleted", "deletedAt", "deletedBy", "__v"];
 const BUSINESS_BUNDLE_OMIT = [...SENSITIVE, "tenantId", "createdBy", "updatedBy", "pricingSummary"];
 const PUBLIC_BUNDLE_OMIT = [...BUSINESS_BUNDLE_OMIT, "pricingTiers"];
 const BUSINESS_PACKAGE_OMIT = [...SENSITIVE, "tenantId", "createdBy", "updatedBy"];
-const PUBLIC_PACKAGE_OMIT = [...BUSINESS_PACKAGE_OMIT];
 
 const sans = (obj, omit) => {
   const plain = typeof obj?.toObject === "function" ? obj.toObject() : obj;
@@ -27,8 +26,11 @@ const sans = (obj, omit) => {
   return result;
 };
 
+// Public and business tiers are identical for packages (same omit list).
+// Differences could be added here later if needed (e.g. hiding pricing tiers
+// from unauthenticated users); until then, both delegate to the same omit list.
 export const toPublicPackage = (pkg) =>
-  sans(pkg, PUBLIC_PACKAGE_OMIT);
+  sans(pkg, BUSINESS_PACKAGE_OMIT);
 
 export const toBusinessPackage = (pkg) =>
   sans(pkg, BUSINESS_PACKAGE_OMIT);

@@ -65,6 +65,7 @@ class PackageController {
   async getPackage(req, res) {
     try {
       const { id } = req.params;
+      const userType = req.user?.userType || "agent";
 
       if (!mongoose.Types.ObjectId.isValid(id)) {
         return res.status(404).json({
@@ -73,7 +74,7 @@ class PackageController {
         });
       }
 
-      const packageGroup = await packageService.getPackageById(id);
+      const packageGroup = await packageService.getPackageById(id, userType);
 
       res.json({
         success: true,

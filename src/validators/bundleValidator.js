@@ -1,4 +1,5 @@
 import Joi from 'joi';
+import logger from '../utils/logger.js';
 
 const bundleSchema = Joi.object({
   name: Joi.string().required().min(2).max(100),
@@ -54,38 +55,34 @@ const bulkBundleSchema = Joi.object({
   bundles: Joi.array().items(bundleSchema).required().min(1)
 });
 
-export const validateBundle = (req, res, next) => {
-  const { error } = bundleSchema.validate(req.body);
+const handleValidationError = (req, res, schema, label) => {
+  const { error } = schema.validate(req.body);
   if (error) {
+    const messages = error.details.map(d => d.message);
+    logger.warn(`[${label}] Validation failed for ${req.method} ${req.originalUrl}: ${messages.join('; ')}`);
     return res.status(400).json({
       success: false,
       message: 'Validation error',
-      errors: error.details.map(detail => detail.message)
+      errors: messages,
     });
   }
+  return null;
+};
+
+export const validateBundle = (req, res, next) => {
+  const result = handleValidationError(req, res, bundleSchema, 'Bundle');
+  if (result) return result;
   next();
 };
 
 export const validateBundleUpdate = (req, res, next) => {
-  const { error } = bundleUpdateSchema.validate(req.body);
-  if (error) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation error',
-      errors: error.details.map(detail => detail.message)
-    });
-  }
+  const result = handleValidationError(req, res, bundleUpdateSchema, 'BundleUpdate');
+  if (result) return result;
   next();
 };
 
 export const validateBulkBundles = (req, res, next) => {
-  const { error } = bulkBundleSchema.validate(req.body);
-  if (error) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation error',
-      errors: error.details.map(detail => detail.message)
-    });
-  }
+  const result = handleValidationError(req, res, bulkBundleSchema, 'BulkBundle');
+  if (result) return result;
   next();
 }; 
