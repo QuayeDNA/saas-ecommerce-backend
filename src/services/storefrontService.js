@@ -309,6 +309,16 @@ class StorefrontService {
       for (const p of existing) pricingMap.set(p.bundleId.toString(), p);
     }
 
+    const providerPriority = { MTN: 1, TELECEL: 2, AT: 3, AFA: 4 };
+    bundles.sort((a, b) => {
+      const codeA = a.providerId?.code || "";
+      const codeB = b.providerId?.code || "";
+      const priA = providerPriority[codeA] ?? 999;
+      const priB = providerPriority[codeB] ?? 999;
+      if (priA !== priB) return priA - priB;
+      return (a.name || "").localeCompare(b.name || "");
+    });
+
     return bundles.map((bundle) => {
       const tierPrice = bundle.getPriceForUserType(user.userType);
       const ep = pricingMap.get(bundle._id.toString());
@@ -607,12 +617,28 @@ class StorefrontService {
       );
     }
 
-    const providers = Array.from(providersMap.values()).map((p) => ({
-      code: p.code,
-      name: p.name,
-      logo: p.logo,
-      packages: Array.from(p.packages.values()),
-    }));
+    const providerPriority = { MTN: 1, TELECEL: 2, AT: 3, AFA: 4 };
+
+    bundles.sort((a, b) => {
+      const priA = providerPriority[a.provider] ?? 999;
+      const priB = providerPriority[b.provider] ?? 999;
+      if (priA !== priB) return priA - priB;
+      return (a.name || "").localeCompare(b.name || "");
+    });
+
+    const providers = Array.from(providersMap.values())
+      .map((p) => ({
+        code: p.code,
+        name: p.name,
+        logo: p.logo,
+        packages: Array.from(p.packages.values()),
+      }))
+      .sort((a, b) => {
+        const priA = providerPriority[a.code] ?? 999;
+        const priB = providerPriority[b.code] ?? 999;
+        if (priA !== priB) return priA - priB;
+        return (a.name || "").localeCompare(b.name || "");
+      });
 
     let paystackStorefrontEnabled = false;
     try {
