@@ -369,9 +369,6 @@ class AuthController {
         // Initialize wallet with 100 GH₵
         try {
           await walletService.initializeAgentWallet(user._id);
-          // Update first time flag
-          user.isFirstTime = false;
-          await user.save();
           logger.info(
             `Initialized agent wallet for first login: ${user.email}`,
           );
