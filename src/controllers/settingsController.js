@@ -385,6 +385,57 @@ class SettingsController {
         .json({ success: false, error: "Failed to update MoMo Bridge settings" });
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // MTN Order Restriction
+  // ---------------------------------------------------------------------------
+  async getMtnRestrictionSettings(req, res) {
+    try {
+      const settings = await settingsService.getMtnRestrictionSettings();
+      res.json({ success: true, data: settings });
+    } catch (error) {
+      logger.error("Error getting MTN restriction settings:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to get MTN restriction settings" });
+    }
+  }
+
+  async updateMtnRestrictionSettings(req, res) {
+    try {
+      const settings = await settingsService.updateMtnRestrictionSettings(req.body);
+      res.json({ success: true, data: settings });
+    } catch (error) {
+      logger.error("Error updating MTN restriction settings:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to update MTN restriction settings" });
+    }
+  }
+
+  async importMtnNumbers(req, res) {
+    try {
+      const result = await settingsService.importMtnNumbers(req.body);
+      res.json({ success: true, data: result });
+    } catch (error) {
+      logger.error("Error importing MTN numbers:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to import MTN numbers" });
+    }
+  }
+
+  async getMtnNumberStats(req, res) {
+    try {
+      const data = await settingsService.getMtnNumberStats();
+      res.json({ success: true, data });
+    } catch (error) {
+      logger.error("Error getting MTN number stats:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to get MTN number stats" });
+    }
+  }
 }
 
 export default new SettingsController();

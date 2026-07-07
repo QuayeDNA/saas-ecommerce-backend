@@ -802,6 +802,97 @@ class SettingsService {
       throw error;
     }
   }
+
+  // ─── MTN Order Restriction ─────────────────────────────────────────────────
+
+  async getMtnRestrictionSettings() {
+    try {
+      const settings = await Settings.getInstance();
+      return {
+        mtnOrderRestrictionEnabled: settings.mtnOrderRestrictionEnabled ?? false,
+      };
+    } catch (error) {
+      logger.error(`Error getting MTN restriction settings: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async updateMtnRestrictionSettings(data) {
+    try {
+      const settings = await Settings.getInstance();
+
+      if (typeof data.mtnOrderRestrictionEnabled === "boolean") {
+        settings.mtnOrderRestrictionEnabled = data.mtnOrderRestrictionEnabled;
+      }
+
+      await settings.save();
+
+      logger.info("MTN restriction settings updated:", {
+        mtnOrderRestrictionEnabled: settings.mtnOrderRestrictionEnabled,
+      });
+
+      return this.getMtnRestrictionSettings();
+    } catch (error) {
+      logger.error(
+        `Error updating MTN restriction settings: ${error.message}`,
+      );
+      throw error;
+    }
+  }
+
+  async importMtnNumbers(rawText) {
+    try {
+      const KnownMtnNumber = (await import("../models/KnownMtnNumber.js")).default;
+
+      const lines = rawText
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean);
+
+      const numbers = lines
+        .map((line) => {
+          let d = line.replace(/[\s\-\(\)\+]/g, "");
+          if (d.startsWith("233")) d = "0" + d.slice(3);
+          return d;
+        })
+        .filter((d) => d.length >= 10);
+
+      const ops = numbers.map((phone) => ({
+        updateOne: {
+          filter: { phone },
+          update: { $setOnInsert: { phone, importedAt: new Date() } },
+          upsert: true,
+        },
+      }));
+
+      let imported = 0;
+      let skipped = 0;
+
+      if (ops.length > 0) {
+        const result = await KnownMtnNumber.bulkWrite(ops, { ordered: false });
+        imported = result.upsertedCount || 0;
+        skipped = numbers.length - imported;
+      }
+
+      logger.info(`MTN numbers import: ${imported} imported, ${skipped} skipped`);
+
+      return { imported, skipped, total: numbers.length };
+    } catch (error) {
+      logger.error(`Error importing MTN numbers: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async getMtnNumberStats() {
+    try {
+      const KnownMtnNumber = (await import("../models/KnownMtnNumber.js")).default;
+      const count = await KnownMtnNumber.countDocuments();
+      return { totalKnownNumbers: count };
+    } catch (error) {
+      logger.error(`Error getting MTN number stats: ${error.message}`);
+      throw error;
+    }
+  }
 }
 
 export default new SettingsService();

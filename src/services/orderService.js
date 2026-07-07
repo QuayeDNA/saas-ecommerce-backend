@@ -288,6 +288,25 @@ class OrderService {
     return { removed: true, amount: reversal.amount };
   }
 
+  // ─── MTN New Number Check ───────────────────────────────────────────────────
+
+  async checkMtnOrderRestriction(phone) {
+    const Settings = (await import("../models/Settings.js")).default;
+    const settings = await Settings.getInstance();
+    if (!settings.mtnOrderRestrictionEnabled) return;
+
+    const KnownMtnNumber = (await import("../models/KnownMtnNumber.js")).default;
+    let normalized = phone.replace(/[\s\-\(\)\+]/g, "");
+    if (normalized.startsWith("233")) normalized = "0" + normalized.slice(3);
+
+    const exists = await KnownMtnNumber.exists({ phone: normalized });
+    if (!exists) {
+      throw new Error(
+        "Due to updated provider policies, new numbers cannot have their orders processed.",
+      );
+    }
+  }
+
   // ─── Create Single Order ──────────────────────────────────────────────────────
 
   async createSingleOrder(orderData, tenantId, userId) {
@@ -309,6 +328,11 @@ class OrderService {
       error.code = "DUPLICATE_ORDER_DETECTED";
       error.duplicateInfo = duplicateCheck;
       throw error;
+    }
+
+    // Check MTN number restriction for single orders
+    if (orderData.customerPhone) {
+      await this.checkMtnOrderRestriction(orderData.customerPhone);
     }
 
     const result = await this.executeWithTransaction(async (session) => {
@@ -608,6 +632,30 @@ class OrderService {
           continue;
         }
         orderItems.push({ index: i, bundle, parsed: parsed.value });
+      }
+
+      // Second pass: check MTN number restriction for bulk items
+      const mtnSkipped = [];
+      const validItems = [];
+      for (const item of orderItems) {
+        try {
+          await this.checkMtnOrderRestriction(item.parsed.customerPhone);
+          validItems.push(item);
+        } catch (err) {
+          mtnSkipped.push({
+            index: item.index,
+            row: items[item.index],
+            error: err.message,
+          });
+        }
+      }
+      // Replace orderItems with only valid items, add skipped to errors
+      orderItems.length = 0;
+      orderItems.push(...validItems);
+      errors.push(...mtnSkipped);
+
+      if (orderItems.length === 0) {
+        return { orders: [], errors };
       }
 
       const user = session

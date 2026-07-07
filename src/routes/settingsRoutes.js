@@ -35,6 +35,9 @@ router.get("/brytelinks", settingsController.getBryteLinksSettings);
 // MoMo Bridge — GET available to all authenticated users (agents need it for checkout)
 router.get("/momobridge", settingsController.getMomoBridgeSettings);
 
+// MTN Restriction — GET available to all authenticated users (agents need it to know if restriction is active)
+router.get("/mtn-restriction", settingsController.getMtnRestrictionSettings);
+
 // All other routes require super admin authorization
 router.use(authorize("super_admin"));
 
@@ -89,5 +92,10 @@ router.put("/brytelinks", settingsController.updateBryteLinksSettings);
 
 // MoMo Bridge — Mobile Money Payment Verification Settings (PUT only)
 router.put("/momobridge", settingsController.updateMomoBridgeSettings);
+
+// MTN Order Restriction
+router.put("/mtn-restriction", settingsController.updateMtnRestrictionSettings);
+router.post("/mtn-numbers/import", settingsController.importMtnNumbers);
+router.get("/mtn-numbers/stats", settingsController.getMtnNumberStats);
 
 export default router;

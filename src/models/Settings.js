@@ -282,6 +282,10 @@ const settingsSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    mtnOrderRestrictionEnabled: {
+      type: Boolean,
+      default: false,
+    },
     momoBridgeClaimFeePercent: {
       type: Number,
       default: 0,

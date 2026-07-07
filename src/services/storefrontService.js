@@ -35,6 +35,25 @@ class StorefrontService {
   // =========================================================================
 
   /**
+   * Check MTN number restriction — throws if the number is new and the restriction is active.
+   */
+  async checkMtnOrderRestriction(phone) {
+    const settings = await Settings.getInstance();
+    if (!settings.mtnOrderRestrictionEnabled) return;
+
+    const KnownMtnNumber = (await import("../models/KnownMtnNumber.js")).default;
+    let normalized = phone.replace(/[\s\-\(\)\+]/g, "");
+    if (normalized.startsWith("233")) normalized = "0" + normalized.slice(3);
+
+    const exists = await KnownMtnNumber.exists({ phone: normalized });
+    if (!exists) {
+      throw new Error(
+        "Due to updated provider policies, new numbers cannot have their orders processed.",
+      );
+    }
+  }
+
+  /**
    * Extract the MongoDB Order._id string from a Paystack reference.
    * Storefron references always follow the pattern: storefront_<orderId>
    */
@@ -831,6 +850,14 @@ class StorefrontService {
         bundleSize: { value: bundle.dataVolume, unit: bundle.dataUnit || "GB" },
         processingStatus: "pending",
       });
+    }
+
+    // Check MTN number restriction for all storefront items
+    for (const item of storefrontItems) {
+      const phoneToCheck = item.customerPhone || customerInfo?.phone;
+      if (phoneToCheck) {
+        await this.checkMtnOrderRestriction(phoneToCheck);
+      }
     }
 
     // ── Fee delegation for Paystack payments ──────────────────────────────────
