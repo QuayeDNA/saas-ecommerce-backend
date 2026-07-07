@@ -852,10 +852,10 @@ class StorefrontService {
       });
     }
 
-    // Check MTN number restriction for all storefront items
+    // Check MTN number restriction for MTN provider items only
     for (const item of storefrontItems) {
       const phoneToCheck = item.customerPhone || customerInfo?.phone;
-      if (phoneToCheck) {
+      if (item.provider === "MTN" && phoneToCheck) {
         await this.checkMtnOrderRestriction(phoneToCheck);
       }
     }

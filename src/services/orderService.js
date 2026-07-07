@@ -330,11 +330,6 @@ class OrderService {
       throw error;
     }
 
-    // Check MTN number restriction for single orders
-    if (orderData.customerPhone) {
-      await this.checkMtnOrderRestriction(orderData.customerPhone);
-    }
-
     const result = await this.executeWithTransaction(async (session) => {
       const {
         packageGroupId,
@@ -364,6 +359,11 @@ class OrderService {
           isDeleted: false,
         }));
       if (!bundle) throw new Error("Bundle not found or inactive");
+
+      // Check MTN number restriction only for MTN provider bundles
+      if (bundle.providerId?.code === "MTN" && orderData.customerPhone) {
+        await this.checkMtnOrderRestriction(orderData.customerPhone);
+      }
 
       const user = session
         ? await User.findById(userId).session(session)
@@ -639,7 +639,9 @@ class OrderService {
       const validItems = [];
       for (const item of orderItems) {
         try {
-          await this.checkMtnOrderRestriction(item.parsed.customerPhone);
+          if (item.bundle.providerId?.code === "MTN") {
+            await this.checkMtnOrderRestriction(item.parsed.customerPhone);
+          }
           validItems.push(item);
         } catch (err) {
           mtnSkipped.push({
