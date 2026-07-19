@@ -515,6 +515,63 @@ class SettingsController {
       res.status(500).json({ error: "Failed to regenerate integration key" });
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Connected Apps — Cross-App Connections
+  // ---------------------------------------------------------------------------
+
+  async getConnectedApps(req, res) {
+    try {
+      const apps = await settingsService.getConnectedApps();
+      res.json({ success: true, data: apps });
+    } catch (error) {
+      logger.error("Error getting connected apps:", error);
+      res.status(500).json({ error: "Failed to get connected apps" });
+    }
+  }
+
+  async addConnectedApp(req, res) {
+    try {
+      const newApp = await settingsService.addConnectedApp(req.body);
+      res.json({ success: true, data: newApp, message: "Connected app added" });
+    } catch (error) {
+      logger.error("Error adding connected app:", error);
+      res.status(500).json({ error: "Failed to add connected app" });
+    }
+  }
+
+  async updateConnectedApp(req, res) {
+    try {
+      const updatedApp = await settingsService.updateConnectedApp(
+        req.params.appId,
+        req.body,
+      );
+      res.json({ success: true, data: updatedApp });
+    } catch (error) {
+      logger.error("Error updating connected app:", error);
+      res.status(500).json({ error: "Failed to update connected app" });
+    }
+  }
+
+  async removeConnectedApp(req, res) {
+    try {
+      await settingsService.removeConnectedApp(req.params.appId);
+      res.json({ success: true, message: "Connected app removed" });
+    } catch (error) {
+      logger.error("Error removing connected app:", error);
+      res.status(500).json({ error: "Failed to remove connected app" });
+    }
+  }
+
+  async testConnectedApp(req, res) {
+    try {
+      const result = await settingsService.testConnectedApp(req.params.appId);
+      res.json(result);
+    } catch (error) {
+      logger.error("Error testing connected app:", error);
+      res.status(500).json({ error: "Failed to test connected app" });
+    }
+  }
 }
 
 export default new SettingsController();

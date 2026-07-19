@@ -41,6 +41,13 @@ router.get("/mtn-restriction", settingsController.getMtnRestrictionSettings);
 // All other routes require super admin authorization
 router.use(authorize("super_admin"));
 
+// Connected Apps
+router.get("/connected-apps", settingsController.getConnectedApps);
+router.post("/connected-apps", settingsController.addConnectedApp);
+router.put("/connected-apps/:appId", settingsController.updateConnectedApp);
+router.delete("/connected-apps/:appId", settingsController.removeConnectedApp);
+router.post("/connected-apps/:appId/test", settingsController.testConnectedApp);
+
 // Integration Key
 router.get("/integration-key", settingsController.getIntegrationKey);
 router.post("/integration-key/regenerate", settingsController.regenerateIntegrationKey);

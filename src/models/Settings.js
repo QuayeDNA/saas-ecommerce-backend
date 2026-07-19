@@ -310,6 +310,19 @@ const settingsSchema = new mongoose.Schema(
       createdAt: { type: Date, default: null },
       regeneratedAt: { type: Date, default: null },
     },
+
+    // ==========================================================================
+    // Connected Apps — Cross-App Connections
+    // ==========================================================================
+    connectedApps: [{
+      appId: { type: String, required: true },
+      name: { type: String, required: true },
+      baseUrl: { type: String, required: true },
+      apiKey: { type: String, required: true },
+      enabled: { type: Boolean, default: true },
+      connectedAt: { type: Date, default: Date.now },
+      lastTestedAt: { type: Date },
+    }],
   },
   {
     timestamps: true,

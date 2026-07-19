@@ -7,6 +7,39 @@ import websocketService from "./websocketService.js";
 import { ALL_ROLES } from "../constants/roles.js";
 
 // =============================================================================
+// Encryption Helpers — AES-256-GCM for Connected App API Keys
+// =============================================================================
+
+const ALGORITHM = "aes-256-gcm";
+const ENCRYPTION_KEY = crypto.scryptSync(
+  process.env.CONNECTED_APP_KEY_ENCRYPTION_KEY || "default-dev-key-change-in-production!!",
+  "salt",
+  32,
+);
+
+function encrypt(text) {
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
+  let encrypted = cipher.update(text, "utf8", "hex");
+  encrypted += cipher.final("hex");
+  const authTag = cipher.getAuthTag().toString("hex");
+  return JSON.stringify({ iv: iv.toString("hex"), encryptedData: encrypted, authTag });
+}
+
+function decrypt(encryptedStr) {
+  try {
+    const { iv, encryptedData, authTag } = JSON.parse(encryptedStr);
+    const decipher = crypto.createDecipheriv(ALGORITHM, ENCRYPTION_KEY, Buffer.from(iv, "hex"));
+    decipher.setAuthTag(Buffer.from(authTag, "hex"));
+    let decrypted = decipher.update(encryptedData, "hex", "utf8");
+    decrypted += decipher.final("utf8");
+    return decrypted;
+  } catch {
+    return encryptedStr;
+  }
+}
+
+// =============================================================================
 // SETTINGS SERVICE
 // =============================================================================
 
@@ -976,6 +1009,125 @@ class SettingsService {
       regeneratedAt,
       keyPreview: hashedKey.slice(-4),
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Connected Apps — Cross-App Connections
+  // ---------------------------------------------------------------------------
+
+  async getConnectedApps() {
+    const settings = await Settings.getInstance();
+    const apps = settings.connectedApps || [];
+    return apps.map((app) => {
+      const obj = app.toObject ? app.toObject() : { ...app };
+      obj.apiKey = decrypt(obj.apiKey);
+      return obj;
+    });
+  }
+
+  async addConnectedApp(data) {
+    const required = ["appId", "name", "baseUrl", "apiKey"];
+    for (const field of required) {
+      if (!data[field]) {
+        throw new Error("Missing required fields");
+      }
+    }
+
+    const settings = await Settings.getInstance();
+    const encryptedApiKey = encrypt(data.apiKey);
+
+    const newApp = {
+      appId: data.appId,
+      name: data.name,
+      baseUrl: data.baseUrl,
+      apiKey: encryptedApiKey,
+      enabled: data.enabled !== undefined ? data.enabled : true,
+      connectedAt: new Date(),
+    };
+
+    settings.connectedApps.push(newApp);
+    await settings.save();
+
+    return {
+      appId: newApp.appId,
+      name: newApp.name,
+      baseUrl: newApp.baseUrl,
+      apiKey: data.apiKey,
+      enabled: newApp.enabled,
+      connectedAt: newApp.connectedAt,
+    };
+  }
+
+  async updateConnectedApp(appId, data) {
+    const settings = await Settings.getInstance();
+    const app = (settings.connectedApps || []).find(
+      (a) => a.appId === appId,
+    );
+
+    if (!app) {
+      throw new Error("Connected app not found");
+    }
+
+    if (data.name !== undefined) app.name = data.name;
+    if (data.baseUrl !== undefined) app.baseUrl = data.baseUrl;
+    if (data.enabled !== undefined) app.enabled = data.enabled;
+    if (data.apiKey !== undefined) {
+      app.apiKey = encrypt(data.apiKey);
+    }
+
+    await settings.save();
+
+    const obj = app.toObject ? app.toObject() : { ...app };
+    obj.apiKey = decrypt(obj.apiKey);
+    return obj;
+  }
+
+  async removeConnectedApp(appId) {
+    const settings = await Settings.getInstance();
+    settings.connectedApps = (settings.connectedApps || []).filter(
+      (a) => a.appId !== appId,
+    );
+    await settings.save();
+    return { success: true };
+  }
+
+  async testConnectedApp(appId) {
+    const settings = await Settings.getInstance();
+    const app = (settings.connectedApps || []).find(
+      (a) => a.appId === appId,
+    );
+
+    if (!app) {
+      throw new Error("Connected app not found");
+    }
+
+    const apiKey = decrypt(app.apiKey);
+    const url = `${app.baseUrl.replace(/\/+$/, "")}/api/internal/verify`;
+
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!response.ok) {
+        return {
+          verified: false,
+          error: `HTTP ${response.status} ${response.statusText}`,
+        };
+      }
+
+      app.lastTestedAt = new Date();
+      await settings.save();
+
+      return { verified: true };
+    } catch (error) {
+      return { verified: false, error: error.message };
+    }
   }
 }
 
