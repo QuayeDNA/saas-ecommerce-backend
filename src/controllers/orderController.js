@@ -14,6 +14,7 @@ import {
   AUDIT_CATEGORIES,
   AUDIT_SEVERITIES,
 } from "../constants/audit.js";
+import { ORDER_STATUSES, CANCELLABLE_STATUSES, COMPLETABLE_STATUSES } from "../constants/orderStatuses.js";
 
 function getNavigationLink(userType, page) {
   const routes = {
@@ -537,7 +538,7 @@ class OrderController {
       const { status, notes } = req.body;
 
       // Validate status - prevent setting to 'failed' manually
-      if (status === "failed") {
+      if (status === ORDER_STATUSES.FAILED) {
         return res.status(400).json({
           success: false,
           message:
@@ -547,7 +548,7 @@ class OrderController {
 
       // If admin is manually setting the status to cancelled, use the cancelOrder service
       // so refund and cancellation business logic are applied consistently.
-      if (status === "cancelled") {
+      if (status === ORDER_STATUSES.CANCELLED) {
         const cancelResult = await orderService.cancelOrder(
           id,
           userType === "super_admin" ? null : tenantId,
@@ -595,9 +596,9 @@ class OrderController {
       }
 
       // Set processing timestamps
-      if (status === "processing" && !order.processingStartedAt) {
+      if (status === ORDER_STATUSES.PROCESSING && !order.processingStartedAt) {
         updateData.processingStartedAt = new Date();
-      } else if (status === "completed" && !order.processingCompletedAt) {
+      } else if (status === ORDER_STATUSES.COMPLETED && !order.processingCompletedAt) {
         updateData.processingCompletedAt = new Date();
       }
 
@@ -629,7 +630,7 @@ class OrderController {
       });
 
       // If order moved to completed, credit referral commission and storefront profit
-      if (updatedOrder && status === "completed") {
+      if (updatedOrder && status === ORDER_STATUSES.COMPLETED) {
         try {
           await commissionService.creditOrderCommission(updatedOrder._id);
         } catch (err) {
@@ -643,6 +644,17 @@ class OrderController {
           } catch (err) {
             logger.error(
               `[OrderController] failed to credit storefront profit after manual status update for order ${updatedOrder._id}: ${err.message}`,
+            );
+          }
+        }
+
+        // If order was WIP and is now completed, add MTN numbers to known list
+        if (order.status === ORDER_STATUSES.WORK_IN_PROGRESS && status === ORDER_STATUSES.COMPLETED) {
+          try {
+            await orderService.addMtnNumbersToKnownList(updatedOrder);
+          } catch (err) {
+            logger.error(
+              `[OrderController] failed to update known MTN list after WIP→completed for order ${updatedOrder._id}: ${err.message}`,
             );
           }
         }
@@ -1105,7 +1117,7 @@ class OrderController {
         });
       }
 
-      if (!["processing", "completed"].includes(action)) {
+      if (![ORDER_STATUSES.PROCESSING, ORDER_STATUSES.COMPLETED].includes(action)) {
         return res.status(400).json({
           success: false,
           message: 'Action must be either "processing" or "completed"',
@@ -1139,7 +1151,7 @@ class OrderController {
           }
 
           // Check if order can be processed
-          if (action === "processing" && order.status === "completed") {
+          if (action === ORDER_STATUSES.PROCESSING && order.status === ORDER_STATUSES.COMPLETED) {
             results.failed.push({
               orderId,
               reason: `Order is already completed and cannot be set to processing`,
@@ -1148,8 +1160,8 @@ class OrderController {
           }
 
           if (
-            action === "completed" &&
-            !["pending", "confirmed", "processing"].includes(order.status)
+            action === ORDER_STATUSES.COMPLETED &&
+            !COMPLETABLE_STATUSES.includes(order.status)
           ) {
             results.failed.push({
               orderId,
@@ -1159,29 +1171,41 @@ class OrderController {
           }
 
           // Update order status
+          const previousStatus = order.status;
           order.status = action;
           order.processedBy = userId;
 
           // Set processing timestamps
-          if (action === "processing" && !order.processingStartedAt) {
+          if (action === ORDER_STATUSES.PROCESSING && !order.processingStartedAt) {
             order.processingStartedAt = new Date();
-          } else if (action === "completed" && !order.processingCompletedAt) {
+          } else if (action === ORDER_STATUSES.COMPLETED && !order.processingCompletedAt) {
             order.processingCompletedAt = new Date();
           }
 
           await order.save();
 
-          if (action === "completed" && order.orderType === "storefront") {
+          if (action === ORDER_STATUSES.COMPLETED && order.orderType === "storefront") {
             await orderService._creditStorefrontProfit(order);
           }
 
           // Credit referral commission for every completed order
-          if (action === "completed") {
+          if (action === ORDER_STATUSES.COMPLETED) {
             try {
               await commissionService.creditOrderCommission(order._id);
             } catch (commissionError) {
               logger.error(
                 `[BulkProcess] Failed to credit commission for order ${order._id}: ${commissionError.message}`,
+              );
+            }
+          }
+
+          // If order was WIP and is now completed, add MTN numbers to known list
+          if (previousStatus === ORDER_STATUSES.WORK_IN_PROGRESS && action === ORDER_STATUSES.COMPLETED) {
+            try {
+              await orderService.addMtnNumbersToKnownList(order);
+            } catch (err) {
+              logger.error(
+                `[BulkProcess] Failed to update known MTN list after WIP→completed for order ${order._id}: ${err.message}`,
               );
             }
           }
