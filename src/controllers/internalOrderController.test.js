@@ -46,7 +46,7 @@ describe('internalOrderController', () => {
       expect(orderService.getOrders).toHaveBeenCalledWith(null, req.query, {
         page: 1, limit: 20, sortBy: 'createdAt', sortOrder: -1,
       }, null);
-      expect(res.json).toHaveBeenCalledWith({ orders, pagination });
+      expect(res.json).toHaveBeenCalledWith({ success: true, orders, pagination });
     });
 
     it('should use custom pagination from query', async () => {
@@ -69,7 +69,7 @@ describe('internalOrderController', () => {
       await internalOrderController.listOrders(req, res);
 
       expect(res.status).toHaveBeenCalledWith(500);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Failed to list orders' });
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'DB error' });
     });
   });
 
@@ -82,7 +82,7 @@ describe('internalOrderController', () => {
       await internalOrderController.getOrder(req, res);
 
       expect(orderService.getOrderById).toHaveBeenCalledWith('123', null);
-      expect(res.json).toHaveBeenCalledWith({ order });
+      expect(res.json).toHaveBeenCalledWith({ success: true, order });
     });
 
     it('should return 404 when not found', async () => {
@@ -92,7 +92,7 @@ describe('internalOrderController', () => {
       await internalOrderController.getOrder(req, res);
 
       expect(res.status).toHaveBeenCalledWith(404);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Order not found' });
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'Order not found' });
     });
 
     it('should handle service errors', async () => {
@@ -102,7 +102,7 @@ describe('internalOrderController', () => {
       await internalOrderController.getOrder(req, res);
 
       expect(res.status).toHaveBeenCalledWith(500);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Failed to get order' });
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'DB error' });
     });
   });
 
@@ -115,7 +115,7 @@ describe('internalOrderController', () => {
       await internalOrderController.updateOrderStatus(req, res);
 
       expect(Order.findByIdAndUpdate).toHaveBeenCalledWith('123', { status: 'processing' }, { new: true });
-      expect(res.json).toHaveBeenCalledWith({ order });
+      expect(res.json).toHaveBeenCalledWith({ success: true, order });
     });
 
     it('should return 400 for failed status', async () => {
@@ -123,7 +123,7 @@ describe('internalOrderController', () => {
       await internalOrderController.updateOrderStatus(req, res);
 
       expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Cannot manually set status to failed' });
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'Cannot manually set status to failed' });
     });
 
     it('should delegate to cancelOrder for cancelled status', async () => {
@@ -134,7 +134,7 @@ describe('internalOrderController', () => {
       await internalOrderController.updateOrderStatus(req, res);
 
       expect(orderService.cancelOrder).toHaveBeenCalledWith('123', null, null, 'Customer request');
-      expect(res.json).toHaveBeenCalledWith({ order: cancelResult.order });
+      expect(res.json).toHaveBeenCalledWith({ success: true, order: cancelResult.order });
     });
 
     it('should return 404 when order not found', async () => {
@@ -144,7 +144,7 @@ describe('internalOrderController', () => {
       await internalOrderController.updateOrderStatus(req, res);
 
       expect(res.status).toHaveBeenCalledWith(404);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Order not found' });
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'Order not found' });
     });
 
     it('should include notes in update when provided', async () => {
@@ -167,7 +167,7 @@ describe('internalOrderController', () => {
       await internalOrderController.updateOrderStatus(req, res);
 
       expect(res.status).toHaveBeenCalledWith(500);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Cannot cancel' });
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'Cannot cancel' });
     });
   });
 
@@ -180,7 +180,7 @@ describe('internalOrderController', () => {
       await internalOrderController.processOrderItem(req, res);
 
       expect(orderService.processOrderItem).toHaveBeenCalledWith('order1', 'item1', null, null);
-      expect(res.json).toHaveBeenCalledWith(result);
+      expect(res.json).toHaveBeenCalledWith({ success: true, ...result });
     });
 
     it('should handle service errors', async () => {
@@ -190,7 +190,7 @@ describe('internalOrderController', () => {
       await internalOrderController.processOrderItem(req, res);
 
       expect(res.status).toHaveBeenCalledWith(500);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Item not found' });
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'Item not found' });
     });
   });
 
@@ -203,7 +203,7 @@ describe('internalOrderController', () => {
       await internalOrderController.processBulkOrder(req, res);
 
       expect(orderService.processBulkOrder).toHaveBeenCalledWith('123', null, null);
-      expect(res.json).toHaveBeenCalledWith(result);
+      expect(res.json).toHaveBeenCalledWith({ success: true, ...result });
     });
 
     it('should handle service errors', async () => {
@@ -213,7 +213,7 @@ describe('internalOrderController', () => {
       await internalOrderController.processBulkOrder(req, res);
 
       expect(res.status).toHaveBeenCalledWith(500);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Not a bulk order' });
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'Not a bulk order' });
     });
   });
 
@@ -228,7 +228,7 @@ describe('internalOrderController', () => {
         { _id: { $in: ['1', '2', '3'] } },
         { $set: { status: 'completed', processedBy: null } },
       );
-      expect(res.json).toHaveBeenCalledWith({ successful: 3, failed: 0, total: 3 });
+      expect(res.json).toHaveBeenCalledWith({ success: true, successful: 3, failed: 0, total: 3 });
     });
 
     it('should return 400 when orderIds missing', async () => {
@@ -236,7 +236,7 @@ describe('internalOrderController', () => {
       await internalOrderController.bulkProcessOrders(req, res);
 
       expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Order IDs array is required' });
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'Order IDs array is required' });
     });
 
     it('should return 400 when orderIds is not an array', async () => {
@@ -251,7 +251,7 @@ describe('internalOrderController', () => {
       await internalOrderController.bulkProcessOrders(req, res);
 
       expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Action must be one of: processing, completed' });
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'Action must be one of: processing, completed' });
     });
 
     it('should handle update errors', async () => {
@@ -261,7 +261,7 @@ describe('internalOrderController', () => {
       await internalOrderController.bulkProcessOrders(req, res);
 
       expect(res.status).toHaveBeenCalledWith(500);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Failed to bulk process orders' });
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'DB error' });
     });
   });
 
@@ -274,7 +274,7 @@ describe('internalOrderController', () => {
       await internalOrderController.cancelOrder(req, res);
 
       expect(orderService.cancelOrder).toHaveBeenCalledWith('123', null, null, 'Test cancel');
-      expect(res.json).toHaveBeenCalledWith(result);
+      expect(res.json).toHaveBeenCalledWith({ success: true, ...result });
     });
 
     it('should use empty string when no reason provided', async () => {
@@ -293,7 +293,7 @@ describe('internalOrderController', () => {
       await internalOrderController.cancelOrder(req, res);
 
       expect(res.status).toHaveBeenCalledWith(500);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Cannot cancel' });
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'Cannot cancel' });
     });
   });
 
@@ -306,7 +306,7 @@ describe('internalOrderController', () => {
       await internalOrderController.reportOrder(req, res);
 
       expect(orderService.reportOrder).toHaveBeenCalledWith('123', null, null, 'Not delivered');
-      expect(res.json).toHaveBeenCalledWith(result);
+      expect(res.json).toHaveBeenCalledWith({ success: true, ...result });
     });
 
     it('should handle service errors', async () => {
@@ -316,7 +316,7 @@ describe('internalOrderController', () => {
       await internalOrderController.reportOrder(req, res);
 
       expect(res.status).toHaveBeenCalledWith(500);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Order not found' });
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'Order not found' });
     });
   });
 
@@ -329,7 +329,7 @@ describe('internalOrderController', () => {
       await internalOrderController.updateReceptionStatus(req, res);
 
       expect(orderService.updateReceptionStatus).toHaveBeenCalledWith('123', 'received', null, null);
-      expect(res.json).toHaveBeenCalledWith(result);
+      expect(res.json).toHaveBeenCalledWith({ success: true, ...result });
     });
 
     it('should handle service errors', async () => {
@@ -339,7 +339,7 @@ describe('internalOrderController', () => {
       await internalOrderController.updateReceptionStatus(req, res);
 
       expect(res.status).toHaveBeenCalledWith(500);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Invalid status' });
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'Invalid status' });
     });
   });
 
@@ -354,7 +354,7 @@ describe('internalOrderController', () => {
         { _id: { $in: ['1', '2'] } },
         { $set: { receptionStatus: 'resolved' } },
       );
-      expect(res.json).toHaveBeenCalledWith({ successful: 2, failed: 0, total: 2 });
+      expect(res.json).toHaveBeenCalledWith({ success: true, successful: 2, failed: 0, total: 2 });
     });
 
     it('should return 400 when orderIds missing', async () => {
@@ -362,7 +362,7 @@ describe('internalOrderController', () => {
       await internalOrderController.bulkUpdateReceptionStatus(req, res);
 
       expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Order IDs array is required' });
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'Order IDs array is required' });
     });
 
     it('should return 400 for invalid reception status', async () => {
@@ -371,7 +371,8 @@ describe('internalOrderController', () => {
 
       expect(res.status).toHaveBeenCalledWith(400);
       expect(res.json).toHaveBeenCalledWith({
-        error: 'Invalid reception status. Must be one of: not_received, received, checking, resolved',
+        success: false,
+        message: 'Invalid reception status. Must be one of: not_received, received, checking, resolved',
       });
     });
 
@@ -382,7 +383,7 @@ describe('internalOrderController', () => {
       await internalOrderController.bulkUpdateReceptionStatus(req, res);
 
       expect(res.status).toHaveBeenCalledWith(500);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Failed to bulk update reception status' });
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'DB error' });
     });
   });
 
@@ -401,7 +402,7 @@ describe('internalOrderController', () => {
         { page: 1, limit: 20 },
         null,
       );
-      expect(res.json).toHaveBeenCalledWith({ orders, pagination });
+      expect(res.json).toHaveBeenCalledWith({ success: true, orders, pagination });
     });
 
     it('should use custom pagination from query', async () => {
@@ -425,7 +426,7 @@ describe('internalOrderController', () => {
       await internalOrderController.getReportedOrders(req, res);
 
       expect(res.status).toHaveBeenCalledWith(500);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Failed to get reported orders' });
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'DB error' });
     });
   });
 });
