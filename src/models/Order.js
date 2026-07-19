@@ -10,6 +10,12 @@ import {
   STOREFRONT_PAYMENT_METHODS,
   ALL_PAYMENT_METHODS,
 } from "../constants/paymentMethods.js";
+import {
+  ALL_STATUSES,
+  CANCELLABLE_STATUSES,
+  COMPLETABLE_STATUSES,
+  ORDER_STATUSES,
+} from "../constants/orderStatuses.js";
 
 const orderItemSchema = new mongoose.Schema(
   {
@@ -198,17 +204,7 @@ const orderSchema = new mongoose.Schema(
     // Order status
     status: {
       type: String,
-      enum: [
-        "draft",
-        "pending",
-        "pending_payment",
-        "confirmed",
-        "processing",
-        "partially_completed",
-        "completed",
-        "cancelled",
-        "failed",
-      ],
+      enum: ALL_STATUSES,
       default: "pending",
     },
 
@@ -399,6 +395,12 @@ orderSchema.methods.updateStatus = async function () {
     if (!this.processingStartedAt) {
       this.processingStartedAt = new Date();
     }
+  }
+
+  // Auto-transition from work_in_progress to completed when all items complete
+  if (this.status === ORDER_STATUSES.WORK_IN_PROGRESS && uniqueStatuses.length === 1 && uniqueStatuses[0] === "completed") {
+    this.status = ORDER_STATUSES.COMPLETED;
+    this.processingCompletedAt = new Date();
   }
 
   // Update bulk data counters
