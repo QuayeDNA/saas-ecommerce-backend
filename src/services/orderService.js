@@ -24,6 +24,11 @@ import {
   AUDIT_CATEGORIES,
   AUDIT_SEVERITIES,
 } from "../constants/audit.js";
+import {
+  ORDER_STATUSES,
+  CANCELLABLE_STATUSES,
+  COMPLETABLE_STATUSES,
+} from "../constants/orderStatuses.js";
 
 class OrderService {
   // ─── Navigation Helper ────────────────────────────────────────────────────────
@@ -1592,6 +1597,38 @@ class OrderService {
     };
   }
 
+  // ─── Known-List Helpers ──────────────────────────────────────────────────────
+
+  async _removeFromKnownMtnList(phone) {
+    if (!phone) return;
+    const KnownMtnNumber = (await import("../models/KnownMtnNumber.js")).default;
+    let normalized = phone.replace(/[\s\-\(\)\+]/g, "");
+    if (normalized.startsWith("233")) normalized = "0" + normalized.slice(3);
+    await KnownMtnNumber.deleteOne({ phone: normalized });
+  }
+
+  async _addToKnownMtnList(phone) {
+    if (!phone) return;
+    const KnownMtnNumber = (await import("../models/KnownMtnNumber.js")).default;
+    let normalized = phone.replace(/[\s\-\(\)\+]/g, "");
+    if (normalized.startsWith("233")) normalized = "0" + normalized.slice(3);
+    const exists = await KnownMtnNumber.exists({ phone: normalized });
+    if (!exists) {
+      await KnownMtnNumber.create({ phone: normalized });
+    }
+  }
+
+  _getMtnPhonesFromOrder(order) {
+    const phones = new Set();
+    for (const item of (order.items || [])) {
+      const provider = item.packageDetails?.provider || item.provider;
+      if (provider === "MTN" && item.customerPhone) {
+        phones.add(item.customerPhone);
+      }
+    }
+    return [...phones];
+  }
+
   // ─── Cancel Order ─────────────────────────────────────────────────────────────
 
   async cancelOrder(orderId, tenantId, userId, reason) {
@@ -1602,11 +1639,11 @@ class OrderService {
         : await Order.findOne(query);
       if (!order) throw new Error("Order not found");
 
-      if (!["pending", "confirmed", "draft"].includes(order.status)) {
+      if (!CANCELLABLE_STATUSES.includes(order.status)) {
         throw new Error("Order cannot be cancelled in current status");
       }
 
-      if (order.status === "draft") {
+      if (order.status === ORDER_STATUSES.DRAFT) {
         session
           ? await Order.deleteOne({ _id: orderId }).session(session)
           : await Order.deleteOne({ _id: orderId });
@@ -1721,6 +1758,13 @@ class OrderService {
 
       if (isStorefront) {
         await this._removeStorefrontProfit(order, "order_cancelled", session);
+      }
+
+      if (order.status === ORDER_STATUSES.WORK_IN_PROGRESS) {
+        const mtnPhones = this._getMtnPhonesFromOrder(order);
+        for (const phone of mtnPhones) {
+          await this._removeFromKnownMtnList(phone);
+        }
       }
 
       order.items.forEach((item) => {
@@ -2044,6 +2088,15 @@ class OrderService {
     }
 
     return order;
+  }
+
+  // ─── Public Known-List Helper ─────────────────────────────────────────────────
+
+  async addMtnNumbersToKnownList(order) {
+    const mtnPhones = this._getMtnPhonesFromOrder(order);
+    for (const phone of mtnPhones) {
+      await this._addToKnownMtnList(phone);
+    }
   }
 }
 
