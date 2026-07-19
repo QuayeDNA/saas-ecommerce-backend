@@ -300,6 +300,16 @@ const settingsSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+
+    // ==========================================================================
+    // Integration Key — Cross-App API Authentication
+    // ==========================================================================
+    integrationKey: {
+      hashedKey: { type: String, default: null },
+      label: { type: String, default: "" },
+      createdAt: { type: Date, default: null },
+      regeneratedAt: { type: Date, default: null },
+    },
   },
   {
     timestamps: true,

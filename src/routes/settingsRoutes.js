@@ -41,6 +41,10 @@ router.get("/mtn-restriction", settingsController.getMtnRestrictionSettings);
 // All other routes require super admin authorization
 router.use(authorize("super_admin"));
 
+// Integration Key
+router.get("/integration-key", settingsController.getIntegrationKey);
+router.post("/integration-key/regenerate", settingsController.regenerateIntegrationKey);
+
 // Super‑admin may update wallet or payout settings
 router.put("/wallet", settingsController.updateWalletSettings);
 router.put("/payout", settingsController.updatePayoutSettings);

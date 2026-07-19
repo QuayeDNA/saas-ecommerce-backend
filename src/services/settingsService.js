@@ -1,4 +1,5 @@
 import bcrypt from "bcrypt";
+import crypto from "crypto";
 import User from "../models/User.js";
 import Settings from "../models/Settings.js";
 import logger from "../utils/logger.js";
@@ -934,6 +935,47 @@ class SettingsService {
     const KnownMtnNumber = (await import("../models/KnownMtnNumber.js")).default;
     const result = await KnownMtnNumber.deleteMany({ _id: { $in: ids } });
     return { deletedCount: result.deletedCount };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Integration Key — Cross-App API Authentication
+  // ---------------------------------------------------------------------------
+
+  async generateIntegrationKey() {
+    const rawKey = "sk_integ_" + crypto.randomBytes(32).toString("hex");
+    const hashedKey = await bcrypt.hash(rawKey, 10);
+    const settings = await Settings.getInstance();
+
+    const now = new Date();
+    const isFirstGeneration = !settings.integrationKey?.hashedKey;
+
+    settings.integrationKey = {
+      hashedKey,
+      label: settings.integrationKey?.label || "",
+      createdAt: isFirstGeneration ? now : settings.integrationKey.createdAt,
+      regeneratedAt: isFirstGeneration ? null : now,
+    };
+
+    await settings.save();
+    return rawKey;
+  }
+
+  async getIntegrationKey() {
+    const settings = await Settings.getInstance();
+
+    if (!settings.integrationKey?.hashedKey) {
+      return { keyPreview: null };
+    }
+
+    const { hashedKey, label, createdAt, regeneratedAt } =
+      settings.integrationKey;
+
+    return {
+      label: label || "",
+      createdAt,
+      regeneratedAt,
+      keyPreview: hashedKey.slice(-4),
+    };
   }
 }
 

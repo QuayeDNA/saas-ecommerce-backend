@@ -488,6 +488,33 @@ class SettingsController {
       res.status(500).json({ success: false, message: error.message });
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Integration Key — Cross-App API Authentication
+  // ---------------------------------------------------------------------------
+
+  async getIntegrationKey(req, res) {
+    try {
+      const result = await settingsService.getIntegrationKey();
+      res.json(result || { keyPreview: null });
+    } catch (error) {
+      logger.error("Error getting integration key:", error);
+      res.status(500).json({ error: "Failed to get integration key" });
+    }
+  }
+
+  async regenerateIntegrationKey(req, res) {
+    try {
+      const rawKey = await settingsService.generateIntegrationKey();
+      res.json({
+        key: rawKey,
+        message: "Save this key — it will not be shown again",
+      });
+    } catch (error) {
+      logger.error("Error regenerating integration key:", error);
+      res.status(500).json({ error: "Failed to regenerate integration key" });
+    }
+  }
 }
 
 export default new SettingsController();
