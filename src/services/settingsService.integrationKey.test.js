@@ -42,12 +42,12 @@ describe("SettingsService Integration Key", () => {
       const settings = makeSettings();
       Settings.getInstance.mockResolvedValue(settings);
 
-      await settingsService.generateIntegrationKey();
+      const rawKey = await settingsService.generateIntegrationKey();
 
       const hash = settings.integrationKey.hashedKey;
       expect(hash).toBeTruthy();
       expect(hash.startsWith("sk_integ_")).toBe(false);
-      expect(hash).not.toBe(settingsService.generateIntegrationKey);
+      expect(hash).not.toBe(rawKey);
     });
 
     it("should set createdAt and leave regeneratedAt null on first generation", async () => {
