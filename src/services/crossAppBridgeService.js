@@ -56,3 +56,9 @@ export async function getReportedOrdersFromApp(appId, queryParams) {
   const qs = new globalThis.URLSearchParams(queryParams).toString();
   return makeRequest(app, 'GET', `/api/internal/orders/reported?${qs}`);
 }
+
+export async function getAnalyticsFromApp(appId, timeframe) {
+  const app = await getConnectedAppByAppId(appId);
+  const qs = timeframe ? `?timeframe=${encodeURIComponent(timeframe)}` : '';
+  return makeRequest(app, 'GET', `/api/internal/orders/analytics/summary${qs}`);
+}

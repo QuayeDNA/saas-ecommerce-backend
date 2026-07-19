@@ -18,5 +18,6 @@ router.post('/orders/app/:appId/:orderId/items/:itemId/process', crossAppBridgeC
 router.post('/orders/app/:appId/:id/process-bulk', crossAppBridgeController.processConnectedAppBulkOrder);
 router.post('/orders/app/:appId/bulk-process', crossAppBridgeController.bulkProcessConnectedAppOrders);
 router.post('/orders/app/:appId/bulk-reception-status', crossAppBridgeController.bulkUpdateConnectedAppReceptionStatus);
+router.get('/orders/app/:appId/analytics', crossAppBridgeController.getConnectedAppAnalytics);
 
 export default router;

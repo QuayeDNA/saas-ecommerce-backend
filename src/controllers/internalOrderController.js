@@ -159,3 +159,13 @@ export async function getReportedOrders(req, res) {
     return res.status(500).json({ success: false, message: error.message || 'Failed to get reported orders' });
   }
 }
+
+export async function getAnalytics(req, res) {
+  try {
+    const { timeframe } = req.query;
+    const analytics = await orderService.getOrderAnalytics(null, timeframe);
+    return res.json({ success: true, analytics });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message || 'Failed to get analytics' });
+  }
+}

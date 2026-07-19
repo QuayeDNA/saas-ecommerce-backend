@@ -122,3 +122,14 @@ export async function getConnectedAppReportedOrders(req, res) {
     res.status(getStatusFromError(error)).json({ success: false, message: error.message });
   }
 }
+
+export async function getConnectedAppAnalytics(req, res) {
+  try {
+    const { timeframe } = req.query;
+    const result = await crossAppBridgeService.getAnalyticsFromApp(req.params.appId, timeframe);
+    res.json(result);
+  } catch (error) {
+    logger.error(`Cross-app get analytics error: ${error.message}`);
+    res.status(getStatusFromError(error)).json({ success: false, message: error.message });
+  }
+}

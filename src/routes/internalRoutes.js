@@ -20,5 +20,6 @@ router.post('/orders/:orderId/items/:itemId/process', authenticateCrossAppKey, i
 router.post('/orders/:id/process-bulk', authenticateCrossAppKey, internalOrderController.processBulkOrder);
 router.post('/orders/bulk-process', authenticateCrossAppKey, internalOrderController.bulkProcessOrders);
 router.post('/orders/bulk-reception-status', authenticateCrossAppKey, internalOrderController.bulkUpdateReceptionStatus);
+router.get('/orders/analytics/summary', authenticateCrossAppKey, internalOrderController.getAnalytics);
 
 export default router;
