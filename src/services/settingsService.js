@@ -1115,9 +1115,11 @@ class SettingsService {
       });
 
       if (!response.ok) {
+        let detail = "";
+        try { const body = await response.json(); detail = body.error || body.message || ""; } catch {}
         return {
           verified: false,
-          error: `HTTP ${response.status} ${response.statusText}`,
+          error: `HTTP ${response.status}${detail ? ` — ${detail}` : ""}`,
         };
       }
 
