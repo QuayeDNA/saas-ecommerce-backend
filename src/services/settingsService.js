@@ -893,6 +893,48 @@ class SettingsService {
       throw error;
     }
   }
+
+  async listMtnNumbers(page = 1, limit = 20, search = "") {
+    const KnownMtnNumber = (await import("../models/KnownMtnNumber.js")).default;
+    const filter = search
+      ? { phone: { $regex: search.replace(/[\s\-\(\)\+]/g, ""), $options: "i" } }
+      : {};
+    const total = await KnownMtnNumber.countDocuments(filter);
+    const numbers = await KnownMtnNumber.find(filter)
+      .sort({ importedAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
+    return { numbers, total, page, totalPages: Math.ceil(total / limit) };
+  }
+
+  async addMtnNumber(phone) {
+    const KnownMtnNumber = (await import("../models/KnownMtnNumber.js")).default;
+    let normalized = phone.replace(/[\s\-\(\)\+]/g, "");
+    if (normalized.startsWith("233")) normalized = "0" + normalized.slice(3);
+    if (!/^0\d{9}$/.test(normalized)) {
+      throw new Error("Invalid phone number format");
+    }
+    const result = await KnownMtnNumber.findOneAndUpdate(
+      { phone: normalized },
+      { phone: normalized, importedAt: new Date() },
+      { upsert: true, returnDocument: "after" },
+    );
+    return result;
+  }
+
+  async deleteMtnNumber(id) {
+    const KnownMtnNumber = (await import("../models/KnownMtnNumber.js")).default;
+    const result = await KnownMtnNumber.findByIdAndDelete(id);
+    if (!result) throw new Error("Known number not found");
+    return result;
+  }
+
+  async bulkDeleteMtnNumbers(ids) {
+    const KnownMtnNumber = (await import("../models/KnownMtnNumber.js")).default;
+    const result = await KnownMtnNumber.deleteMany({ _id: { $in: ids } });
+    return { deletedCount: result.deletedCount };
+  }
 }
 
 export default new SettingsService();

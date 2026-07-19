@@ -436,6 +436,58 @@ class SettingsController {
         .json({ success: false, error: "Failed to get MTN number stats" });
     }
   }
+
+  async listMtnNumbers(req, res) {
+    try {
+      const { page = 1, limit = 20, search = "" } = req.query;
+      const result = await settingsService.listMtnNumbers(
+        parseInt(page, 10),
+        parseInt(limit, 10),
+        search,
+      );
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async addMtnNumber(req, res) {
+    try {
+      const { phone } = req.body;
+      if (!phone) {
+        return res.status(400).json({ success: false, message: "Phone number is required" });
+      }
+      const result = await settingsService.addMtnNumber(phone);
+      res.status(201).json({ success: true, number: result });
+    } catch (error) {
+      const status = error.message.includes("Invalid") ? 400 : 500;
+      res.status(status).json({ success: false, message: error.message });
+    }
+  }
+
+  async deleteMtnNumber(req, res) {
+    try {
+      const { id } = req.params;
+      await settingsService.deleteMtnNumber(id);
+      res.json({ success: true, message: "Number removed from known list" });
+    } catch (error) {
+      const status = error.message === "Known number not found" ? 404 : 500;
+      res.status(status).json({ success: false, message: error.message });
+    }
+  }
+
+  async bulkDeleteMtnNumbers(req, res) {
+    try {
+      const { ids } = req.body;
+      if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ success: false, message: "IDs array is required" });
+      }
+      const result = await settingsService.bulkDeleteMtnNumbers(ids);
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
 }
 
 export default new SettingsController();

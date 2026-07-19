@@ -98,4 +98,10 @@ router.put("/mtn-restriction", settingsController.updateMtnRestrictionSettings);
 router.post("/mtn-numbers/import", settingsController.importMtnNumbers);
 router.get("/mtn-numbers/stats", settingsController.getMtnNumberStats);
 
+// Known Number CRUD
+router.get("/mtn-numbers", settingsController.listMtnNumbers);
+router.post("/mtn-numbers", settingsController.addMtnNumber);
+router.delete("/mtn-numbers/:id", settingsController.deleteMtnNumber);
+router.post("/mtn-numbers/bulk-delete", settingsController.bulkDeleteMtnNumbers);
+
 export default router;
