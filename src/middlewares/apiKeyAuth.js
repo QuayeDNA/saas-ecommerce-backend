@@ -9,7 +9,7 @@ const RATE_LIMIT = 2000;
 /**
  * Middleware to authenticate requests using an API key.
  *
- * Expects: `Authorization: Bearer bl_live_xxxxx`
+ * Expects: `Authorization: Bearer sk_live_xxxxx`
  * Attaches: `req.apiKey` (ApiKey document), `req.agentId` (ObjectId string)
  */
 export const authenticateApiKey = async (req, res, next) => {
@@ -21,8 +21,8 @@ export const authenticateApiKey = async (req, res, next) => {
       return res.status(401).json({
         success: false,
         code: "MISSING_AUTH",
-        message: "Missing or invalid Authorization header. Use: Bearer bl_live_...",
-        hint: "Include your API key in the Authorization header: Authorization: Bearer bl_live_YOUR_KEY",
+        message: "Missing or invalid Authorization header. Use: Bearer sk_live_...",
+        hint: "Include your API key in the Authorization header: Authorization: Bearer sk_live_YOUR_KEY",
       });
     }
 

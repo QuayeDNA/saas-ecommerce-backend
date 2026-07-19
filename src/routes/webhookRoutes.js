@@ -4,11 +4,14 @@ import { body, param, query } from "express-validator";
 import controller from "../controllers/webhookController.js";
 import { authenticateApiKey, requirePermission } from "../middlewares/apiKeyAuth.js";
 import { authenticate, authorizeBusinessUser } from "../middlewares/auth.js";
+import ApiKey from "../models/ApiKey.js";
 
 const router = express.Router();
 
+const API_KEY_PREFIXES = [ApiKey.API_KEY_PREFIX, "bl_live_"];
+
 /**
- * Accepts either an API key (bl_live_*) or a session JWT.
+ * Accepts either an API key (sk_live_* or legacy bl_live_*) or a session JWT.
  * - API key → authenticateApiKey (sets req.agentId, req.apiKey) — implicitly authorized
  * - Session JWT → authenticate + authorizeBusinessUser + maps req.user.userId to req.agentId
  */
@@ -17,7 +20,7 @@ const authenticateWebhookUser = (req, res, next) => {
 
   if (header && header.startsWith("Bearer ")) {
     const token = header.replace("Bearer ", "").trim();
-    if (token.startsWith("bl_live_")) {
+    if (API_KEY_PREFIXES.some((p) => token.startsWith(p))) {
       return authenticateApiKey(req, res, next);
     }
   }

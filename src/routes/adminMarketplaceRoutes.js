@@ -86,4 +86,18 @@ router.post(
   controller.revokeAllAgentKeys,
 );
 
+// ─── Webhook Management (admin — all agents) ──────────────────────────────
+
+router.get(
+  "/webhooks",
+  authorize("super_admin"),
+  controller.listWebhooks,
+);
+
+router.get(
+  "/webhooks/:id",
+  authorize("super_admin"),
+  controller.getWebhookById,
+);
+
 export default router;

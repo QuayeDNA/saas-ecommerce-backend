@@ -3,6 +3,7 @@ import apiKeyService from "../services/apiKeyService.js";
 import apiUsageService from "../services/apiUsageService.js";
 import apiRateLimiter from "../services/apiRateLimiter.js";
 import notificationService from "../services/notificationService.js";
+import webhookService from "../services/webhookService.js";
 
 class AdminMarketplaceController {
   // =========================================================================
@@ -294,6 +295,38 @@ class AdminMarketplaceController {
       });
     } catch (err) {
       logger.error(`[adminMarketplace] revokeAllAgentKeys: ${err.message}`);
+      res.status(500).json({ success: false, code: "INTERNAL_ERROR", message: "Internal server error" });
+    }
+  }
+
+  // =========================================================================
+  // Webhook Management (admin — all agents)
+  // =========================================================================
+
+  async listWebhooks(req, res) {
+    try {
+      const { agentId, page, limit } = req.query;
+      const result = await webhookService.getAllWebhooks({
+        agentId,
+        page: parseInt(page) || 1,
+        limit: Math.min(parseInt(limit) || 50, 200),
+      });
+      res.json({ success: true, data: result.webhooks, meta: result.meta });
+    } catch (err) {
+      logger.error(`[adminMarketplace] listWebhooks: ${err.message}`);
+      res.status(500).json({ success: false, code: "INTERNAL_ERROR", message: "Internal server error" });
+    }
+  }
+
+  async getWebhookById(req, res) {
+    try {
+      const webhook = await webhookService.getWebhookByIdAdmin(req.params.id);
+      if (!webhook) {
+        return res.status(404).json({ success: false, code: "NOT_FOUND", message: "Webhook not found" });
+      }
+      res.json({ success: true, data: webhook });
+    } catch (err) {
+      logger.error(`[adminMarketplace] getWebhookById: ${err.message}`);
       res.status(500).json({ success: false, code: "INTERNAL_ERROR", message: "Internal server error" });
     }
   }

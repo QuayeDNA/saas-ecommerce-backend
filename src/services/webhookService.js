@@ -228,6 +228,46 @@ class WebhookService {
   }
 
   /**
+   * Get all webhook endpoints across all agents (admin).
+   */
+  async getAllWebhooks({ agentId, page = 1, limit = 50 } = {}) {
+    const filter = {};
+    if (agentId) filter.agentId = agentId;
+
+    const skip = (page - 1) * limit;
+
+    const [webhooks, total] = await Promise.all([
+      WebhookEndpoint.find(filter)
+        .select("-secret")
+        .populate("agentId", "_id name email")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      WebhookEndpoint.countDocuments(filter),
+    ]);
+
+    return {
+      webhooks,
+      meta: {
+        total,
+        page,
+        limit,
+        hasMore: skip + limit < total,
+      },
+    };
+  }
+
+  /**
+   * Get a single webhook by ID (admin — no agent scope).
+   */
+  async getWebhookByIdAdmin(webhookId) {
+    return WebhookEndpoint.findById(webhookId)
+      .populate("agentId", "_id name email")
+      .lean();
+  }
+
+  /**
    * Test a webhook endpoint.
    */
   async testWebhook(webhookId, agentId) {

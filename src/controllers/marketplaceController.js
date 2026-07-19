@@ -38,7 +38,7 @@ class MarketplaceController {
         name: "BryteLinks Marketplace API",
         version: "1.0.0",
         baseUrl: `${req.protocol}://${req.get("host")}/api/marketplace`,
-        authType: "Bearer token (bl_live_...)",
+        authType: "Bearer token (sk_live_...)",
         rateLimit: "2,000 requests per minute per API key",
         permissionScopes: [
           { scope: "packages:read", description: "List and view packages" },

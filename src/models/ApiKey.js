@@ -1,7 +1,7 @@
 // src/models/ApiKey.js
 import mongoose from "mongoose";
 
-const API_KEY_PREFIX = "bl_live_";
+const API_KEY_PREFIX = "sk_live_";
 const VALID_PERMISSIONS = [
   "packages:read",
   "bundles:read",

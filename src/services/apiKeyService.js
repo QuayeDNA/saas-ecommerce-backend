@@ -8,6 +8,7 @@ import { AUDIT_CATEGORIES } from "../constants/audit.js";
 const SALT_ROUNDS = 10;
 const KEY_BYTES = 32;
 const PREFIX = ApiKey.API_KEY_PREFIX;
+const LEGACY_PREFIXES = ["bl_live_"];
 
 class ApiKeyService {
   /**
@@ -48,7 +49,8 @@ class ApiKeyService {
     if (!rawKey || typeof rawKey !== "string") return null;
 
     const prefix = rawKey.substring(0, PREFIX.length);
-    if (prefix !== PREFIX) return null;
+    const allowed = [PREFIX, ...LEGACY_PREFIXES];
+    if (!allowed.some((p) => prefix === p)) return null;
 
     const allKeys = await ApiKey.find({ status: "active" }).lean();
 
