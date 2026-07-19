@@ -126,8 +126,31 @@ export async function getConnectedAppReportedOrders(req, res) {
 export async function getConnectedAppAnalytics(req, res) {
   try {
     const { timeframe } = req.query;
-    const result = await crossAppBridgeService.getAnalyticsFromApp(req.params.appId, timeframe);
-    res.json(result);
+    const raw = await crossAppBridgeService.getAnalyticsFromApp(req.params.appId, timeframe);
+    const a = raw.analytics || raw;
+    const transformed = {
+      success: true,
+      analytics: {
+        orders: {
+          total: a.totalOrders || 0,
+          completed: a.completedOrders || 0,
+          processing: 0,
+          pending: 0,
+          confirmed: 0,
+          cancelled: 0,
+          partiallyCompleted: 0,
+          failed: 0,
+          today: { total: 0, completed: 0, processing: 0, pending: 0, cancelled: 0, confirmed: 0, partiallyCompleted: 0 },
+          thisMonth: { total: a.totalOrders || 0, completed: a.completedOrders || 0 },
+        },
+        revenue: {
+          total: a.totalRevenue || 0,
+          thisMonth: a.totalRevenue || 0,
+          today: 0,
+        },
+      },
+    };
+    res.json(transformed);
   } catch (error) {
     logger.error(`Cross-app get analytics error: ${error.message}`);
     res.status(getStatusFromError(error)).json({ success: false, message: error.message });

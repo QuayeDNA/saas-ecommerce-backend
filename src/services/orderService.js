@@ -1376,8 +1376,10 @@ class OrderService {
       const startDate = new Date(
         endDate.getTime() - days * 24 * 60 * 60 * 1000,
       );
+      const match = { createdAt: { $gte: startDate, $lte: endDate } };
+      if (tenantId) match.tenantId = tenantId;
       const [stats] = await Order.aggregate([
-        { $match: { tenantId, createdAt: { $gte: startDate, $lte: endDate } } },
+        { $match: match },
         {
           $group: {
             _id: null,
