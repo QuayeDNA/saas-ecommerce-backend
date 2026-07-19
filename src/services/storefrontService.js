@@ -28,6 +28,7 @@ import {
   AUDIT_CATEGORIES,
   AUDIT_SEVERITIES,
 } from "../constants/audit.js";
+import { ORDER_STATUSES } from "../constants/orderStatuses.js";
 
 class StorefrontService {
   // =========================================================================
@@ -82,6 +83,45 @@ class StorefrontService {
       logger.warn(
         `[StorefrontService] WebSocket notify failed for agent ${agentId}: ${err.message}`,
       );
+    }
+  }
+
+  // ─── Known-List Helpers ──────────────────────────────────────────────────────
+
+  async _removeFromKnownMtnList(phone) {
+    if (!phone) return;
+    const KnownMtnNumber = (await import("../models/KnownMtnNumber.js")).default;
+    let normalized = phone.replace(/[\s\-\(\)\+]/g, "");
+    if (normalized.startsWith("233")) normalized = "0" + normalized.slice(3);
+    await KnownMtnNumber.deleteOne({ phone: normalized });
+  }
+
+  async _addToKnownMtnList(phone) {
+    if (!phone) return;
+    const KnownMtnNumber = (await import("../models/KnownMtnNumber.js")).default;
+    let normalized = phone.replace(/[\s\-\(\)\+]/g, "");
+    if (normalized.startsWith("233")) normalized = "0" + normalized.slice(3);
+    const exists = await KnownMtnNumber.exists({ phone: normalized });
+    if (!exists) {
+      await KnownMtnNumber.create({ phone: normalized });
+    }
+  }
+
+  _getMtnPhonesFromOrder(order) {
+    const phones = new Set();
+    for (const item of (order.items || [])) {
+      const provider = item.packageDetails?.provider || item.provider;
+      if (provider === "MTN" && item.customerPhone) {
+        phones.add(item.customerPhone);
+      }
+    }
+    return [...phones];
+  }
+
+  async addMtnNumbersToKnownList(order) {
+    const mtnPhones = this._getMtnPhonesFromOrder(order);
+    for (const phone of mtnPhones) {
+      await this._addToKnownMtnList(phone);
     }
   }
 
@@ -289,7 +329,7 @@ class StorefrontService {
     const active = await Order.countDocuments({
       orderType: "storefront",
       "storefrontData.storefrontId": storefrontId,
-      status: { $in: ["pending", "confirmed", "processing"] },
+      status: { $in: [ORDER_STATUSES.PENDING, ORDER_STATUSES.CONFIRMED, ORDER_STATUSES.PROCESSING] },
     });
     if (active > 0)
       throw new Error(
@@ -609,7 +649,7 @@ class StorefrontService {
           $match: {
             orderType: "storefront",
             "storefrontData.storefrontId": storefront._id,
-            status: "completed",
+            status: ORDER_STATUSES.COMPLETED,
           },
         },
         { $unwind: "$storefrontData.items" },
@@ -929,7 +969,7 @@ class StorefrontService {
       total: chargeTotal,
       // Paystack orders are pending_payment until webhook/verify confirms payment.
       // Mobile money orders are also pending_payment — agent verifies manually.
-      status: "pending_payment",
+      status: ORDER_STATUSES.PENDING_PAYMENT,
       tenantId: storefront.agentId._id || storefront.agentId,
       createdBy: storefront.agentId._id || storefront.agentId,
     });
@@ -1135,7 +1175,7 @@ class StorefrontService {
     order.storefrontData.paymentMethod.gateway = "paystack";
     order.storefrontData.paymentMethod.reference = reference;
     order.paymentStatus = "paid";
-    order.status = "pending"; // enters admin processing queue
+    order.status = ORDER_STATUSES.PENDING; // enters admin processing queue
     order.metadata = order.metadata || {};
     order.metadata.paystack = {
       reference,
@@ -1302,9 +1342,9 @@ class StorefrontService {
 
     if (order.storefrontData.paymentMethod.verified)
       throw new Error("Payment already verified for this order");
-    if (order.status === "cancelled")
+    if (order.status === ORDER_STATUSES.CANCELLED)
       throw new Error("Cannot verify a cancelled order");
-    if (order.status !== "pending_payment")
+    if (order.status !== ORDER_STATUSES.PENDING_PAYMENT)
       throw new Error("Order is not awaiting payment");
 
     // Paystack orders should go through processPaystackPayment — not this path
@@ -1343,7 +1383,7 @@ class StorefrontService {
     order.storefrontData.paymentMethod.verificationNotes =
       verificationData.notes || "";
     order.paymentStatus = "paid";
-    order.status = "pending"; // enters admin processing queue
+    order.status = ORDER_STATUSES.PENDING; // enters admin processing queue
 
     await order.save();
 
@@ -1425,8 +1465,16 @@ class StorefrontService {
     if (!storefront || storefront.agentId.toString() !== userId.toString())
       throw new Error("Not authorized");
 
-    if (["completed", "processing"].includes(order.status)) {
+    if ([ORDER_STATUSES.COMPLETED, ORDER_STATUSES.PROCESSING].includes(order.status)) {
       throw new Error("Cannot reject an order already being processed");
+    }
+
+    // Remove MTN phones from known list when cancelling from WIP
+    if (order.status === ORDER_STATUSES.WORK_IN_PROGRESS) {
+      const mtnPhones = this._getMtnPhonesFromOrder(order);
+      for (const phone of mtnPhones) {
+        await this._removeFromKnownMtnList(phone);
+      }
     }
 
     // Refund wallet if agent already paid (manual verify path only)
@@ -1459,7 +1507,7 @@ class StorefrontService {
       }
     }
 
-    order.status = "cancelled";
+    order.status = ORDER_STATUSES.CANCELLED;
     order.storefrontData.paymentMethod.verificationNotes = rejectionReason;
     return order.save();
   }
@@ -1503,7 +1551,7 @@ class StorefrontService {
           totalRevenue: {
             $sum: {
               $cond: [
-                { $eq: ["$status", "completed"] },
+                { $eq: ["$status", ORDER_STATUSES.COMPLETED] },
                 {
                   $add: [
                     "$storefrontData.totalTierCost",
@@ -1518,7 +1566,7 @@ class StorefrontService {
           totalFulfilmentCost: {
             $sum: {
               $cond: [
-                { $eq: ["$status", "completed"] },
+                { $eq: ["$status", ORDER_STATUSES.COMPLETED] },
                 "$storefrontData.totalTierCost",
                 0,
               ],
@@ -1530,7 +1578,7 @@ class StorefrontService {
               $cond: [
                 {
                   $and: [
-                    { $eq: ["$status", "completed"] },
+                    { $eq: ["$status", ORDER_STATUSES.COMPLETED] },
                     {
                       $gte: [
                         { $ifNull: ["$processingCompletedAt", "$updatedAt"] },
@@ -1552,22 +1600,22 @@ class StorefrontService {
           },
           averageOrderValue: { $avg: "$total" },
           completedOrders: {
-            $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] },
+            $sum: { $cond: [{ $eq: ["$status", ORDER_STATUSES.COMPLETED] }, 1, 0] },
           },
           confirmedOrders: {
-            $sum: { $cond: [{ $eq: ["$status", "confirmed"] }, 1, 0] },
+            $sum: { $cond: [{ $eq: ["$status", ORDER_STATUSES.CONFIRMED] }, 1, 0] },
           },
           pendingOrders: {
-            $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] },
+            $sum: { $cond: [{ $eq: ["$status", ORDER_STATUSES.PENDING] }, 1, 0] },
           },
           processingOrders: {
-            $sum: { $cond: [{ $eq: ["$status", "processing"] }, 1, 0] },
+            $sum: { $cond: [{ $eq: ["$status", ORDER_STATUSES.PROCESSING] }, 1, 0] },
           },
           cancelledOrders: {
-            $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] },
+            $sum: { $cond: [{ $eq: ["$status", ORDER_STATUSES.CANCELLED] }, 1, 0] },
           },
           failedOrders: {
-            $sum: { $cond: [{ $eq: ["$status", "failed"] }, 1, 0] },
+            $sum: { $cond: [{ $eq: ["$status", ORDER_STATUSES.FAILED] }, 1, 0] },
           },
         },
       },
@@ -1811,7 +1859,7 @@ class StorefrontService {
             _id: null,
             totalOrders: { $sum: 1 },
             completedOrders: {
-              $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] },
+              $sum: { $cond: [{ $eq: ["$status", ORDER_STATUSES.COMPLETED] }, 1, 0] },
             },
             totalRevenue: {
               $sum: {
@@ -1943,7 +1991,7 @@ class StorefrontService {
     const active = await Order.countDocuments({
       orderType: "storefront",
       "storefrontData.storefrontId": storefrontId,
-      status: { $in: ["pending", "confirmed", "processing"] },
+      status: { $in: [ORDER_STATUSES.PENDING, ORDER_STATUSES.CONFIRMED, ORDER_STATUSES.PROCESSING] },
     });
     if (active > 0)
       throw new Error(
@@ -2007,7 +2055,7 @@ class StorefrontService {
         {
           $match: {
             orderType: "storefront",
-            status: { $in: ["completed", "confirmed"] },
+            status: { $in: [ORDER_STATUSES.COMPLETED, ORDER_STATUSES.CONFIRMED] },
           },
         },
         {
@@ -2115,10 +2163,10 @@ class StorefrontService {
     // normalize item processing status in case the order jumped directly to a final state
     const items = (sf.items || []).map((item) => {
       let proc = item.processingStatus;
-      if (["completed", "partially_completed"].includes(order.status)) {
+      if ([ORDER_STATUSES.COMPLETED, ORDER_STATUSES.PARTIALLY_COMPLETED].includes(order.status)) {
         // once the order completes we treat all children as completed as well
         if (proc !== "completed" && proc !== "failed") proc = "completed";
-      } else if (order.status === "failed") {
+      } else if (order.status === ORDER_STATUSES.FAILED) {
         proc = "failed";
       }
       return {
@@ -2158,38 +2206,38 @@ class StorefrontService {
     }
 
     if (
-      ["processing", "completed", "partially_completed", "failed"].includes(
+      [ORDER_STATUSES.PROCESSING, ORDER_STATUSES.COMPLETED, ORDER_STATUSES.PARTIALLY_COMPLETED, ORDER_STATUSES.FAILED].includes(
         order.status,
       )
     ) {
       timeline.push({
         event: "Processing bundle delivery",
         at: order.processingStartedAt || null,
-        done: ["completed", "partially_completed"].includes(order.status),
-        failed: order.status === "failed",
+        done: [ORDER_STATUSES.COMPLETED, ORDER_STATUSES.PARTIALLY_COMPLETED].includes(order.status),
+        failed: order.status === ORDER_STATUSES.FAILED,
       });
     }
 
     if (
-      order.status === "completed" ||
-      order.status === "partially_completed"
+      order.status === ORDER_STATUSES.COMPLETED ||
+      order.status === ORDER_STATUSES.PARTIALLY_COMPLETED
     ) {
       timeline.push({
         event:
-          order.status === "completed"
+          order.status === ORDER_STATUSES.COMPLETED
             ? "Bundle delivered"
             : "Partially delivered",
         at: order.processingCompletedAt || order.updatedAt,
         done: true,
       });
-    } else if (order.status === "failed") {
+    } else if (order.status === ORDER_STATUSES.FAILED) {
       timeline.push({
         event: "Delivery failed",
         at: order.updatedAt,
         done: false,
         failed: true,
       });
-    } else if (order.status === "cancelled") {
+    } else if (order.status === ORDER_STATUSES.CANCELLED) {
       timeline.push({
         event: "Order cancelled",
         at: order.updatedAt,
