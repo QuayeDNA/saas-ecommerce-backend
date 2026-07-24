@@ -397,11 +397,8 @@ class OrderService {
           `Wallet deducted GH₵${orderTotal.toFixed(2)} for new order (${customerPhone})`,
         );
       } else {
-        orderStatus = "draft";
-        paymentStatus = "pending";
-        logger.info(
-          `Order created as draft — insufficient balance. ` +
-            `Required: GH₵${orderTotal.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`,
+        throw new Error(
+          `Insufficient wallet balance. Required: GH₵${orderTotal.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`,
         );
       }
 
@@ -436,11 +433,7 @@ class OrderService {
       });
 
       await saveOrderWithRetry(order, session);
-      logger.info(
-        orderStatus === "draft"
-          ? `Draft order created (insufficient balance). Required: GH₵${orderTotal.toFixed(2)}`
-          : `Order created: ${order.orderNumber}`,
-      );
+      logger.info(`Order created: ${order.orderNumber}`);
 
       return {
         order: order.toObject(),
@@ -518,7 +511,7 @@ class OrderService {
       await notificationService.createInAppNotification(
         userId.toString(),
         "Order Created Successfully",
-        `Order ${order.orderNumber} ${paymentStatus === "paid" ? "created and paid" : "created as draft"}. GH₵${orderTotal.toFixed(2)} ${paymentStatus === "paid" ? "deducted" : "required"}.`,
+        `Order ${order.orderNumber} created and paid. GH₵${orderTotal.toFixed(2)} deducted.`,
         "info",
         {
           orderId: order._id.toString(),
@@ -674,37 +667,33 @@ class OrderService {
         (sum, item) => sum + getPriceForUserType(item.bundle, user.userType),
         0,
       );
-      const canProcessAll = user.walletBalance >= totalOrderAmount;
-
-      if (!canProcessAll) {
-        logger.info(
-          `Insufficient balance for bulk order. Required: GH₵${totalOrderAmount.toFixed(2)}, ` +
-            `Available: GH₵${user.walletBalance.toFixed(2)}. Creating as drafts.`,
-        );
-      } else {
-        const idempotencyKey = `bulk_order_${userId}_${orderItems.length}_${Date.now()}`;
-        await walletService.debitWallet(
-          userId.toString(),
-          totalOrderAmount,
-          `Bulk order payment for ${orderItems.length} items`,
-          null,
-          { orderType: "bulk", itemCount: orderItems.length, idempotencyKey },
-          session,
-        );
-        logger.info(
-          `Wallet deducted GH₵${totalOrderAmount.toFixed(2)} for bulk order (${orderItems.length} items)`,
+      if (user.walletBalance < totalOrderAmount) {
+        throw new Error(
+          `Insufficient wallet balance. Required: GH₵${totalOrderAmount.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`,
         );
       }
+
+      const idempotencyKey = `bulk_order_${userId}_${orderItems.length}_${Date.now()}`;
+      await walletService.debitWallet(
+        userId.toString(),
+        totalOrderAmount,
+        `Bulk order payment for ${orderItems.length} items`,
+        null,
+        { orderType: "bulk", itemCount: orderItems.length, idempotencyKey },
+        session,
+      );
+      logger.info(
+        `Wallet deducted GH₵${totalOrderAmount.toFixed(2)} for bulk order (${orderItems.length} items)`,
+      );
 
       // Second pass: create orders
       for (const { bundle, parsed, index } of orderItems) {
         const userPrice = getPriceForUserType(bundle, user.userType);
-        const orderStatus = canProcessAll
-          ? user.userType === "super_admin"
+        const orderStatus =
+          user.userType === "super_admin"
             ? "confirmed"
-            : "pending"
-          : "draft";
-        const paymentStatus = canProcessAll ? "paid" : "pending";
+            : "pending";
+        const paymentStatus = "paid";
 
         try {
           const order = new Order({
@@ -891,16 +880,8 @@ class OrderService {
         });
       }
 
-      if (status === "draft") {
-        if (currentUserId) query.createdBy = currentUserId;
-        else query.status = { $ne: "draft" };
-      } else if (!status && currentUserId) {
-        query.$or = [
-          { status: { $nin: ["draft", "pending_payment"] } },
-          { status: "draft", createdBy: currentUserId },
-        ];
-      } else if (!status) {
-        query.status = { $nin: ["draft", "pending_payment"] };
+      if (!status) {
+        query.status = { $ne: "pending_payment" };
       }
 
       if (startDate || endDate) {
@@ -1415,190 +1396,6 @@ class OrderService {
     }
   }
 
-  // ─── Draft Order Processing ───────────────────────────────────────────────────
-
-  async processDraftOrders(userId, tenantId) {
-    const result = await this.executeWithTransaction(async (session) => {
-      const draftOrders = session
-        ? await Order.find({
-            createdBy: userId,
-            tenantId,
-            status: "draft",
-          }).session(session)
-        : await Order.find({ createdBy: userId, tenantId, status: "draft" });
-      if (draftOrders.length === 0)
-        return {
-          processed: 0,
-          message: "No draft orders found",
-          totalAmount: 0,
-        };
-
-      const user = session
-        ? await User.findById(userId).session(session)
-        : await User.findById(userId);
-      if (!user) throw new Error("User not found");
-
-      const totalRequired = draftOrders.reduce(
-        (sum, o) => sum + o.items.reduce((s, i) => s + i.totalPrice, 0),
-        0,
-      );
-      if (user.walletBalance < totalRequired) {
-        throw new Error(
-          `Insufficient balance. Required: GH₵${totalRequired.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`,
-        );
-      }
-
-      let processed = 0;
-      for (const order of draftOrders) {
-        const orderTotal = order.items.reduce((s, i) => s + i.totalPrice, 0);
-        await walletService.debitWallet(
-          userId.toString(),
-          orderTotal,
-          `Payment for order ${order.orderNumber}`,
-          order._id,
-          { orderType: order.orderType },
-          session,
-        );
-        order.status = "pending";
-        order.paymentStatus = "paid";
-        session ? await order.save({ session }) : await order.save();
-        processed++;
-      }
-      logger.info(`Processed ${processed} draft orders for user ${userId}`);
-      return {
-        processed,
-        message: `Successfully processed ${processed} draft orders`,
-        totalAmount: totalRequired,
-        user: user.toObject(),
-      };
-    });
-
-    try {
-      const { processed, totalAmount, user } = result;
-      if (processed > 0) {
-        await notificationService.createInAppNotification(
-          userId.toString(),
-          "Draft Orders Processed",
-          `Successfully processed ${processed} draft orders. GH₵${totalAmount.toFixed(2)} deducted.`,
-          "success",
-          {
-            processedCount: processed,
-            totalAmount,
-            type: "draft_orders_processed",
-            navigationLink: this.getNavigationLink(user.userType, "orders"),
-          },
-        );
-        const superAdmins = await User.find(
-          { userType: "super_admin" },
-          "userType",
-        );
-        for (const admin of superAdmins) {
-          await notificationService.createInAppNotification(
-            admin._id.toString(),
-            "Draft Orders Processed",
-            `User ${user.email} processed ${processed} draft orders. Total: GH₵${totalAmount.toFixed(2)}`,
-            "info",
-            {
-              processedCount: processed,
-              totalAmount,
-              type: "draft_orders_processed",
-              navigationLink: this.getNavigationLink(admin.userType, "orders"),
-            },
-          );
-        }
-      }
-    } catch (err) {
-      logger.error(`Draft orders notification failed: ${err.message}`);
-    }
-
-    return {
-      processed: result.processed,
-      message: result.message,
-      totalAmount: result.totalAmount,
-    };
-  }
-
-  async processSingleDraftOrder(orderId, userId, tenantId) {
-    const result = await this.executeWithTransaction(async (session) => {
-      const order = session
-        ? await Order.findOne({
-            _id: orderId,
-            createdBy: userId,
-            tenantId,
-            status: "draft",
-          }).session(session)
-        : await Order.findOne({
-            _id: orderId,
-            createdBy: userId,
-            tenantId,
-            status: "draft",
-          });
-      if (!order) throw new Error("Draft order not found or already processed");
-
-      const user = session
-        ? await User.findById(userId).session(session)
-        : await User.findById(userId);
-      if (!user) throw new Error("User not found");
-
-      const orderTotal = order.items.reduce((s, i) => s + i.totalPrice, 0);
-      if (user.walletBalance < orderTotal)
-        throw new Error(
-          `Insufficient balance. Required: GH₵${orderTotal.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`,
-        );
-
-      await walletService.debitWallet(
-        userId.toString(),
-        orderTotal,
-        `Payment for order ${order.orderNumber}`,
-        order._id,
-        { orderType: order.orderType },
-        session,
-      );
-      order.status = "pending";
-      order.paymentStatus = "paid";
-      session ? await order.save({ session }) : await order.save();
-
-      logger.info(
-        `Processed single draft order ${order.orderNumber} for user ${userId}`,
-      );
-      return {
-        processed: 1,
-        message: `Draft order ${order.orderNumber} moved to pending`,
-        totalAmount: orderTotal,
-        order: order.toObject(),
-        user: user.toObject(),
-      };
-    });
-
-    try {
-      await notificationService.createInAppNotification(
-        userId.toString(),
-        "Draft Order Processed",
-        `Draft order ${result.order.orderNumber} moved to pending. GH₵${result.totalAmount.toFixed(2)} deducted.`,
-        "success",
-        {
-          orderId: result.order._id.toString(),
-          orderNumber: result.order.orderNumber,
-          totalAmount: result.totalAmount,
-          type: "draft_order_processed",
-          navigationLink: this.getNavigationLink(
-            result.user.userType,
-            "orders",
-          ),
-        },
-      );
-    } catch (err) {
-      logger.error(`Draft order notification failed: ${err.message}`);
-    }
-
-    return {
-      processed: result.processed,
-      message: result.message,
-      totalAmount: result.totalAmount,
-      order: result.order,
-    };
-  }
-
   // ─── Known-List Helpers ──────────────────────────────────────────────────────
 
   async _removeFromKnownMtnList(phone) {
@@ -1786,7 +1583,6 @@ class OrderService {
         order: order.toObject(),
         orderCreator: order.createdBy,
         canceller: userId,
-        isDraft: false,
         refundAmount,
         refundMethod,
       };
@@ -1797,7 +1593,6 @@ class OrderService {
         order,
         orderCreator,
         canceller,
-        isDraft,
         refundAmount,
         refundMethod,
       } = result;
@@ -1809,57 +1604,38 @@ class OrderService {
       const cancellerName =
         cancellerUser?.fullName || cancellerUser?.email || "Admin";
 
-      if (isDraft) {
-        if (creatorUser) {
-          await notificationService.createInAppNotification(
-            creatorUser._id.toString(),
-            "Draft Order Deleted",
-            `Draft order ${order.orderNumber} deleted by ${cancellerName}.`,
-            "info",
-            {
-              orderId: order._id.toString(),
-              orderNumber: order.orderNumber,
-              type: "draft_order_deleted",
-              navigationLink: this.getNavigationLink(
-                creatorUser.userType,
-                "orders",
-              ),
-            },
-          );
-        }
-      } else {
-        let msg = `Order ${order.orderNumber} cancelled by ${cancellerName}. Reason: ${reason || "No reason provided"}`;
-        if (refundAmount > 0) {
-          msg +=
-            refundMethod === "paystack"
-              ? `\n\nRefund: GH₵${refundAmount} sent back to the customer via Paystack.`
-              : `\n\nRefund: GH₵${refundAmount} credited to your wallet.`;
-        }
-        if (creatorUser) {
-          await notificationService.createInAppNotification(
-            creatorUser._id.toString(),
-            "Order Cancelled",
-            msg,
-            "error",
-            {
-              orderId: order._id.toString(),
-              orderNumber: order.orderNumber,
-              cancelledBy: cancellerName,
-              reason: reason || "No reason provided",
-              refundAmount,
-              type: "order_cancelled",
-              navigationLink: this.getNavigationLink(
-                creatorUser.userType,
-                "orders",
-              ),
-            },
-          );
-        }
-        const superAdmins = await User.find(
-          { userType: "super_admin" },
-          "userType",
+      let msg = `Order ${order.orderNumber} cancelled by ${cancellerName}. Reason: ${reason || "No reason provided"}`;
+      if (refundAmount > 0) {
+        msg +=
+          refundMethod === "paystack"
+            ? `\n\nRefund: GH₵${refundAmount} sent back to the customer via Paystack.`
+            : `\n\nRefund: GH₵${refundAmount} credited to your wallet.`;
+      }
+      if (creatorUser) {
+        await notificationService.createInAppNotification(
+          creatorUser._id.toString(),
+          "Order Cancelled",
+          msg,
+          "error",
+          {
+            orderId: order._id.toString(),
+            orderNumber: order.orderNumber,
+            cancelledBy: cancellerName,
+            reason: reason || "No reason provided",
+            refundAmount,
+            type: "order_cancelled",
+            navigationLink: this.getNavigationLink(
+              creatorUser.userType,
+              "orders",
+            ),
+          },
         );
-        for (const admin of superAdmins) {
+      }
+      const superAdmins = await User.find(
+        { userType: "super_admin" },
+        "userType",
+      );
+      for (const admin of superAdmins) {
           let adminMsg = `Order ${order.orderNumber} cancelled by ${cancellerName}. Reason: ${reason || "No reason provided"}`;
           if (refundAmount > 0) {
             adminMsg +=
@@ -1911,7 +1687,6 @@ class OrderService {
             );
           }
         }
-      }
     } catch (err) {
       logger.error(`Order cancellation notification failed: ${err.message}`);
     }

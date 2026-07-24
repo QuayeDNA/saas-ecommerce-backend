@@ -898,7 +898,7 @@ class UserController {
           pending: pendingOrders,
           processing: processingOrders,
           cancelled: cancelledOrders,
-          draft: 0,
+
           failed: failedOrders,
           today: todaysOrders,
           thisWeek: ordersThisWeek,
@@ -1185,8 +1185,9 @@ class UserController {
 
         walletDeducted = true;
       } else {
-        // Insufficient balance - create as draft
-        orderStatus = "draft";
+        throw new Error(
+          `Insufficient wallet balance. Required: GH₵${fee.toFixed(2)}, Available: GH₵${user.walletBalance.toFixed(2)}`,
+        );
       }
 
       // Create the AFA order
@@ -1332,7 +1333,7 @@ class UserController {
         await notificationService.createInAppNotification(
           userId.toString(),
           "AFA Order Created Successfully",
-          `AFA order ${order.orderNumber} ${order.paymentStatus === "paid" ? "created and paid" : "created as draft"}. GH₵${order.total.toFixed(2)} ${order.paymentStatus === "paid" ? "deducted" : "required"}.`,
+          `AFA order ${order.orderNumber} created and paid. GH₵${order.total.toFixed(2)} deducted.`,
           "info",
           {
             orderId: order._id.toString(),

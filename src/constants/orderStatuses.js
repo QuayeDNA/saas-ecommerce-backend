@@ -1,5 +1,4 @@
 const ORDER_STATUSES = Object.freeze({
-  DRAFT: "draft",
   PENDING: "pending",
   PENDING_PAYMENT: "pending_payment",
   CONFIRMED: "confirmed",
@@ -21,7 +20,6 @@ const TERMINAL_STATUSES = Object.freeze([
 const CANCELLABLE_STATUSES = Object.freeze([
   ORDER_STATUSES.PENDING,
   ORDER_STATUSES.CONFIRMED,
-  ORDER_STATUSES.DRAFT,
   ORDER_STATUSES.WORK_IN_PROGRESS,
 ]);
 

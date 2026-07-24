@@ -428,9 +428,9 @@ class AnalyticsService {
     const thisMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
     const [allTimeStats, todayStats, thisMonthStats] = await Promise.all([
-      // ALL TIME stats (not limited by date range) — exclude draft/pending_payment
+      // ALL TIME stats (not limited by date range) — exclude pending_payment
       Order.aggregate([
-        { $match: { status: { $nin: ["draft", "pending_payment"] } } },
+        { $match: { status: { $nin: ["pending_payment"] } } },
         {
           $group: {
             _id: null,
@@ -474,7 +474,7 @@ class AnalyticsService {
         {
           $match: {
             createdAt: { $gte: todayStart, $lte: todayEnd },
-            status: { $nin: ["draft", "pending_payment"] },
+            status: { $nin: ["pending_payment"] },
           },
         },
         {
@@ -510,7 +510,7 @@ class AnalyticsService {
         {
           $match: {
             createdAt: { $gte: thisMonthStart, $lte: thisMonthEnd },
-            status: { $nin: ["draft", "pending_payment"] },
+            status: { $nin: ["pending_payment"] },
           },
         },
         {
@@ -1175,7 +1175,7 @@ class AnalyticsService {
   async getGrowthStatistics(dateRange, previousDateRange) {
     const currentOrderMatch = {
       createdAt: { $gte: dateRange.startDate, $lte: dateRange.endDate },
-      status: { $nin: ["draft", "pending_payment"] },
+      status: { $nin: ["pending_payment"] },
     };
 
     const previousOrderMatch = {
@@ -1183,7 +1183,7 @@ class AnalyticsService {
         $gte: previousDateRange.startDate,
         $lte: previousDateRange.endDate,
       },
-      status: { $nin: ["draft", "pending_payment"] },
+      status: { $nin: ["pending_payment"] },
     };
 
     const [
@@ -1646,7 +1646,7 @@ class AnalyticsService {
           {
             $match: {
               createdAt: { $gte: startDate, $lte: endDate },
-              status: { $nin: ["draft", "pending_payment"] },
+              status: { $nin: ["pending_payment"] },
             },
           },
           {
@@ -1688,7 +1688,7 @@ class AnalyticsService {
           {
             $match: {
               createdAt: { $gte: startDate, $lte: endDate },
-              status: { $nin: ["draft", "pending_payment"] },
+              status: { $nin: ["pending_payment"] },
             },
           },
           {
@@ -1777,7 +1777,7 @@ class AnalyticsService {
               ? { tenantId: new mongoose.Types.ObjectId(tenantId) }
               : {}),
             createdAt: { $gte: startDate, $lte: endDate },
-            status: { $nin: ["draft", "pending_payment"] },
+            status: { $nin: ["pending_payment"] },
           },
         },
         {
@@ -1817,7 +1817,7 @@ class AnalyticsService {
               ? { tenantId: new mongoose.Types.ObjectId(tenantId) }
               : {}),
             createdAt: { $gte: todayStart, $lte: todayEnd },
-            status: { $nin: ["draft", "pending_payment"] },
+            status: { $nin: ["pending_payment"] },
           },
         },
         {
@@ -2043,7 +2043,7 @@ class AnalyticsService {
             ? { tenantId: new mongoose.Types.ObjectId(tenantId) }
             : {}),
           createdAt: { $gte: startDate, $lte: endDate },
-          status: { $nin: ["draft", "pending_payment"] },
+          status: { $nin: ["pending_payment"] },
         },
       },
       {

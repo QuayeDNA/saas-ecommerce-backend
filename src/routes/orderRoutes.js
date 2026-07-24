@@ -121,22 +121,6 @@ router.patch(
   orderController.updateOrderStatus,
 );
 
-// Process draft orders when wallet is topped up
-router.post(
-  "/process-drafts",
-  authenticate,
-  authorize(...BUSINESS_ROLES, "super_admin"),
-  orderController.processDraftOrders,
-);
-
-// Process single draft order
-router.post(
-  "/process-draft/:orderId",
-  authenticate,
-  authorize(...BUSINESS_ROLES, "super_admin"),
-  orderController.processSingleDraftOrder,
-);
-
 // Update reception status - RESTRICTED TO SUPER ADMIN ONLY
 router.patch(
   "/:id/reception-status",

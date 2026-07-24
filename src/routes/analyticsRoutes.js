@@ -186,7 +186,7 @@ router.get(
       const [todayOrders, todayRevenue, todayUsers] = await Promise.all([
         Order.countDocuments({
           createdAt: { $gte: today, $lt: tomorrow },
-          status: { $nin: ["draft", "pending_payment"] },
+          status: { $nin: ["pending_payment"] },
         }),
         Order.aggregate([
           {

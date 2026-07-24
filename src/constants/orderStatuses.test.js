@@ -9,7 +9,6 @@ import {
 
 describe("Order Status Constants", () => {
   it("should include all expected status values", () => {
-    expect(ORDER_STATUSES.DRAFT).toBe("draft");
     expect(ORDER_STATUSES.PENDING).toBe("pending");
     expect(ORDER_STATUSES.PENDING_PAYMENT).toBe("pending_payment");
     expect(ORDER_STATUSES.CONFIRMED).toBe("confirmed");

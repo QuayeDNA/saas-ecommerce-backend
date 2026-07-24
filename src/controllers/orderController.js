@@ -483,53 +483,6 @@ class OrderController {
     }
   }
 
-  // Process draft orders when wallet is topped up
-  async processDraftOrders(req, res) {
-    try {
-      const { tenantId, userId } = req.user;
-
-      const result = await orderService.processDraftOrders(userId, tenantId);
-
-      res.json({
-        success: true,
-        message: result.message,
-        ...result,
-      });
-    } catch (error) {
-      logger.error(`Process draft orders failed: ${error.message}`);
-      res.status(400).json({
-        success: false,
-        message: error.message,
-      });
-    }
-  }
-
-  // Process single draft order
-  async processSingleDraftOrder(req, res) {
-    try {
-      const { tenantId, userId } = req.user;
-      const { orderId } = req.params;
-
-      const result = await orderService.processSingleDraftOrder(
-        orderId,
-        userId,
-        tenantId,
-      );
-
-      res.json({
-        success: true,
-        message: result.message,
-        ...result,
-      });
-    } catch (error) {
-      logger.error(`Process single draft order failed: ${error.message}`);
-      res.status(400).json({
-        success: false,
-        message: error.message,
-      });
-    }
-  }
-
   // Update order status manually
   async updateOrderStatus(req, res) {
     try {
