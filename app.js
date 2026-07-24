@@ -97,7 +97,8 @@ app.use(
         "https://www.brytelinks.com",
         "https://directdata.shop",
         "https://test-ecommerce-app-tau.vercel.app",
-        "https://caskmafhub.com"
+        "https://caskmafhub.com",
+        "https://www.caskmafhub.com"
       ].filter(Boolean);
 
       // Normalise — strip trailing slash so exact matches work
