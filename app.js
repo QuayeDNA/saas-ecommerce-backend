@@ -96,7 +96,8 @@ app.use(
         "https://brytelinks.com",
         "https://www.brytelinks.com",
         "https://directdata.shop",
-        "https://test-ecommerce-app-tau.vercel.app"
+        "https://test-ecommerce-app-tau.vercel.app",
+        "https://caskmafhub.com"
       ].filter(Boolean);
 
       // Normalise — strip trailing slash so exact matches work
