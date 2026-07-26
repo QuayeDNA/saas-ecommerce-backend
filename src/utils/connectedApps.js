@@ -10,20 +10,41 @@ export async function getConnectedAppByAppId(appId) {
 
 export async function makeRequest(app, method, path, body = null) {
   const url = `${app.baseUrl.replace(/\/+$/, '')}${path}`;
+
+  let signal;
+  try {
+    signal = AbortSignal.timeout(30000);
+  } catch {
+    signal = undefined;
+  }
+
   const options = {
     method,
     headers: {
       'Authorization': `Bearer ${app.apiKey}`,
       'Content-Type': 'application/json',
     },
-    signal: AbortSignal.timeout(30000),
   };
+  if (signal) options.signal = signal;
   if (body && method !== 'GET') {
     options.body = JSON.stringify(body);
   }
 
-  const response = await fetch(url, options);
-  const data = await response.json();
+  let response;
+  try {
+    response = await fetch(url, options);
+  } catch (fetchError) {
+    throw new Error(`Request to ${url} failed: ${fetchError.message}`);
+  }
+
+  let data;
+  const contentType = response.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    data = await response.json();
+  } else {
+    const text = await response.text();
+    throw new Error(`Non-JSON response from ${url} (HTTP ${response.status}): ${text.slice(0, 500)}`);
+  }
 
   if (!response.ok) {
     throw new Error(data.message || data.error || `Request failed with status ${response.status}`);
