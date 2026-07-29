@@ -46,6 +46,7 @@ import adminMarketplaceRoutes from "./src/routes/adminMarketplaceRoutes.js";
 import webhookRoutes from "./src/routes/webhookRoutes.js";
 import internalRoutes from "./src/routes/internalRoutes.js";
 import crossAppBridgeRoutes from "./src/routes/crossAppBridgeRoutes.js";
+import crossAppBridgeWalletRoutes from "./src/routes/crossAppBridgeWalletRoutes.js";
 import appContextMiddleware from "./src/middlewares/appContext.js";
 import requestContextMiddleware from "./src/middlewares/requestContext.js";
 import auditLogger from "./src/middlewares/auditLogger.js";
@@ -249,6 +250,7 @@ app.use("/api/marketplace/webhooks", webhookRoutes);
 app.use("/api", publicRoutes);
 app.use("/api/internal", internalRoutes);
 app.use("/api", crossAppBridgeRoutes);
+app.use("/api", crossAppBridgeWalletRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 

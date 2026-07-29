@@ -1,6 +1,7 @@
 import express from 'express';
 import { authenticateCrossAppKey } from '../middlewares/authenticateCrossAppKey.js';
 import * as internalOrderController from '../controllers/internalOrderController.js';
+import * as internalWalletController from '../controllers/internalWalletController.js';
 
 const router = express.Router();
 
@@ -21,5 +22,13 @@ router.post('/orders/:id/process-bulk', authenticateCrossAppKey, internalOrderCo
 router.post('/orders/bulk-process', authenticateCrossAppKey, internalOrderController.bulkProcessOrders);
 router.post('/orders/bulk-reception-status', authenticateCrossAppKey, internalOrderController.bulkUpdateReceptionStatus);
 router.get('/orders/analytics/summary', authenticateCrossAppKey, internalOrderController.getAnalytics);
+
+router.get('/wallet/transactions', authenticateCrossAppKey, internalWalletController.getAdminTransactions);
+router.get('/wallet/analytics', authenticateCrossAppKey, internalWalletController.getAnalytics);
+router.get('/wallet/pending-requests', authenticateCrossAppKey, internalWalletController.getPendingRequests);
+router.post('/wallet/top-up', authenticateCrossAppKey, internalWalletController.topUpWallet);
+router.post('/wallet/debit', authenticateCrossAppKey, internalWalletController.debitWallet);
+router.post('/wallet/requests/:transactionId/process', authenticateCrossAppKey, internalWalletController.processTopUpRequest);
+router.get('/wallet/users', authenticateCrossAppKey, internalWalletController.getUsers);
 
 export default router;
