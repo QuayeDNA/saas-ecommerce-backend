@@ -87,7 +87,53 @@ logger.info("Starting SaaS E-Commerce backend...");
 // ─── Security Middleware ──────────────────────────────────────────────────────
 
 app.use(helmet());
-app.use(cors({ origin: true, credentials: true }));
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Gather allowed origins from env + hardcoded
+      const raw = [
+        process.env.FRONTEND_URL,
+        process.env.STOREFRONT_URL,
+        "https://brytelinks.com",
+        "https://www.brytelinks.com",
+        "https://directdata.shop",
+        "https://test-ecommerce-app-tau.vercel.app",
+        "https://caskmafhub.com",
+        "https://www.caskmafhub.com"
+      ].filter(Boolean);
+
+      // Normalise — strip trailing slash so exact matches work
+      const allowed = raw.map((u) => u.replace(/\/+$/, ""));
+
+      // Allow requests with no origin (mobile apps, curl, Postman, etc.)
+      if (!origin) return callback(null, true);
+      // Allow localhost (any port)
+      if (/^https?:\/\/localhost(:\d+)?$/.test(origin)) return callback(null, true);
+      // Allow null origin in dev
+      if (origin === "null" && process.env.NODE_ENV === "development") return callback(null, true);
+      // Allow any Vercel preview
+      if (/^https:\/\/saas-ecommerce[a-z0-9-]*\.vercel\.app$/.test(origin)) return callback(null, true);
+
+      // Exact match (normalised)
+      if (allowed.includes(origin.replace(/\/+$/, ""))) return callback(null, true);
+
+      // Hostname-based match — catches www vs non-www, port variations, etc.
+      try {
+        const originHost = new URL(origin).hostname;
+        const allowedHosts = allowed.map((u) => new URL(u).hostname);
+        if (allowedHosts.some((h) => originHost === h || originHost.endsWith("." + h))) {
+          return callback(null, true);
+        }
+      } catch {
+        // malformed origin — fall through to deny
+      }
+
+      logger.warn(`CORS blocked origin: ${origin}`);
+      callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+  }),
+);
 
 // ─── Body Parsing ─────────────────────────────────────────────────────────────
 
