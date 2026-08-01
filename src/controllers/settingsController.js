@@ -387,6 +387,36 @@ class SettingsController {
   }
 
   // ---------------------------------------------------------------------------
+  // Cross-App Wallet Transfer — Agent Self-Service
+  // ---------------------------------------------------------------------------
+  async getCrossAppTransferSettings(req, res) {
+    try {
+      const settings = await settingsService.getCrossAppTransferSettings();
+      res.json({ success: true, data: settings });
+    } catch (error) {
+      logger.error("Error getting cross-app wallet transfer settings:", error);
+      res.status(500).json({
+        success: false,
+        error: "Failed to get cross-app wallet transfer settings",
+      });
+    }
+  }
+
+  async updateCrossAppTransferSettings(req, res) {
+    try {
+      const settings =
+        await settingsService.updateCrossAppTransferSettings(req.body);
+      res.json({ success: true, data: settings });
+    } catch (error) {
+      logger.error("Error updating cross-app wallet transfer settings:", error);
+      res.status(500).json({
+        success: false,
+        error: "Failed to update cross-app wallet transfer settings",
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // MTN Order Restriction
   // ---------------------------------------------------------------------------
   async getMtnRestrictionSettings(req, res) {
