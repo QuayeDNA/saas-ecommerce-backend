@@ -3,6 +3,7 @@ import express from "express";
 import walletController from "../controllers/walletController.js";
 import payoutController from "../controllers/payoutController.js";
 import momoBridgeController from "../controllers/momoBridgeController.js";
+import walletTransferController from "../controllers/walletTransferController.js";
 import {
   authenticate,
   authorize,
@@ -75,6 +76,34 @@ router.post(
   momoBridgeController.verifyClaim,
 );
 
+// ── Cross-App Wallet Transfer (agent self-service) ───────────────────────────
+router.get(
+  "/transfer/targets",
+  authenticate,
+  authorizeWalletUser,
+  walletTransferController.getTargets,
+);
+router.post(
+  "/transfer",
+  authenticate,
+  authorizeWalletUser,
+  apiEndpointLimits.highFrequency,
+  validate(walletValidation.crossAppTransfer),
+  walletTransferController.createTransfer,
+);
+router.get(
+  "/transfer/history",
+  authenticate,
+  authorizeWalletUser,
+  walletTransferController.getHistory,
+);
+router.post(
+  "/transfer/:reference/recheck",
+  authenticate,
+  authorizeWalletUser,
+  walletTransferController.recheck,
+);
+
 // ── Earnings & payouts ────────────────────────────────────────────────────────
 router.get(
   "/earnings/dashboard",
@@ -130,6 +159,12 @@ router.get(
   authenticate,
   authorize("super_admin"),
   walletController.getAdminTransactions,
+);
+router.get(
+  "/transfers",
+  authenticate,
+  authorize("super_admin"),
+  walletTransferController.adminList,
 );
 
 // Admin payout queue

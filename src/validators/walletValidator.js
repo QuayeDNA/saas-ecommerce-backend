@@ -81,4 +81,29 @@ export const walletValidation = {
       .trim()
       .isLength({ min: 3, max: 100 }).withMessage('Reference must be between 3 and 100 characters'),
   ],
+
+  // ── Cross-App Wallet Transfer (agent self-service) ─────────────────────────
+  crossAppTransfer: [
+    body('appId')
+      .notEmpty().withMessage('Destination app is required')
+      .isString().withMessage('Destination app must be a string')
+      .trim(),
+    body('identifier')
+      .notEmpty().withMessage('Destination identifier is required')
+      .isString().withMessage('Identifier must be a string')
+      .trim()
+      .isLength({ min: 3, max: 200 }).withMessage('Identifier must be between 3 and 200 characters'),
+    body('pin')
+      .notEmpty().withMessage('Security PIN is required')
+      .isLength({ min: 4, max: 6 }).withMessage('PIN must be 4 to 6 digits')
+      .matches(/^\d{4,6}$/).withMessage('PIN must contain only digits'),
+    body('amount')
+      .notEmpty().withMessage('Amount is required')
+      .isFloat({ min: 0.01 }).withMessage('Amount must be a positive number'),
+    body('note')
+      .optional()
+      .isString().withMessage('Note must be a string')
+      .trim()
+      .isLength({ max: 200 }).withMessage('Note must be at most 200 characters'),
+  ],
 };
