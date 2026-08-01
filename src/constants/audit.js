@@ -31,6 +31,7 @@ export const AUDIT_ACTIONS = {
   WALLET_DEBITED: "Wallet Debited",
   WALLET_PAYSTACK_INITIATED: "Paystack Payment Initiated",
   WALLET_PAYSTACK_VERIFIED: "Paystack Payment Verified",
+  WALLET_CROSS_APP_TRANSFER: "Cross-App Wallet Transfer",
 
   // Storefront
   STOREFRONT_CREATED: "Storefront Created",
