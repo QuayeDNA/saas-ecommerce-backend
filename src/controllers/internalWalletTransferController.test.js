@@ -153,3 +153,171 @@ describe("verifyDestination", () => {
     });
   });
 });
+
+describe("creditTransfer", () => {
+  it("rejects missing required fields", async () => {
+    const { req, res } = mockReqRes({ body: { userId: "u1", amount: 10 } });
+    await controller.creditTransfer(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("rejects an invalid/expired ticket", async () => {
+    jwt.verify.mockImplementation(() => {
+      throw new Error("jwt expired");
+    });
+    const { req, res } = mockReqRes({
+      body: { userId: "u1", amount: 10, reference: "crossapp_x", ticket: "bad" },
+    });
+    await controller.creditTransfer(req, res);
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith({
+      success: false,
+      message: "Transfer ticket is invalid or expired",
+    });
+  });
+
+  it("rejects a ticket whose userId does not match", async () => {
+    jwt.verify.mockReturnValue({
+      userId: "u1",
+      purpose: "wallet_transfer",
+      scope: "credit_only",
+    });
+    const { req, res } = mockReqRes({
+      body: { userId: "u2", amount: 10, reference: "crossapp_x", ticket: "tk" },
+    });
+    await controller.creditTransfer(req, res);
+    expect(res.status).toHaveBeenCalledWith(403);
+  });
+
+  it("returns the existing transaction idempotently for a completed reference", async () => {
+    jwt.verify.mockReturnValue({
+      userId: "u1",
+      purpose: "wallet_transfer",
+      scope: "credit_only",
+    });
+    const existing = { _id: "txn-1", reference: "crossapp_x" };
+    WalletTransaction.findOne.mockResolvedValue(existing);
+
+    const { req, res } = mockReqRes({
+      body: { userId: "u1", amount: 10, reference: "crossapp_x", ticket: "tk" },
+    });
+    await controller.creditTransfer(req, res);
+
+    expect(walletService.creditWallet).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith({
+      success: true,
+      alreadyProcessed: true,
+      transaction: existing,
+    });
+  });
+
+  it("returns 404 when the user is missing", async () => {
+    jwt.verify.mockReturnValue({
+      userId: "u1",
+      purpose: "wallet_transfer",
+      scope: "credit_only",
+    });
+    WalletTransaction.findOne.mockResolvedValue(null);
+    User.findById.mockResolvedValue(null);
+
+    const { req, res } = mockReqRes({
+      body: { userId: "u1", amount: 10, reference: "crossapp_x", ticket: "tk" },
+    });
+    await controller.creditTransfer(req, res);
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("returns 403 for a non-wallet-enabled destination user", async () => {
+    jwt.verify.mockReturnValue({
+      userId: "u1",
+      purpose: "wallet_transfer",
+      scope: "credit_only",
+    });
+    WalletTransaction.findOne.mockResolvedValue(null);
+    User.findById.mockResolvedValue(
+      makeUser({ userType: "customer", status: "active" }),
+    );
+
+    const { req, res } = mockReqRes({
+      body: { userId: "u1", amount: 10, reference: "crossapp_x", ticket: "tk" },
+    });
+    await controller.creditTransfer(req, res);
+    expect(res.status).toHaveBeenCalledWith(403);
+  });
+
+  it("credits the wallet with transfer metadata and writes the destination ledger", async () => {
+    jwt.verify.mockReturnValue({
+      userId: "u1",
+      purpose: "wallet_transfer",
+      scope: "credit_only",
+    });
+    WalletTransaction.findOne.mockResolvedValue(null);
+    User.findById.mockResolvedValue(makeUser());
+    walletService.creditWallet.mockResolvedValue({ _id: "txn-credit" });
+    CrossAppTransfer.findOneAndUpdate.mockResolvedValue({ _id: "ledger" });
+
+    const { req, res } = mockReqRes({
+      body: {
+        userId: "u1",
+        amount: 25,
+        reference: "crossapp_x",
+        ticket: "tk",
+        metadata: {
+          sourceAppId: "app_a",
+          sourceAppName: "BryteLinks",
+          sourceUserEmail: "agent@a.com",
+        },
+      },
+    });
+    await controller.creditTransfer(req, res);
+
+    expect(walletService.creditWallet).toHaveBeenCalledWith(
+      "u1",
+      25,
+      "Cross-app transfer from BryteLinks (crossapp_x)",
+      null,
+      {
+        adminAction: true,
+        crossApp: true,
+        crossAppTransfer: {
+          reference: "crossapp_x",
+          fromAppId: "app_a",
+          sourceAppName: "BryteLinks",
+        },
+      },
+    );
+    expect(CrossAppTransfer.findOneAndUpdate).toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith({
+      success: true,
+      transaction: { _id: "txn-credit" },
+      reference: "crossapp_x",
+      status: "completed",
+    });
+  });
+});
+
+describe("getTransferStatus", () => {
+  it("returns the transfer when found", async () => {
+    const transfer = { reference: "crossapp_x", status: "completed" };
+    CrossAppTransfer.findOne.mockResolvedValue(transfer);
+
+    const { req, res } = mockReqRes({ params: { reference: "crossapp_x" } });
+    await controller.getTransferStatus(req, res);
+
+    expect(CrossAppTransfer.findOne).toHaveBeenCalledWith({ reference: "crossapp_x" });
+    expect(res.json).toHaveBeenCalledWith({ success: true, transfer });
+  });
+
+  it("returns 404 when not found", async () => {
+    CrossAppTransfer.findOne.mockResolvedValue(null);
+
+    const { req, res } = mockReqRes({ params: { reference: "crossapp_x" } });
+    await controller.getTransferStatus(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith({
+      success: false,
+      message: "Transfer not found",
+    });
+  });
+});

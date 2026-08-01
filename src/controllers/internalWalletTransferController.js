@@ -86,3 +86,154 @@ export async function verifyDestination(req, res) {
       .json({ success: false, message: "Failed to verify destination" });
   }
 }
+
+export async function creditTransfer(req, res) {
+  try {
+    const { userId, amount, reference, ticket, metadata } = req.body;
+
+    if (!userId || !amount || amount <= 0 || !reference || !ticket) {
+      return res.status(400).json({
+        success: false,
+        message: "userId, amount, reference and ticket are required",
+      });
+    }
+
+    const referenceStr = String(reference);
+
+    // ── Ticket verification ────────────────────────────────────────────────
+    let ticketPayload;
+    try {
+      ticketPayload = jwt.verify(ticket, process.env.JWTSECRET);
+    } catch (err) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Transfer ticket is invalid or expired" });
+    }
+
+    if (
+      ticketPayload.purpose !== "wallet_transfer" ||
+      ticketPayload.scope !== "credit_only" ||
+      String(ticketPayload.userId) !== String(userId)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Transfer ticket does not match the destination account",
+      });
+    }
+
+    // ── Idempotency guard (completed credits only) ─────────────────────────
+    const existing = await WalletTransaction.findOne({
+      reference: referenceStr,
+      status: "completed",
+    });
+    if (existing) {
+      return res.json({
+        success: true,
+        alreadyProcessed: true,
+        transaction: existing,
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+    if (!canHaveWallet(user.userType) || user.status !== "active") {
+      return res.status(403).json({
+        success: false,
+        message: "Destination account is not wallet-enabled or is inactive",
+      });
+    }
+
+    const sourceAppId = metadata?.sourceAppId || "unknown";
+    const sourceAppName = metadata?.sourceAppName || sourceAppId;
+    const sourceUserEmail = metadata?.sourceUserEmail || "";
+
+    const transaction = await walletService.creditWallet(
+      userId,
+      parseFloat(amount),
+      `Cross-app transfer from ${sourceAppName} (${referenceStr})`,
+      null,
+      {
+        adminAction: true,
+        crossApp: true,
+        crossAppTransfer: {
+          reference: referenceStr,
+          fromAppId: sourceAppId,
+          sourceAppName,
+        },
+      },
+    );
+
+    // ── Best-effort destination ledger (idempotent by reference) ───────────
+    const localIdentity = getLocalAppIdentity();
+    await CrossAppTransfer.findOneAndUpdate(
+      { reference: referenceStr },
+      {
+        $set: {
+          reference: referenceStr,
+          sourceAppId,
+          destAppId: localIdentity.appId,
+          sourceUserEmail,
+          destUserEmail: user.email || "",
+          amount: parseFloat(amount),
+          status: "completed",
+          sourceAppName,
+          destAppName: localIdentity.name,
+          error: null,
+          completedAt: new Date(),
+        },
+        $setOnInsert: {
+          sourceUserId: null,
+          destUserId: userId,
+        },
+      },
+      { upsert: true, setDefaultsOnInsert: true, new: true },
+    );
+
+    await logAuditAction(null, {
+      userId,
+      action: AUDIT_ACTIONS.WALLET_CROSS_APP_TRANSFER,
+      category: AUDIT_CATEGORIES.WALLET,
+      resource: { userId },
+      metadata: {
+        source: "internal.creditTransfer",
+        reference: referenceStr,
+        amount: parseFloat(amount),
+        fromAppId: sourceAppId,
+        fromAppName: sourceAppName,
+        direction: "credit",
+      },
+      severity: AUDIT_SEVERITIES.INFO,
+    });
+
+    return res.json({
+      success: true,
+      transaction,
+      reference: referenceStr,
+      status: "completed",
+    });
+  } catch (err) {
+    logger.error(`[internal.creditTransfer] ${err.message}`);
+    const status = err.message.includes("not found") ? 404 : 400;
+    return res.status(status).json({ success: false, message: err.message });
+  }
+}
+
+export async function getTransferStatus(req, res) {
+  try {
+    const { reference } = req.params;
+    const transfer = await CrossAppTransfer.findOne({ reference });
+    if (!transfer) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Transfer not found" });
+    }
+    return res.json({ success: true, transfer });
+  } catch (err) {
+    logger.error(`[internal.getTransferStatus] ${err.message}`);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to get transfer status" });
+  }
+}

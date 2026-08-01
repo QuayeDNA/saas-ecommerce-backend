@@ -32,5 +32,7 @@ router.post('/wallet/debit', authenticateCrossAppKey, internalWalletController.d
 router.post('/wallet/requests/:transactionId/process', authenticateCrossAppKey, internalWalletController.processTopUpRequest);
 router.get('/wallet/users', authenticateCrossAppKey, internalWalletController.getUsers);
 router.post('/wallet/verify-destination', authenticateCrossAppKey, internalWalletTransferController.verifyDestination);
+router.post('/wallet/transfer-credit', authenticateCrossAppKey, internalWalletTransferController.creditTransfer);
+router.get('/wallet/transfers/:reference', authenticateCrossAppKey, internalWalletTransferController.getTransferStatus);
 
 export default router;
