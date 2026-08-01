@@ -369,4 +369,13 @@ export function getDefaultEmailTheme() {
   return { ...DEFAULT_EMAIL_BRAND };
 }
 
+export function getLocalAppIdentity() {
+  const appId = normalizeAppId();
+  const manifest = getRawAppConfig(appId)?.manifest || {};
+  return {
+    appId,
+    name: manifest.short_name || manifest.name || appId,
+  };
+}
+
 export { APP_IDS, DEFAULT_APP_ID };

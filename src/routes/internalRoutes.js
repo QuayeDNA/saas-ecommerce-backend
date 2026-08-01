@@ -2,6 +2,7 @@ import express from 'express';
 import { authenticateCrossAppKey } from '../middlewares/authenticateCrossAppKey.js';
 import * as internalOrderController from '../controllers/internalOrderController.js';
 import * as internalWalletController from '../controllers/internalWalletController.js';
+import * as internalWalletTransferController from '../controllers/internalWalletTransferController.js';
 
 const router = express.Router();
 
@@ -30,5 +31,6 @@ router.post('/wallet/top-up', authenticateCrossAppKey, internalWalletController.
 router.post('/wallet/debit', authenticateCrossAppKey, internalWalletController.debitWallet);
 router.post('/wallet/requests/:transactionId/process', authenticateCrossAppKey, internalWalletController.processTopUpRequest);
 router.get('/wallet/users', authenticateCrossAppKey, internalWalletController.getUsers);
+router.post('/wallet/verify-destination', authenticateCrossAppKey, internalWalletTransferController.verifyDestination);
 
 export default router;
