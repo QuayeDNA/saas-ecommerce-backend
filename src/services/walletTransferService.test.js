@@ -29,10 +29,6 @@ vi.mock("../utils/appContextResolver.js", () => ({
   getLocalAppIdentity: vi.fn(),
 }));
 
-vi.mock("../utils/logger.js", () => ({
-  default: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
-}));
-
 vi.mock("../utils/auditLogger.js", () => ({
   logAuditAction: vi.fn(),
 }));

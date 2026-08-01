@@ -4,7 +4,6 @@ import settingsService from "./settingsService.js";
 import walletService from "./walletService.js";
 import CrossAppTransfer from "../models/CrossAppTransfer.js";
 import { getLocalAppIdentity } from "../utils/appContextResolver.js";
-import logger from "../utils/logger.js";
 import { logAuditAction } from "../utils/auditLogger.js";
 import {
   AUDIT_ACTIONS,
