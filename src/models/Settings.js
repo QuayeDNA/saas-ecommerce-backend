@@ -301,6 +301,12 @@ const settingsSchema = new mongoose.Schema(
       default: "",
     },
 
+    // Cross-app wallet transfers — agent self-service moving balance between apps
+    crossAppWalletTransferEnabled: {
+      type: Boolean,
+      default: false,
+    },
+
     // ==========================================================================
     // Integration Key — Cross-App API Authentication
     // ==========================================================================

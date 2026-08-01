@@ -837,6 +837,51 @@ class SettingsService {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Cross-App Wallet Transfer — Agent Self-Service
+  // ---------------------------------------------------------------------------
+
+  async getCrossAppTransferSettings() {
+    try {
+      const settings = await Settings.getInstance();
+      return {
+        crossAppWalletTransferEnabled:
+          settings.crossAppWalletTransferEnabled ?? false,
+      };
+    } catch (error) {
+      logger.error(
+        `Error getting cross-app wallet transfer settings: ${error.message}`,
+      );
+      throw error;
+    }
+  }
+
+  async updateCrossAppTransferSettings(transferSettings) {
+    try {
+      const settings = await Settings.getInstance();
+
+      if (transferSettings.crossAppWalletTransferEnabled !== undefined) {
+        settings.crossAppWalletTransferEnabled = Boolean(
+          transferSettings.crossAppWalletTransferEnabled,
+        );
+      }
+
+      await settings.save();
+
+      logger.info(
+        "Cross-app wallet transfer settings updated:",
+        transferSettings,
+      );
+
+      return this.getCrossAppTransferSettings();
+    } catch (error) {
+      logger.error(
+        `Error updating cross-app wallet transfer settings: ${error.message}`,
+      );
+      throw error;
+    }
+  }
+
   // ─── MTN Order Restriction ─────────────────────────────────────────────────
 
   async getMtnRestrictionSettings() {
