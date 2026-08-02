@@ -121,12 +121,13 @@ describe("verifyDestination", () => {
     });
   });
 
-  it("returns 401 on PIN mismatch", async () => {
+  it("returns 400 on PIN mismatch (not 401, so the source frontend does not treat it as session expiry)", async () => {
     User.findOne.mockResolvedValue(makeUser());
     bcrypt.compare.mockResolvedValue(false);
     const { req, res } = mockReqRes({ body: { identifier: "agent@b.com", pin: "9999" } });
     await controller.verifyDestination(req, res);
-    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.status).not.toHaveBeenCalledWith(401);
     expect(res.json).toHaveBeenCalledWith({
       success: false,
       message: "Invalid security PIN",

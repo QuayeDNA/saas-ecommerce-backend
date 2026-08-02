@@ -46,8 +46,7 @@ class WalletTransferController {
       logger.error(`[walletTransfer.createTransfer] ${err.message}`);
       const message = err.message;
       const status =
-        err.status ||
-        (message.includes("disabled")
+        message.includes("disabled")
           ? 403
           : message.includes("not found")
             ? 404
@@ -58,7 +57,7 @@ class WalletTransferController {
                 : /^Request to .* failed:/.test(message) ||
                     message.includes("Request to")
                   ? 502
-                  : 400);
+                  : err.status || 400;
       return res.status(status).json({ success: false, message });
     }
   }

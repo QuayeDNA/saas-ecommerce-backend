@@ -64,8 +64,10 @@ export async function verifyDestination(req, res) {
     const isPinMatch = await bcrypt.compare(String(pin), user.securityPin);
     if (!isPinMatch) {
       logger.warn(`Invalid destination PIN attempt for identifier: ${trimmed}`);
+      // 400 (client input error), not 401 — a business 401 here would be
+      // propagated to the source frontend and misread as session expiry.
       return res
-        .status(401)
+        .status(400)
         .json({ success: false, message: "Invalid security PIN" });
     }
 

@@ -130,6 +130,18 @@ describe("createTransfer", () => {
     await walletTransferController.createTransfer(req, res);
     expect(res.status).toHaveBeenCalledWith(400);
   });
+
+  it("maps a PIN error to 400 even when the service error carries a 401 status", async () => {
+    User.findById.mockResolvedValue({ _id: "u1", email: "agent@a.com" });
+    const err = new Error("Invalid security PIN");
+    err.status = 401;
+    walletTransferService.createTransfer.mockRejectedValue(err);
+
+    const { req, res } = mockReqRes({ body: { appId: "app_b", identifier: "a@b.com", pin: "9999", amount: 10 } });
+    await walletTransferController.createTransfer(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.status).not.toHaveBeenCalledWith(401);
+  });
 });
 
 describe("getHistory", () => {
