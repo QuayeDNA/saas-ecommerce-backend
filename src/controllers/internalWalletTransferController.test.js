@@ -176,6 +176,23 @@ describe("creditTransfer", () => {
     });
   });
 
+  it("rejects a non-numeric amount", async () => {
+    jwt.verify.mockReturnValue({
+      userId: "u1",
+      purpose: "wallet_transfer",
+      scope: "credit_only",
+    });
+    WalletTransaction.findOne.mockResolvedValue(null);
+    User.findById.mockResolvedValue(makeUser());
+
+    const { req, res } = mockReqRes({
+      body: { userId: "u1", amount: "abc", reference: "crossapp_x", ticket: "tk" },
+    });
+    await controller.creditTransfer(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(walletService.creditWallet).not.toHaveBeenCalled();
+  });
+
   it("rejects a ticket whose userId does not match", async () => {
     jwt.verify.mockReturnValue({
       userId: "u1",
@@ -279,6 +296,7 @@ describe("creditTransfer", () => {
       {
         adminAction: true,
         crossApp: true,
+        idempotencyKey: "crossapp_x",
         crossAppTransfer: {
           reference: "crossapp_x",
           fromAppId: "app_a",

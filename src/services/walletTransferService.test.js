@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../models/CrossAppTransfer.js", () => ({
   default: {
     findOne: vi.fn(),
+    findById: vi.fn(),
     findOneAndUpdate: vi.fn(),
     find: vi.fn(),
     countDocuments: vi.fn(),
@@ -341,6 +342,32 @@ describe("recheckTransfer", () => {
     expect(transfer.save.mock.invocationCallOrder[0]).toBeLessThan(
       walletService.creditWallet.mock.invocationCallOrder[0],
     );
+  });
+
+  it("does not reverse when another recheck already resolved the transfer", async () => {
+    const transfer = {
+      _id: "ledger-1",
+      reference: "crossapp_x",
+      sourceUserId: "src-user-1",
+      amount: 50,
+      destAppId: "app_b",
+      destAppName: "DirectData",
+      status: "pending",
+      save: vi.fn().mockResolvedValue(true),
+    };
+    CrossAppTransfer.findOne.mockResolvedValue(transfer);
+    CrossAppTransfer.findById.mockResolvedValue({ ...transfer, status: "failed" });
+    getConnectedAppByAppId.mockResolvedValue(destApp);
+    const notFound = new Error("Transfer not found");
+    notFound.status = 404;
+    makeRequest.mockRejectedValue(notFound);
+    walletService.creditWallet.mockResolvedValue({ _id: "txn-reversal" });
+
+    const result = await walletTransferService.recheckTransfer("src-user-1", "crossapp_x");
+
+    expect(walletService.creditWallet).not.toHaveBeenCalled();
+    expect(transfer.save).not.toHaveBeenCalled();
+    expect(result.status).toBe("failed");
   });
 
   it("throws 502 and leaves the transfer pending when the destination is unreachable", async () => {

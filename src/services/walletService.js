@@ -117,6 +117,30 @@ class WalletService {
     if (!user) throw new Error("User not found");
     if (amount <= 0) throw new Error("Credit amount must be greater than zero");
 
+    // ── Idempotency guard ────────────────────────────────────────────────────
+    // Prevent double-credit on retry or fallback execution. Mirrors debitWallet:
+    // a caller-generated metadata.idempotencyKey (e.g. the cross-app transfer
+    // reference) is honored so a replayed credit never credits twice.
+    const idempotencyKey = metadata?.idempotencyKey;
+    if (idempotencyKey) {
+      const idempotencyQuery = {
+        user: userId,
+        type: "credit",
+        status: "completed",
+        "metadata.idempotencyKey": idempotencyKey,
+      };
+      const existingTxn = session
+        ? await WalletTransaction.findOne(idempotencyQuery).session(session)
+        : await WalletTransaction.findOne(idempotencyQuery);
+
+      if (existingTxn) {
+        logger.warn(
+          `[WalletService] creditWallet idempotency hit — credit already recorded (txn ${existingTxn._id}). Skipping double-credit.`,
+        );
+        return existingTxn;
+      }
+    }
+
     user.walletBalance += amount;
     await user.save({ validateBeforeSave: false, session });
 

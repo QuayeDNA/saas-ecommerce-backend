@@ -261,6 +261,8 @@ class WalletTransferService {
       remote = resp?.transfer;
     } catch (err) {
       if (err.status === 404) {
+        const fresh = await CrossAppTransfer.findById(transfer._id);
+        if (fresh && fresh.status !== "pending") return fresh;
         transfer.status = "failed";
         transfer.error = "Destination did not confirm the credit";
         await transfer.save();

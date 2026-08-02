@@ -90,8 +90,15 @@ export async function verifyDestination(req, res) {
 export async function creditTransfer(req, res) {
   try {
     const { userId, amount, reference, ticket, metadata } = req.body;
+    const amountNum = Number(amount);
 
-    if (!userId || !amount || amount <= 0 || !reference || !ticket) {
+    if (
+      !userId ||
+      !reference ||
+      !ticket ||
+      !Number.isFinite(amountNum) ||
+      amountNum <= 0
+    ) {
       return res.status(400).json({
         success: false,
         message: "userId, amount, reference and ticket are required",
@@ -151,12 +158,13 @@ export async function creditTransfer(req, res) {
 
     const transaction = await walletService.creditWallet(
       userId,
-      parseFloat(amount),
+      amountNum,
       `Cross-app transfer from ${sourceAppName} (${referenceStr})`,
       null,
       {
         adminAction: true,
         crossApp: true,
+        idempotencyKey: referenceStr,
         crossAppTransfer: {
           reference: referenceStr,
           fromAppId: sourceAppId,
@@ -176,7 +184,7 @@ export async function creditTransfer(req, res) {
           destAppId: localIdentity.appId,
           sourceUserEmail,
           destUserEmail: user.email || "",
-          amount: parseFloat(amount),
+          amount: amountNum,
           status: "completed",
           sourceAppName,
           destAppName: localIdentity.name,
@@ -199,7 +207,7 @@ export async function creditTransfer(req, res) {
       metadata: {
         source: "internal.creditTransfer",
         reference: referenceStr,
-        amount: parseFloat(amount),
+        amount: amountNum,
         fromAppId: sourceAppId,
         fromAppName: sourceAppName,
         direction: "credit",
