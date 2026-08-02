@@ -261,6 +261,9 @@ class WalletTransferService {
       remote = resp?.transfer;
     } catch (err) {
       if (err.status === 404) {
+        transfer.status = "failed";
+        transfer.error = "Destination did not confirm the credit";
+        await transfer.save();
         await walletService.creditWallet(
           transfer.sourceUserId,
           transfer.amount,
@@ -278,9 +281,6 @@ class WalletTransferService {
             },
           },
         );
-        transfer.status = "failed";
-        transfer.error = "Destination did not confirm the credit";
-        await transfer.save();
         return transfer;
       }
       const wrapped = new Error(`Recheck failed: ${err.message}`);

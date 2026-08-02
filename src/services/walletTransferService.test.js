@@ -338,6 +338,9 @@ describe("recheckTransfer", () => {
     expect(result.status).toBe("failed");
     expect(result.error).toBe("Destination did not confirm the credit");
     expect(transfer.save).toHaveBeenCalled();
+    expect(transfer.save.mock.invocationCallOrder[0]).toBeLessThan(
+      walletService.creditWallet.mock.invocationCallOrder[0],
+    );
   });
 
   it("throws 502 and leaves the transfer pending when the destination is unreachable", async () => {
