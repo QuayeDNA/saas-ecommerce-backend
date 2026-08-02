@@ -127,6 +127,10 @@ class WalletTransferService {
         error: err.message,
       });
 
+      if (isAmbiguous) {
+        return { reference, status: "pending" };
+      }
+
       throw err;
     }
 
@@ -247,23 +251,48 @@ class WalletTransferService {
     if (transfer.status !== "pending") return transfer;
 
     const app = await getConnectedAppByAppId(transfer.destAppId);
+    let remote;
     try {
       const resp = await makeRequest(
         app,
         "GET",
         `/api/internal/wallet/transfers/${encodeURIComponent(reference)}`,
       );
-      const remote = resp?.transfer;
-      if (remote && remote.status === "completed") {
-        transfer.status = "completed";
-        transfer.completedAt = new Date();
-        transfer.error = null;
-        await transfer.save();
-      }
+      remote = resp?.transfer;
     } catch (err) {
+      if (err.status === 404) {
+        await walletService.creditWallet(
+          transfer.sourceUserId,
+          transfer.amount,
+          `Reversal: cross-app transfer not confirmed at ${transfer.destAppName || transfer.destAppId} (${reference})`,
+          null,
+          {
+            adminAction: true,
+            crossApp: true,
+            idempotencyKey: `${reference}_reversal`,
+            crossAppTransfer: {
+              reference,
+              destAppId: transfer.destAppId,
+              destAppName: transfer.destAppName,
+              reversal: true,
+            },
+          },
+        );
+        transfer.status = "failed";
+        transfer.error = "Destination did not confirm the credit";
+        await transfer.save();
+        return transfer;
+      }
       const wrapped = new Error(`Recheck failed: ${err.message}`);
       wrapped.status = 502;
       throw wrapped;
+    }
+
+    if (remote && remote.status === "completed") {
+      transfer.status = "completed";
+      transfer.completedAt = new Date();
+      transfer.error = null;
+      await transfer.save();
     }
     return transfer;
   }

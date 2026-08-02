@@ -214,7 +214,7 @@ describe("createTransfer", () => {
     expect(ledgerUpsert[1].$set.status).toBe("failed");
   });
 
-  it("leaves the transfer pending (no rollback) on an ambiguous network failure", async () => {
+  it("resolves a pending transfer (no rollback) on an ambiguous network failure", async () => {
     settingsService.getCrossAppTransferSettings.mockResolvedValue(enabledSettings());
     getConnectedAppByAppId.mockResolvedValue(destApp);
     makeRequest
@@ -225,15 +225,17 @@ describe("createTransfer", () => {
       .mockRejectedValueOnce(new Error("Request to https://directdata.example.com failed: aborted"));
     walletService.debitWallet.mockResolvedValue({ _id: "txn-debit" });
 
-    await expect(
-      walletTransferService.createTransfer(sourceUser, {
-        appId: "app_b",
-        identifier: "agent@b.com",
-        pin: "1234",
-        amount: 50,
-      }),
-    ).rejects.toThrow(/Request to/);
+    const result = await walletTransferService.createTransfer(sourceUser, {
+      appId: "app_b",
+      identifier: "agent@b.com",
+      pin: "1234",
+      amount: 50,
+    });
 
+    expect(result).toEqual({
+      reference: expect.stringMatching(/^crossapp_/),
+      status: "pending",
+    });
     expect(walletService.creditWallet).not.toHaveBeenCalled();
     const ledgerUpsert = CrossAppTransfer.findOneAndUpdate.mock.calls[0];
     expect(ledgerUpsert[1].$set.status).toBe("pending");
@@ -305,5 +307,60 @@ describe("recheckTransfer", () => {
     );
     expect(result.status).toBe("completed");
     expect(transfer.save).toHaveBeenCalled();
+  });
+
+  it("reverses the source debit and marks failed when the destination has no record", async () => {
+    const transfer = {
+      reference: "crossapp_x",
+      sourceUserId: "src-user-1",
+      amount: 50,
+      destAppId: "app_b",
+      destAppName: "DirectData",
+      status: "pending",
+      save: vi.fn().mockResolvedValue(true),
+    };
+    CrossAppTransfer.findOne.mockResolvedValue(transfer);
+    getConnectedAppByAppId.mockResolvedValue(destApp);
+    const notFound = new Error("Transfer not found");
+    notFound.status = 404;
+    makeRequest.mockRejectedValue(notFound);
+    walletService.creditWallet.mockResolvedValue({ _id: "txn-reversal" });
+
+    const result = await walletTransferService.recheckTransfer("src-user-1", "crossapp_x");
+
+    expect(walletService.creditWallet).toHaveBeenCalledWith(
+      "src-user-1",
+      50,
+      expect.stringContaining("Reversal"),
+      null,
+      expect.objectContaining({ idempotencyKey: "crossapp_x_reversal" }),
+    );
+    expect(result.status).toBe("failed");
+    expect(result.error).toBe("Destination did not confirm the credit");
+    expect(transfer.save).toHaveBeenCalled();
+  });
+
+  it("throws 502 and leaves the transfer pending when the destination is unreachable", async () => {
+    const transfer = {
+      reference: "crossapp_x",
+      sourceUserId: "src-user-1",
+      amount: 50,
+      destAppId: "app_b",
+      destAppName: "DirectData",
+      status: "pending",
+      save: vi.fn().mockResolvedValue(true),
+    };
+    CrossAppTransfer.findOne.mockResolvedValue(transfer);
+    getConnectedAppByAppId.mockResolvedValue(destApp);
+    makeRequest.mockRejectedValue(
+      new Error("Request to https://directdata.example.com failed: boom"),
+    );
+
+    await expect(
+      walletTransferService.recheckTransfer("src-user-1", "crossapp_x"),
+    ).rejects.toMatchObject({ status: 502 });
+
+    expect(transfer.save).not.toHaveBeenCalled();
+    expect(walletService.creditWallet).not.toHaveBeenCalled();
   });
 });

@@ -34,9 +34,12 @@ class WalletTransferController {
         note,
       });
 
-      return res.json({
+      const isPending = result.status === "pending";
+      return res.status(isPending ? 202 : 200).json({
         success: true,
-        message: "Transfer completed",
+        message: isPending
+          ? "Transfer submitted; pending confirmation"
+          : "Transfer completed",
         data: { reference: result.reference, status: result.status },
       });
     } catch (err) {

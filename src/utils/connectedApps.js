@@ -47,7 +47,9 @@ export async function makeRequest(app, method, path, body = null) {
   }
 
   if (!response.ok) {
-    throw new Error(data.message || data.error || `Request failed with status ${response.status}`);
+    const err = new Error(data.message || data.error || `Request failed with status ${response.status}`);
+    err.status = response.status;
+    throw err;
   }
 
   return data;

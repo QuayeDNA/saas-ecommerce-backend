@@ -79,6 +79,31 @@ describe("createTransfer", () => {
     });
   });
 
+  it("returns 202 with the reference when the transfer is pending", async () => {
+    User.findById.mockResolvedValue({ _id: "u1", email: "agent@a.com" });
+    walletTransferService.createTransfer.mockResolvedValue({
+      reference: "crossapp_x",
+      status: "pending",
+    });
+
+    const { req, res } = mockReqRes({
+      body: {
+        appId: "app_b",
+        identifier: "agent@b.com",
+        pin: "1234",
+        amount: 50,
+      },
+    });
+    await walletTransferController.createTransfer(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(202);
+    expect(res.json).toHaveBeenCalledWith({
+      success: true,
+      message: "Transfer submitted; pending confirmation",
+      data: { reference: "crossapp_x", status: "pending" },
+    });
+  });
+
   it("returns 404 when the source user is missing", async () => {
     User.findById.mockResolvedValue(null);
     const { req, res } = mockReqRes({ body: { appId: "app_b", identifier: "a@b.com", pin: "1234", amount: 10 } });
