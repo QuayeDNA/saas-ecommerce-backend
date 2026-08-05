@@ -9,6 +9,7 @@ vi.mock('../services/orderService.js', () => ({
     processBulkOrder: vi.fn(),
     reportOrder: vi.fn(),
     updateReceptionStatus: vi.fn(),
+    getMatchingOrderIds: vi.fn(),
   },
 }));
 
@@ -424,6 +425,57 @@ describe('internalOrderController', () => {
 
       const { req, res } = mockReqRes();
       await internalOrderController.getReportedOrders(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'DB error' });
+    });
+  });
+
+  describe('getOrderIds', () => {
+    it('should return matching order IDs', async () => {
+      orderService.getMatchingOrderIds.mockResolvedValue({
+        orderIds: ['1', '2'],
+        total: 2,
+      });
+
+      const { req, res } = mockReqRes({
+        query: { packageId: '507f1f77bcf86cd799439011' },
+      });
+      await internalOrderController.getOrderIds(req, res);
+
+      expect(orderService.getMatchingOrderIds).toHaveBeenCalledWith(
+        req.query,
+        null,
+        { limit: 2000 },
+      );
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        orderIds: ['1', '2'],
+        total: 2,
+      });
+    });
+
+    it('should use custom limit from query', async () => {
+      orderService.getMatchingOrderIds.mockResolvedValue({
+        orderIds: [],
+        total: 0,
+      });
+
+      const { req, res } = mockReqRes({ query: { limit: '500' } });
+      await internalOrderController.getOrderIds(req, res);
+
+      expect(orderService.getMatchingOrderIds).toHaveBeenCalledWith(
+        req.query,
+        null,
+        { limit: 500 },
+      );
+    });
+
+    it('should handle service errors', async () => {
+      orderService.getMatchingOrderIds.mockRejectedValue(new Error('DB error'));
+
+      const { req, res } = mockReqRes();
+      await internalOrderController.getOrderIds(req, res);
 
       expect(res.status).toHaveBeenCalledWith(500);
       expect(res.json).toHaveBeenCalledWith({ success: false, message: 'DB error' });

@@ -137,6 +137,14 @@ router.get(
   orderController.getReportedOrders,
 );
 
+// Get matching order IDs for bulk actions - SPECIFIC ENDPOINT
+router.get(
+  "/ids",
+  authenticate,
+  authorize(...BUSINESS_ROLES, "super_admin"),
+  orderController.getMatchingOrderIds,
+);
+
 // GENERIC ROUTES LAST
 router.get(
   "/",

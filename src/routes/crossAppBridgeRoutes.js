@@ -9,6 +9,7 @@ router.use(authorize('super_admin'));
 
 router.get('/orders/app/:appId', crossAppBridgeController.listConnectedAppOrders);
 router.get('/orders/app/:appId/reported', crossAppBridgeController.getConnectedAppReportedOrders);
+router.get('/orders/app/:appId/ids', crossAppBridgeController.getConnectedAppOrderIds);
 router.get('/orders/app/:appId/analytics', crossAppBridgeController.getConnectedAppAnalytics);
 router.get('/orders/app/:appId/:id', crossAppBridgeController.getConnectedAppOrder);
 router.patch('/orders/app/:appId/:id/status', crossAppBridgeController.updateConnectedAppOrderStatus);

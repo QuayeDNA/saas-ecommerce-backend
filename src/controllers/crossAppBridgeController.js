@@ -123,6 +123,16 @@ export async function getConnectedAppReportedOrders(req, res) {
   }
 }
 
+export async function getConnectedAppOrderIds(req, res) {
+  try {
+    const result = await crossAppBridgeService.listOrderIdsFromApp(req.params.appId, req.query);
+    res.json(result);
+  } catch (error) {
+    logger.error(`Cross-app get matching order IDs error: ${error.message}`);
+    res.status(getStatusFromError(error)).json({ success: false, message: error.message });
+  }
+}
+
 export async function getConnectedAppAnalytics(req, res) {
   try {
     const { timeframe } = req.query;

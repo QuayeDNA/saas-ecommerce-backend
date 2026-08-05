@@ -6,6 +6,12 @@ export async function listOrdersFromApp(appId, queryParams) {
   return makeRequest(app, 'GET', `/api/internal/orders?${qs}`);
 }
 
+export async function listOrderIdsFromApp(appId, queryParams) {
+  const app = await getConnectedAppByAppId(appId);
+  const qs = new globalThis.URLSearchParams(queryParams).toString();
+  return makeRequest(app, 'GET', `/api/internal/orders/ids?${qs}`);
+}
+
 export async function getOrderFromApp(appId, orderId) {
   const app = await getConnectedAppByAppId(appId);
   return makeRequest(app, 'GET', `/api/internal/orders/${orderId}`);

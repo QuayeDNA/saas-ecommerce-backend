@@ -12,6 +12,7 @@ vi.mock('../services/crossAppBridgeService.js', () => ({
   bulkProcessOrdersOnApp: vi.fn(),
   bulkUpdateReceptionStatusOnApp: vi.fn(),
   getReportedOrdersFromApp: vi.fn(),
+  listOrderIdsFromApp: vi.fn(),
 }));
 
 vi.mock('../utils/logger.js', () => ({
@@ -225,6 +226,31 @@ describe('crossAppBridgeController', () => {
 
       const { req, res } = mockReqRes({ params: { appId: 'app-1' } });
       await crossAppBridgeController.getConnectedAppReportedOrders(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(502);
+    });
+  });
+
+  describe('getConnectedAppOrderIds', () => {
+    it('should return matching order IDs', async () => {
+      const expected = { success: true, orderIds: ['1', '2'], total: 2 };
+      crossAppBridgeService.listOrderIdsFromApp.mockResolvedValue(expected);
+
+      const { req, res } = mockReqRes({
+        params: { appId: 'app-1' },
+        query: { packageId: '507f1f77bcf86cd799439011' },
+      });
+      await crossAppBridgeController.getConnectedAppOrderIds(req, res);
+
+      expect(crossAppBridgeService.listOrderIdsFromApp).toHaveBeenCalledWith('app-1', req.query);
+      expect(res.json).toHaveBeenCalledWith(expected);
+    });
+
+    it('should return 502 on failure', async () => {
+      crossAppBridgeService.listOrderIdsFromApp.mockRejectedValue(new Error('Request failed with status 500'));
+
+      const { req, res } = mockReqRes({ params: { appId: 'app-1' } });
+      await crossAppBridgeController.getConnectedAppOrderIds(req, res);
 
       expect(res.status).toHaveBeenCalledWith(502);
     });

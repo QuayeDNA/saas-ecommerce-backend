@@ -193,6 +193,7 @@ class OrderController {
         search: req.query.search,
         createdBy: req.query.createdBy,
         provider: req.query.provider,
+        packageId: req.query.packageId,
         reported: true, // Always filter for reported orders
         excludeResolvedAfter3Days: true, // Exclude orders resolved more than 3 days ago
       };
@@ -250,6 +251,7 @@ class OrderController {
         search: req.query.search,
         createdBy: req.query.createdBy,
         provider: req.query.provider,
+        packageId: req.query.packageId,
         reported: reportedFilter,
       };
 
@@ -280,6 +282,58 @@ class OrderController {
       res.status(500).json({
         success: false,
         message: "Failed to fetch orders",
+      });
+    }
+  }
+
+  // Get matching order IDs for bulk actions
+  async getMatchingOrderIds(req, res) {
+    try {
+      const { tenantId, userType } = req.user;
+      let reportedFilter;
+      if (req.query.reported === "true") {
+        reportedFilter = true;
+      } else if (req.query.reported === "false") {
+        reportedFilter = false;
+      } else {
+        reportedFilter = undefined;
+      }
+
+      const filters = {
+        status: req.query.status,
+        orderType: req.query.orderType,
+        paymentStatus: req.query.paymentStatus,
+        receptionStatus: req.query.receptionStatus,
+        startDate: req.query.startDate,
+        endDate: req.query.endDate,
+        search: req.query.search,
+        createdBy: req.query.createdBy,
+        provider: req.query.provider,
+        packageId: req.query.packageId,
+        reported: reportedFilter,
+      };
+
+      // For super admins, allow access to all orders (no tenant restriction)
+      // For regular users, restrict to their tenant
+      const effectiveTenantId = userType === "super_admin" ? null : tenantId;
+
+      const result = await orderService.getMatchingOrderIds(
+        filters,
+        effectiveTenantId,
+        {
+          limit: Math.min(parseInt(req.query.limit) || 2000, 2000),
+        },
+      );
+
+      res.json({
+        success: true,
+        ...result,
+      });
+    } catch (error) {
+      logger.error(`Get matching order IDs failed: ${error.message}`);
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch matching order IDs",
       });
     }
   }

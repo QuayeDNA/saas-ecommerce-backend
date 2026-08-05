@@ -160,6 +160,21 @@ export async function getReportedOrders(req, res) {
   }
 }
 
+export async function getOrderIds(req, res) {
+  try {
+    const result = await orderService.getMatchingOrderIds(req.query, null, {
+      limit: Number(req.query.limit) || 2000,
+    });
+    return res.json({
+      success: true,
+      orderIds: result.orderIds,
+      total: result.total,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message || 'Failed to get matching order IDs' });
+  }
+}
+
 export async function getAnalytics(req, res) {
   try {
     const { timeframe } = req.query;

@@ -13,6 +13,7 @@ router.get('/verify', authenticateCrossAppKey, (req, res) => {
 // Order endpoints — /orders/reported must come before /orders/:id
 router.get('/orders', authenticateCrossAppKey, internalOrderController.listOrders);
 router.get('/orders/reported', authenticateCrossAppKey, internalOrderController.getReportedOrders);
+router.get('/orders/ids', authenticateCrossAppKey, internalOrderController.getOrderIds);
 router.get('/orders/:id', authenticateCrossAppKey, internalOrderController.getOrder);
 router.patch('/orders/:id/status', authenticateCrossAppKey, internalOrderController.updateOrderStatus);
 router.patch('/orders/:id/reception-status', authenticateCrossAppKey, internalOrderController.updateReceptionStatus);

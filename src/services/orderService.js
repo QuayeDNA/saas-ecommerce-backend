@@ -811,6 +811,103 @@ class OrderService {
     };
   }
 
+  // ─── Order Query Builder ──────────────────────────────────────────────────────
+
+  _buildOrderQuery(filters = {}, tenantId = null) {
+    const {
+      status,
+      orderType,
+      paymentStatus,
+      receptionStatus,
+      startDate,
+      endDate,
+      search,
+      createdBy,
+      provider,
+      packageId,
+      reported,
+      excludeResolvedAfter3Days,
+    } = filters;
+
+    const query = tenantId ? { tenantId } : {};
+
+    if (status) query.status = status;
+    if (orderType) query.orderType = orderType;
+    if (paymentStatus) query.paymentStatus = paymentStatus;
+    if (receptionStatus) query.receptionStatus = receptionStatus;
+    if (createdBy) query.createdBy = createdBy;
+    if (reported !== undefined) query.reported = reported;
+
+    if (excludeResolvedAfter3Days) {
+      const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+      const twentyFourHoAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      query.$and = query.$and || [];
+      query.$and.push({
+        $or: [
+          { receptionStatus: { $ne: "resolved" } },
+          {
+            receptionStatus: "resolved",
+            resolvedAt: { $exists: true, $gte: tenMinAgo },
+          },
+          {
+            receptionStatus: "resolved",
+            resolvedAt: { $exists: false },
+            updatedAt: { $gte: tenMinAgo },
+          },
+        ],
+      });
+      query.$and.push({
+        $or: [
+          { reported: { $ne: true } },
+          { receptionStatus: "resolved" },
+          {
+            reported: true,
+            receptionStatus: { $in: ["not_received", "checking"] },
+            reportedAt: { $exists: true, $gte: twentyFourHoAgo },
+          },
+        ],
+      });
+    }
+
+    if (!status) {
+      query.status = { $ne: "pending_payment" };
+    }
+
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) query.createdAt.$gte = new Date(startDate);
+      if (endDate) query.createdAt.$lte = new Date(endDate);
+    }
+
+    if (provider) query["items.packageDetails.provider"] = provider;
+
+    if (packageId && mongoose.Types.ObjectId.isValid(String(packageId))) {
+      query["items.packageGroup"] = packageId;
+    }
+
+    if (search) {
+      const searchConds = [
+        { orderNumber: { $regex: search, $options: "i" } },
+        { "customerInfo.name": { $regex: search, $options: "i" } },
+        { "customerInfo.phone": { $regex: search, $options: "i" } },
+        { "items.customerPhone": { $regex: search, $options: "i" } },
+      ];
+      if (query.$or) {
+        const existing = query.$or;
+        delete query.$or;
+        query.$and = [
+          ...(query.$and || []),
+          { $or: existing },
+          { $or: searchConds },
+        ];
+      } else {
+        query.$or = searchConds;
+      }
+    }
+
+    return query;
+  }
+
   // ─── Get Orders ───────────────────────────────────────────────────────────────
 
   async getOrders(
@@ -826,91 +923,8 @@ class OrderService {
         sortBy = "createdAt",
         sortOrder = -1,
       } = pagination;
-      const {
-        status,
-        orderType,
-        paymentStatus,
-        receptionStatus,
-        startDate,
-        endDate,
-        search,
-        createdBy,
-        provider,
-        reported,
-        excludeResolvedAfter3Days,
-      } = filters;
 
-      const query = tenantId ? { tenantId } : {};
-
-      if (status) query.status = status;
-      if (orderType) query.orderType = orderType;
-      if (paymentStatus) query.paymentStatus = paymentStatus;
-      if (receptionStatus) query.receptionStatus = receptionStatus;
-      if (createdBy) query.createdBy = createdBy;
-      if (reported !== undefined) query.reported = reported;
-
-      if (excludeResolvedAfter3Days) {
-        const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
-        const twentyFourHoAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-        query.$and = query.$and || [];
-        query.$and.push({
-          $or: [
-            { receptionStatus: { $ne: "resolved" } },
-            {
-              receptionStatus: "resolved",
-              resolvedAt: { $exists: true, $gte: tenMinAgo },
-            },
-            {
-              receptionStatus: "resolved",
-              resolvedAt: { $exists: false },
-              updatedAt: { $gte: tenMinAgo },
-            },
-          ],
-        });
-        query.$and.push({
-          $or: [
-            { reported: { $ne: true } },
-            { receptionStatus: "resolved" },
-            {
-              reported: true,
-              receptionStatus: { $in: ["not_received", "checking"] },
-              reportedAt: { $exists: true, $gte: twentyFourHoAgo },
-            },
-          ],
-        });
-      }
-
-      if (!status) {
-        query.status = { $ne: "pending_payment" };
-      }
-
-      if (startDate || endDate) {
-        query.createdAt = {};
-        if (startDate) query.createdAt.$gte = new Date(startDate);
-        if (endDate) query.createdAt.$lte = new Date(endDate);
-      }
-
-      if (provider) query["items.packageDetails.provider"] = provider;
-
-      if (search) {
-        const searchConds = [
-          { orderNumber: { $regex: search, $options: "i" } },
-          { "customerInfo.name": { $regex: search, $options: "i" } },
-          { "customerInfo.phone": { $regex: search, $options: "i" } },
-          { "items.customerPhone": { $regex: search, $options: "i" } },
-        ];
-        if (query.$or) {
-          const existing = query.$or;
-          delete query.$or;
-          query.$and = [
-            ...(query.$and || []),
-            { $or: existing },
-            { $or: searchConds },
-          ];
-        } else {
-          query.$or = searchConds;
-        }
-      }
+      const query = this._buildOrderQuery(filters, tenantId);
 
       const [orders, total] = await Promise.all([
         Order.find(query)
@@ -936,6 +950,22 @@ class OrderService {
       logger.error(`Get orders error: ${error.message}`);
       throw new Error("Failed to get orders");
     }
+  }
+
+  // ─── Get Matching Order IDs ───────────────────────────────────────────────────
+
+  async getMatchingOrderIds(filters = {}, tenantId = null, { limit = 2000 } = {}) {
+    const query = this._buildOrderQuery(filters, tenantId);
+
+    const [docs, total] = await Promise.all([
+      Order.find(query).select("_id").limit(Number(limit)).lean(),
+      Order.countDocuments(query),
+    ]);
+
+    return {
+      orderIds: docs.map((doc) => doc._id.toString()),
+      total,
+    };
   }
 
   // ─── Process Order Item ───────────────────────────────────────────────────────
