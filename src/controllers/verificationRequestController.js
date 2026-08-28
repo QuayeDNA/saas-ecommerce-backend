@@ -49,6 +49,18 @@ const verificationRequestController = {
     }
   },
 
+  async listPendingPhones(req, res) {
+    try {
+      const phones = await verificationRequestService.listPendingPhones();
+      res.json({ success: true, data: phones });
+    } catch (error) {
+      logger.error("Error listing pending phones:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to list pending phones" });
+    }
+  },
+
   async getRequestStats(req, res) {
     try {
       const stats = await verificationRequestService.getRequestStats();

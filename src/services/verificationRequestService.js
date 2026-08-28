@@ -86,6 +86,19 @@ const verificationRequestService = {
     }
   },
 
+  async listPendingPhones() {
+    try {
+      const VerificationRequest = (await import("../models/VerificationRequest.js")).default;
+      const docs = await VerificationRequest.find({ status: "pending" })
+        .select("phone")
+        .sort({ createdAt: -1 });
+      return docs.map((d) => d.phone);
+    } catch (error) {
+      logger.error(`Error listing pending phones: ${error.message}`);
+      throw error;
+    }
+  },
+
   async getRequestStats() {
     try {
       const VerificationRequest = (await import("../models/VerificationRequest.js")).default;

@@ -70,6 +70,12 @@ router.get(
   verificationRequestController.getRequestStats,
 );
 
+router.get(
+  "/pending/phones",
+  authorize("super_admin"),
+  verificationRequestController.listPendingPhones,
+);
+
 router.patch(
   "/:id/approve",
   authorize("super_admin"),
