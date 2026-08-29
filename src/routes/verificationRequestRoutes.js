@@ -110,6 +110,48 @@ router.post(
   verificationRequestController.approveAllPending,
 );
 
+// Batches (submitted groups)
+router.post(
+  "/bulk-submit",
+  authorize("super_admin"),
+  validate(verificationRequestValidation.bulkSubmit),
+  verificationRequestController.createBatchFromPending,
+);
+
+router.get(
+  "/batches",
+  authorize("super_admin"),
+  verificationRequestController.listBatches,
+);
+
+router.get(
+  "/batches/:id/members",
+  authorize("super_admin"),
+  validate(verificationRequestValidation.batchIdParam),
+  verificationRequestController.listBatchMembers,
+);
+
+router.patch(
+  "/batches/:id/approve",
+  authorize("super_admin"),
+  validate(verificationRequestValidation.batchIdParam),
+  verificationRequestController.approveBatch,
+);
+
+router.patch(
+  "/batches/:id/reject",
+  authorize("super_admin"),
+  validate(verificationRequestValidation.batchIdParam),
+  verificationRequestController.rejectBatch,
+);
+
+router.patch(
+  "/batches/:id/numbers",
+  authorize("super_admin"),
+  validate(verificationRequestValidation.updateBatchNumbers),
+  verificationRequestController.updateBatchNumbers,
+);
+
 // Known Numbers management
 router.get(
   "/known-numbers",

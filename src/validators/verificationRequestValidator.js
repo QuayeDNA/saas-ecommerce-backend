@@ -34,7 +34,7 @@ export const verificationRequestValidation = {
       .isString().withMessage("Search must be a string"),
     query("status")
       .optional()
-      .isIn(["pending", "approved", "rejected"]).withMessage("Status must be pending, approved, or rejected"),
+      .isIn(["pending", "submitted", "approved", "rejected"]).withMessage("Status must be pending, submitted, approved, or rejected"),
     query("source")
       .optional()
       .isIn(["agent", "customer", "admin"]).withMessage("Source must be agent, customer, or admin"),
@@ -64,5 +64,44 @@ export const verificationRequestValidation = {
       .isArray({ min: 1 }).withMessage("IDs array is required with at least one ID"),
     body("ids.*")
       .isMongoId().withMessage("Invalid ID format"),
+  ],
+
+  bulkSubmit: [
+    body("ids")
+      .isArray({ min: 1 }).withMessage("IDs array is required with at least one ID"),
+    body("ids.*")
+      .isMongoId().withMessage("Invalid ID format"),
+  ],
+
+  batchIdParam: [
+    param("id")
+      .notEmpty().withMessage("Batch ID is required")
+      .isMongoId().withMessage("Invalid batch ID format"),
+  ],
+
+  updateBatchNumbers: [
+    param("id")
+      .notEmpty().withMessage("Batch ID is required")
+      .isMongoId().withMessage("Invalid batch ID format"),
+    body("approve")
+      .optional()
+      .isArray().withMessage("approve must be an array of IDs"),
+    body("approve.*")
+      .optional()
+      .isMongoId().withMessage("Invalid ID format in approve"),
+    body("reject")
+      .optional()
+      .isArray().withMessage("reject must be an array of IDs"),
+    body("reject.*")
+      .optional()
+      .isMongoId().withMessage("Invalid ID format in reject"),
+    body()
+      .custom((_, { req }) => {
+        const { approve = [], reject = [] } = req.body || {};
+        if (approve.length === 0 && reject.length === 0) {
+          throw new Error("Provide at least one ID to approve or reject");
+        }
+        return true;
+      }),
   ],
 };

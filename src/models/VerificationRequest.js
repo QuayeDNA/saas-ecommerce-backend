@@ -9,7 +9,7 @@ const verificationRequestSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "approved", "rejected"],
+      enum: ["pending", "submitted", "approved", "rejected"],
       default: "pending",
     },
     source: {
@@ -30,6 +30,15 @@ const verificationRequestSchema = new mongoose.Schema(
     reviewNote: {
       type: String,
       default: "",
+    },
+    batchId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "VerificationBatch",
+      default: null,
+    },
+    submittedAt: {
+      type: Date,
+      default: null,
     },
   },
   {

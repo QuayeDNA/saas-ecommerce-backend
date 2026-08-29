@@ -149,6 +149,92 @@ const verificationRequestController = {
     }
   },
 
+  async createBatchFromPending(req, res) {
+    try {
+      const result = await verificationRequestService.createBatchFromPending(
+        req.body.ids,
+        req.user._id,
+      );
+      res.status(201).json({ success: true, data: result });
+    } catch (error) {
+      logger.error("Error creating verification batch:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to create verification batch" });
+    }
+  },
+
+  async listBatches(req, res) {
+    try {
+      const batches = await verificationRequestService.listBatches();
+      res.json({ success: true, data: batches });
+    } catch (error) {
+      logger.error("Error listing verification batches:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to list verification batches" });
+    }
+  },
+
+  async listBatchMembers(req, res) {
+    try {
+      const members = await verificationRequestService.listBatchMembers(req.params.id);
+      res.json({ success: true, data: members });
+    } catch (error) {
+      logger.error("Error listing batch members:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to list batch members" });
+    }
+  },
+
+  async approveBatch(req, res) {
+    try {
+      const result = await verificationRequestService.approveBatch(
+        req.params.id,
+        req.user._id,
+      );
+      res.json({ success: true, data: result });
+    } catch (error) {
+      logger.error("Error approving batch:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to approve batch" });
+    }
+  },
+
+  async rejectBatch(req, res) {
+    try {
+      const result = await verificationRequestService.rejectBatch(
+        req.params.id,
+        req.user._id,
+      );
+      res.json({ success: true, data: result });
+    } catch (error) {
+      logger.error("Error rejecting batch:", error);
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to reject batch" });
+    }
+  },
+
+  async updateBatchNumbers(req, res) {
+    try {
+      const result = await verificationRequestService.updateBatchNumbers(
+        req.params.id,
+        { approve: req.body.approve || [], reject: req.body.reject || [] },
+        req.user._id,
+      );
+      res.json({ success: true, data: result });
+    } catch (error) {
+      logger.error("Error updating batch numbers:", error);
+      const status = error.message.includes("not found") ? 404 : 500;
+      res
+        .status(status)
+        .json({ success: false, error: error.message });
+    }
+  },
+
   async submitPublicRequest(req, res) {
     try {
       const request = await verificationRequestService.submitRequest(
