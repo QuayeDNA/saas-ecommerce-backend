@@ -56,6 +56,8 @@ class SettingsService {
         showGreetingIcon: settings.showGreetingIcon,
         storefrontsOpen: settings.storefrontsOpen ?? true,
         storefrontsClosedMessage: settings.storefrontsClosedMessage || "",
+        mtnOrderRestrictionEnabled:
+          settings.mtnOrderRestrictionEnabled ?? false,
       };
 
       return result;
@@ -103,6 +105,8 @@ class SettingsService {
       showGreetingIcon: settings.showGreetingIcon,
       storefrontsOpen: settings.storefrontsOpen ?? true,
       storefrontsClosedMessage: settings.storefrontsClosedMessage || "",
+      mtnOrderRestrictionEnabled:
+        settings.mtnOrderRestrictionEnabled ?? false,
     };
 
     logger.info(
@@ -142,6 +146,8 @@ class SettingsService {
         showGreetingIcon: settings.showGreetingIcon,
         storefrontsOpen: settings.storefrontsOpen ?? true,
         storefrontsClosedMessage: settings.storefrontsClosedMessage || "",
+        mtnOrderRestrictionEnabled:
+          settings.mtnOrderRestrictionEnabled ?? false,
       };
       websocketService.broadcastSiteStatusUpdate(siteStatus);
 
@@ -197,6 +203,8 @@ class SettingsService {
       showGreetingIcon: settings.showGreetingIcon,
       storefrontsOpen: settings.storefrontsOpen ?? true,
       storefrontsClosedMessage: settings.storefrontsClosedMessage || "",
+      mtnOrderRestrictionEnabled:
+        settings.mtnOrderRestrictionEnabled ?? false,
     };
 
     logger.info(

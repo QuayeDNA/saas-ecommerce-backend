@@ -203,6 +203,7 @@ class SettingsController {
         showGreetingIcon: siteSettings.showGreetingIcon,
         storefrontsOpen: siteSettings.storefrontsOpen,
         storefrontsClosedMessage: siteSettings.storefrontsClosedMessage,
+        mtnOrderRestrictionEnabled: siteSettings.mtnOrderRestrictionEnabled,
       });
     } catch (error) {
       logger.error("Error getting site status:", error);
