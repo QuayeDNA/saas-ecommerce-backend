@@ -19,6 +19,7 @@ import {
   calculateChargeWithFees,
 } from "../utils/paystackHelpers.js";
 import { uploadToCloudinary, deleteFromCloudinary } from "../utils/assetUpload.js";
+import blockedRecipientService from "./blockedRecipientService.js";
 import logger from "../utils/logger.js";
 import websocketService from "./websocketService.js";
 import PaystackVerificationTask from "../models/PaystackVerificationTask.js";
@@ -890,6 +891,23 @@ class StorefrontService {
         bundleSize: { value: bundle.dataVolume, unit: bundle.dataUnit || "GB" },
         processingStatus: "pending",
       });
+    }
+
+    // Blocked recipient guard — applies to ALL providers (not just MTN)
+    {
+      const phonesToCheck = [
+        ...storefrontItems.map((it) => it.customerPhone),
+        customerInfo?.phone,
+      ].filter(Boolean);
+      const blockedSet = await blockedRecipientService.findBlockedPhones(phonesToCheck);
+      if (blockedSet.size > 0) {
+        const blockedList = [...blockedSet].join(", ");
+        const err = new Error(
+          `Orders to recipient ${blockedList} are currently blocked. Please contact support if you believe this is an error.`
+        );
+        err.code = "BLOCKED_RECIPIENT";
+        throw err;
+      }
     }
 
     // Check MTN number restriction for MTN provider items only

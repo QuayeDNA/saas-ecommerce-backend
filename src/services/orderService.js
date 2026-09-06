@@ -18,6 +18,7 @@ import { parseBulkOrderRow } from "../utils/parseBulkOrderRow.js";
 import { saveOrderWithRetry } from "../utils/orderSaveHelper.js";
 import { isBusinessUser } from "../utils/userTypeHelpers.js";
 import { getPriceForUserType } from "../utils/pricingHelpers.js";
+import blockedRecipientService from "./blockedRecipientService.js";
 import { logAuditAction } from "../utils/auditLogger.js";
 import {
   AUDIT_ACTIONS,
@@ -312,6 +313,12 @@ class OrderService {
     }
   }
 
+  // ─── Blocked Recipient Check ──────────────────────────────────────────────────
+
+  async assertRecipientNotBlocked(phone) {
+    await blockedRecipientService.assertNotBlocked(phone);
+  }
+
   // ─── Create Single Order ──────────────────────────────────────────────────────
 
   async createSingleOrder(orderData, tenantId, userId) {
@@ -320,6 +327,11 @@ class OrderService {
         "tenantId must be provided and cannot be null or undefined",
       );
     const tenantIdStr = tenantId.toString();
+
+    // Blocked recipient guard — fail fast before any wallet/DB work
+    if (orderData.customerPhone) {
+      await blockedRecipientService.assertNotBlocked(orderData.customerPhone);
+    }
 
     const duplicateCheck =
       await duplicateOrderPreventionService.checkForDuplicates(
@@ -632,7 +644,29 @@ class OrderService {
         orderItems.push({ index: i, bundle, parsed: parsed.value });
       }
 
-      // Second pass: check MTN number restriction for bulk items
+      // Second pass: blocked recipient check — batch lookup for efficiency
+      const allPhones = orderItems.map((it) => it.parsed.customerPhone);
+      const blockedSet = await blockedRecipientService.findBlockedPhones(allPhones);
+      const blockedSkipped = [];
+      const afterBlockedItems = [];
+      for (const item of orderItems) {
+        const norm = blockedRecipientService.normalizePhone(item.parsed.customerPhone);
+        if (blockedSet.has(norm)) {
+          blockedSkipped.push({
+            index: item.index,
+            row: items[item.index],
+            error: `Orders to recipient ${norm} are currently blocked. Please contact support.`,
+            code: "BLOCKED_RECIPIENT",
+          });
+        } else {
+          afterBlockedItems.push(item);
+        }
+      }
+      orderItems.length = 0;
+      orderItems.push(...afterBlockedItems);
+      errors.push(...blockedSkipped);
+
+      // Third pass: check MTN number restriction for bulk items
       const mtnSkipped = [];
       const validItems = [];
       for (const item of orderItems) {
