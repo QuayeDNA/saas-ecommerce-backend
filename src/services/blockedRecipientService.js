@@ -96,8 +96,32 @@ export async function unblockNumbers(numbers) {
   return { removed: res.deletedCount, phones: normalized };
 }
 
-export async function listBlocked() {
-  return BlockedRecipient.find().sort({ createdAt: -1 }).lean();
+export async function listBlocked({ page, limit, search } = {}) {
+  // Paginated variant for admin UI — backward compat: no args returns all
+  if (page == null && limit == null && !search) {
+    return BlockedRecipient.find().sort({ createdAt: -1 }).lean();
+  }
+  const p = Math.max(1, parseInt(page, 10) || 1);
+  const l = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+  const skip = (p - 1) * l;
+  const filter = {};
+  if (search) {
+    const s = normalizePhone(search) || String(search).trim();
+    filter.$or = [
+      { phone: { $regex: s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" } },
+      { reason: { $regex: String(search).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" } },
+    ];
+  }
+  const [items, total] = await Promise.all([
+    BlockedRecipient.find(filter).sort({ createdAt: -1 }).skip(skip).limit(l).lean(),
+    BlockedRecipient.countDocuments(filter),
+  ]);
+  return { items, total, page: p, totalPages: Math.ceil(total / l) || 1 };
+}
+
+export async function getStats() {
+  const total = await BlockedRecipient.countDocuments();
+  return { total };
 }
 
 export default {
@@ -110,4 +134,5 @@ export default {
   blockNumbers,
   unblockNumbers,
   listBlocked,
+  getStats,
 };
