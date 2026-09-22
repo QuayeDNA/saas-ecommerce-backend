@@ -10,7 +10,7 @@ const router = express.Router();
 // Register push subscription
 router.post("/subscribe", authenticate, async (req, res) => {
   try {
-    const { subscription } = req.body;
+    const { subscription, userAgent, platform } = req.body;
     const userId = req.user?.userId || req.user?.id;
 
     if (!subscription || !subscription.endpoint) {
@@ -20,9 +20,11 @@ router.post("/subscribe", authenticate, async (req, res) => {
       });
     }
 
+    const meta = { userAgent, platform };
     const success = await pushNotificationService.registerSubscription(
       userId,
       subscription,
+      meta,
     );
 
     if (success) {
@@ -48,10 +50,18 @@ router.post("/subscribe", authenticate, async (req, res) => {
 // Unregister push subscription
 router.post("/unsubscribe", authenticate, async (req, res) => {
   try {
+    const { endpoint } = req.body;
     const userId = req.user?.userId || req.user?.id;
 
+    if (!endpoint) {
+      return res.status(400).json({
+        success: false,
+        message: "Endpoint is required",
+      });
+    }
+
     const success =
-      await pushNotificationService.unregisterSubscription(userId);
+      await pushNotificationService.unregisterSubscription(userId, endpoint);
 
     if (success) {
       res.json({
@@ -148,6 +158,7 @@ router.put("/preferences", authenticate, async (req, res) => {
       "orderUpdates",
       "walletUpdates",
       "announcements",
+      "apiUpdates",
     ];
 
     for (const field of allowedFields) {
@@ -174,6 +185,54 @@ router.put("/preferences", authenticate, async (req, res) => {
     });
   } catch (error) {
     logger.error("Error updating push notification preferences:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
+
+// Get registered devices
+router.get("/devices", authenticate, async (req, res) => {
+  try {
+    const userId = req.user?.userId || req.user?.id;
+    const devices = await pushNotificationService.getDevices(userId);
+
+    res.json({
+      success: true,
+      devices,
+    });
+  } catch (error) {
+    logger.error("Error getting devices:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
+
+// Remove a device
+router.delete("/devices/:id", authenticate, async (req, res) => {
+  try {
+    const userId = req.user?.userId || req.user?.id;
+    const removed = await pushNotificationService.removeDevice(
+      userId,
+      req.params.id,
+    );
+
+    if (!removed) {
+      return res.status(404).json({
+        success: false,
+        message: "Device not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Device removed successfully",
+    });
+  } catch (error) {
+    logger.error("Error removing device:", error);
     res.status(500).json({
       success: false,
       message: "Internal server error",
