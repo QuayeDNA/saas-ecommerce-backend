@@ -241,6 +241,22 @@ class NotificationService {
         }
       }
 
+      const pushNotificationService = (await import("./pushNotificationService.js")).default;
+
+      for (const userId of userIds) {
+        try {
+          const user = await User.findById(userId).select('pushNotificationPreferences');
+          const prefs = user?.pushNotificationPreferences;
+          if (prefs?.enabled === false || prefs?.announcements === false) continue;
+          await pushNotificationService.sendToUser(userId, {
+            title: announcement.title,
+            body: announcement.content?.substring(0, 200) || 'New announcement',
+            url: '/announcements',
+            data: { announcementId: announcement._id, type: 'announcement' },
+          });
+        } catch { /* best effort */ }
+      }
+
       logger.info(
         `Created ${created.length} announcement notifications for announcement ${announcement._id}`,
       );
