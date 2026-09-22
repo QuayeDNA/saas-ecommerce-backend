@@ -163,7 +163,7 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
-  // Push notification subscription
+  // DEPRECATED: Use PushSubscription model instead. Kept for migration fallback only.
   pushSubscription: {
     endpoint: String,
     keys: {
