@@ -59,6 +59,7 @@ dist/
 #scripts
 scripts/*
 !scripts/migrate-storefront-earnings-ledger.js
+!scripts/migrate-push-subscriptions.js
 
 # Uploaded assets (replaced by Cloudinary)
 uploads/
