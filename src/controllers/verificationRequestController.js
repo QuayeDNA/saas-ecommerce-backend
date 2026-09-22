@@ -324,6 +324,22 @@ const verificationRequestController = {
     }
   },
 
+  async bulkAddKnownNumbers(req, res) {
+    try {
+      const { phones } = req.body;
+      if (!phones || !Array.isArray(phones) || phones.length === 0) {
+        return res.status(400).json({ success: false, message: "Phones array is required" });
+      }
+      if (phones.length > 500) {
+        return res.status(400).json({ success: false, message: "Maximum 500 numbers per request" });
+      }
+      const result = await verificationRequestService.bulkAddKnownNumbers(phones);
+      res.status(201).json({ success: true, ...result });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
   async bulkDeleteKnownNumbers(req, res) {
     try {
       const { ids } = req.body;

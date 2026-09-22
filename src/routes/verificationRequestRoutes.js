@@ -178,6 +178,12 @@ router.delete(
 );
 
 router.post(
+  "/known-numbers/bulk-add",
+  authorize("super_admin"),
+  verificationRequestController.bulkAddKnownNumbers,
+);
+
+router.post(
   "/known-numbers/bulk-delete",
   authorize("super_admin"),
   verificationRequestController.bulkDeleteKnownNumbers,

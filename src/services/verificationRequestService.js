@@ -519,6 +519,76 @@ const verificationRequestService = {
     }
   },
 
+  async bulkAddKnownNumbers(phones) {
+    try {
+      const KnownMtnNumber = (await import("../models/KnownMtnNumber.js")).default;
+
+      if (!Array.isArray(phones) || phones.length === 0) {
+        throw new Error("Phones array is required");
+      }
+
+      const normalized = [
+        ...new Set(
+          phones.map((p) => normalizePhoneNumber(String(p ?? ""))),
+        ),
+      ];
+      const invalid = normalized.filter((p) => !PHONE_PATTERN.test(p));
+      const candidates = normalized.filter((p) => PHONE_PATTERN.test(p));
+
+      const existing =
+        candidates.length > 0
+          ? await KnownMtnNumber.find({ phone: { $in: candidates } })
+              .select("phone")
+              .lean()
+          : [];
+      const existingSet = new Set(existing.map((d) => d.phone));
+      const duplicates = candidates.filter((p) => existingSet.has(p));
+      const toAdd = candidates.filter((p) => !existingSet.has(p));
+
+      const added = [];
+      if (toAdd.length > 0) {
+        try {
+          const docs = await KnownMtnNumber.insertMany(
+            toAdd.map((phone) => ({ phone })),
+            { ordered: false },
+          );
+          added.push(...docs.map((d) => d.phone));
+        } catch (err) {
+          if (
+            err?.code === 11000 ||
+            err?.name === "BulkWriteError" ||
+            err?.name === "MongoBulkWriteError"
+          ) {
+            const failed = new Set(
+              (err.writeErrors ?? []).map((e) => e.index),
+            );
+            toAdd.forEach((phone, i) => {
+              if (failed.has(i)) duplicates.push(phone);
+              else added.push(phone);
+            });
+          } else {
+            throw err;
+          }
+        }
+      }
+
+      logger.info(
+        `Bulk added known numbers: ${added.length} added, ${duplicates.length} duplicates, ${invalid.length} invalid`,
+      );
+      return {
+        added,
+        duplicates,
+        invalid,
+        addedCount: added.length,
+        duplicateCount: duplicates.length,
+        invalidCount: invalid.length,
+      };
+    } catch (error) {
+      logger.error(`Error bulk adding known numbers: ${error.message}`);
+      throw error;
+    }
+  },
+
   async deleteKnownNumber(id) {
     try {
       const KnownMtnNumber = (await import("../models/KnownMtnNumber.js")).default;

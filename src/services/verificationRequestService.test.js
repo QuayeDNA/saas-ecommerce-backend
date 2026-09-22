@@ -14,6 +14,7 @@ vi.mock("../models/KnownMtnNumber.js", () => ({
     create: vi.fn(),
     findByIdAndDelete: vi.fn(),
     deleteMany: vi.fn(),
+    insertMany: vi.fn(),
   },
 }));
 
@@ -418,6 +419,62 @@ describe("VerificationRequestService phone normalization", () => {
 
       expect(batches[0].counts).toEqual({ submitted: 1, approved: 1, rejected: 1 });
       expect(batches[0].total).toBe(3);
+    });
+  });
+
+  describe("bulkAddKnownNumbers", () => {
+    it("adds multiple new numbers with a single insertMany call", async () => {
+      KnownMtnNumber.find.mockReturnValueOnce({
+        select: vi.fn().mockReturnValue({
+          lean: vi.fn().mockResolvedValue([]),
+        }),
+      });
+      KnownMtnNumber.insertMany.mockResolvedValue([
+        { phone: "0241234567" },
+        { phone: "0201234567" },
+      ]);
+
+      const result = await verificationRequestService.bulkAddKnownNumbers([
+        "0241234567",
+        "0201234567",
+      ]);
+
+      expect(KnownMtnNumber.insertMany).toHaveBeenCalledTimes(1);
+      expect(KnownMtnNumber.insertMany).toHaveBeenCalledWith(
+        [{ phone: "0241234567" }, { phone: "0201234567" }],
+        expect.objectContaining({ ordered: false })
+      );
+      expect(result.addedCount).toBe(2);
+      expect(result.duplicateCount).toBe(0);
+      expect(result.invalidCount).toBe(0);
+    });
+
+    it("reports existing numbers as duplicates and invalid numbers without inserting them", async () => {
+      KnownMtnNumber.find.mockReturnValueOnce({
+        select: vi.fn().mockReturnValue({
+          lean: vi.fn().mockResolvedValue([{ phone: "0241234567" }]),
+        }),
+      });
+      KnownMtnNumber.insertMany.mockResolvedValue([{ phone: "0201234567" }]);
+
+      const result = await verificationRequestService.bulkAddKnownNumbers([
+        "0241234567",
+        "0201234567",
+        "not-a-number",
+        "0201234567",
+      ]);
+
+      expect(KnownMtnNumber.insertMany).toHaveBeenCalledTimes(1);
+      expect(KnownMtnNumber.insertMany).toHaveBeenCalledWith(
+        [{ phone: "0201234567" }],
+        expect.objectContaining({ ordered: false })
+      );
+      expect(result.added).toEqual(["0201234567"]);
+      expect(result.duplicates).toEqual(["0241234567"]);
+      expect(result.invalid).toEqual(["notanumber"]);
+      expect(result.addedCount).toBe(1);
+      expect(result.duplicateCount).toBe(1);
+      expect(result.invalidCount).toBe(1);
     });
   });
 });
