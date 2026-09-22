@@ -1,11 +1,10 @@
 // src/services/pushNotificationService.js
 import webpush from "web-push";
 import logger from "../utils/logger.js";
-import User from "../models/User.js";
+import PushSubscription from "../models/PushSubscription.js";
 
 class PushNotificationService {
   constructor() {
-    // Set VAPID keys for web push
     if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
       webpush.setVapidDetails(
         "mailto:" + (process.env.VAPID_EMAIL || "admin@brytelinks.com"),
@@ -20,145 +19,129 @@ class PushNotificationService {
     }
   }
 
-  /**
-   * Generate VAPID keys for push notifications
-   * @returns {Object} Object containing public and private VAPID keys
-   */
   generateVAPIDKeys() {
     return webpush.generateVAPIDKeys();
   }
 
-  /**
-   * Send push notification to a specific user
-   * @param {string} userId - User ID to send notification to
-   * @param {Object} notification - Notification payload
-   * @param {string} notification.title - Notification title
-   * @param {string} notification.body - Notification body
-   * @param {string} [notification.icon] - Notification icon URL
-   * @param {string} [notification.url] - URL to open when clicked
-   * @param {Object} [notification.data] - Additional data
-   * @returns {Promise<boolean>} Success status
-   */
+  buildPayload(notification) {
+    return JSON.stringify({
+      title: notification.title,
+      body: notification.body,
+      icon: notification.icon || "/android-chrome-192x192.png",
+      badge: "/favicon-32x32.png",
+      url: notification.url || "/",
+      data: notification.data || {},
+      timestamp: Date.now(),
+    });
+  }
+
   async sendToUser(userId, notification) {
     try {
-      const user = await User.findById(userId);
-
-      if (!user) {
-        logger.warn(`User not found: ${userId}`);
+      const subs = await PushSubscription.find({ user: userId, enabled: true });
+      if (!subs.length) {
+        logger.info(`No push subscriptions for user ${userId}`);
         return false;
       }
 
-      if (!user.pushSubscription) {
-        logger.info(`No push subscription for user ${userId}`);
-        return false;
-      }
+      const payload = this.buildPayload(notification);
+      const results = await Promise.allSettled(
+        subs.map((sub) => this._sendToEndpoint(sub, payload)),
+      );
 
-      const sub = user.pushSubscription;
-      if (!sub.endpoint || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) {
-        logger.warn(`Invalid push subscription for user ${userId}, removing`);
-        await User.findByIdAndUpdate(userId, {
-          $unset: { pushSubscription: 1 },
-        });
-        return false;
-      }
-
-      const payload = JSON.stringify({
-        title: notification.title,
-        body: notification.body,
-        icon: notification.icon || "/android-chrome-192x192.png",
-        badge: "/favicon-32x32.png",
-        url: notification.url || "/",
-        data: notification.data || {},
-        timestamp: Date.now(),
-      });
-
-      await webpush.sendNotification(user.pushSubscription, payload);
-      logger.info(`Push notification sent to user ${userId}`);
-      return true;
+      const anySuccess = results.some((r) => r.status === "fulfilled");
+      return anySuccess;
     } catch (error) {
-      const statusCode = error?.statusCode;
-
-      // If subscription is invalid, remove it (treat as expected cleanup)
-      if (statusCode === 410 || statusCode === 404 || statusCode === 400) {
-        logger.warn(
-          `Invalid/expired push subscription for user ${userId} (status ${statusCode}). Removing subscription.`,
-        );
-        try {
-          await User.findByIdAndUpdate(userId, {
-            $unset: { pushSubscription: 1 },
-          });
-          logger.info(`Removed invalid push subscription for user ${userId}`);
-        } catch (updateError) {
-          logger.error(
-            `Failed to remove invalid push subscription for user ${userId}:`,
-            updateError,
-          );
-        }
-        return false;
-      }
-
       logger.error(
         `Failed to send push notification to user ${userId}:`,
         error,
       );
-
       return false;
     }
   }
 
-  /**
-   * Send push notification to multiple users
-   * @param {Array<string>} userIds - Array of user IDs
-   * @param {Object} notification - Notification payload
-   * @returns {Promise<Array<Object>>} Array of results with success/failure status
-   */
+  async _sendToEndpoint(subscription, payload) {
+    try {
+      await webpush.sendNotification(
+        { endpoint: subscription.endpoint, keys: subscription.keys },
+        payload,
+      );
+      await PushSubscription.findByIdAndUpdate(subscription._id, {
+        lastSeenAt: new Date(),
+      });
+    } catch (error) {
+      const statusCode = error?.statusCode;
+      if (statusCode === 410 || statusCode === 404 || statusCode === 400) {
+        logger.warn(
+          `Invalid/expired push subscription (endpoint ${subscription.endpoint.substring(0, 40)}...) status ${statusCode}. Removing.`,
+        );
+        await PushSubscription.findByIdAndDelete(subscription._id).catch(() =>
+          {},
+        );
+        throw error;
+      }
+      throw error;
+    }
+  }
+
   async sendToUsers(userIds, notification) {
     const results = [];
-
-    for (const userId of userIds) {
-      try {
-        const success = await this.sendToUser(userId, notification);
-        results.push({ userId, success });
-      } catch (error) {
-        logger.error(
-          `Error sending push notification to user ${userId}:`,
-          error,
-        );
-        results.push({ userId, success: false, error: error.message });
-      }
-    }
-
+    await Promise.allSettled(
+      userIds.map(async (userId) => {
+        try {
+          const success = await this.sendToUser(userId, notification);
+          results.push({ userId, success });
+        } catch (error) {
+          logger.error(
+            `Error sending push notification to user ${userId}:`,
+            error,
+          );
+          results.push({ userId, success: false, error: error.message });
+        }
+      }),
+    );
     return results;
   }
 
-  /**
-   * Send broadcast notification to all users with push subscriptions
-   * @param {Object} notification - Notification payload
-   * @returns {Promise<Array<Object>>} Array of results
-   */
   async broadcast(notification) {
     try {
-      const users = await User.find({ pushSubscription: { $exists: true } });
-      const userIds = users.map((user) => user._id.toString());
-
-      logger.info(`Broadcasting push notification to ${userIds.length} users`);
-      return await this.sendToUsers(userIds, notification);
+      const subs = await PushSubscription.find({ enabled: true }).distinct(
+        "user",
+      );
+      logger.info(
+        `Broadcasting push notification to ${subs.length} unique users`,
+      );
+      return await this.sendToUsers(subs.map(String), notification);
     } catch (error) {
       logger.error("Failed to broadcast push notification:", error);
       return [{ success: false, error: error.message }];
     }
   }
 
-  /**
-   * Register push subscription for a user
-   * @param {string} userId - User ID
-   * @param {Object} subscription - Push subscription object from browser
-   * @returns {Promise<boolean>} Success status
-   */
-  async registerSubscription(userId, subscription) {
+  async registerSubscription(userId, subscription, meta = {}) {
     try {
-      await User.findByIdAndUpdate(userId, { pushSubscription: subscription });
-      logger.info(`Push subscription registered for user ${userId}`);
+      const { endpoint, keys } = subscription;
+      if (!endpoint || !keys?.p256dh || !keys?.auth) {
+        logger.warn(`Invalid subscription data for user ${userId}`);
+        return false;
+      }
+
+      await PushSubscription.findOneAndUpdate(
+        { endpoint },
+        {
+          user: userId,
+          endpoint,
+          keys,
+          userAgent: meta.userAgent || "",
+          platform: meta.platform || "unknown",
+          enabled: true,
+          lastSeenAt: new Date(),
+        },
+        { upsert: true, new: true },
+      );
+
+      logger.info(
+        `Push subscription registered for user ${userId} (endpoint ${endpoint.substring(0, 40)}...)`,
+      );
       return true;
     } catch (error) {
       logger.error(
@@ -169,15 +152,14 @@ class PushNotificationService {
     }
   }
 
-  /**
-   * Unregister push subscription for a user
-   * @param {string} userId - User ID
-   * @returns {Promise<boolean>} Success status
-   */
-  async unregisterSubscription(userId) {
+  async unregisterSubscription(userId, endpoint) {
     try {
-      await User.findByIdAndUpdate(userId, { $unset: { pushSubscription: 1 } });
-      logger.info(`Push subscription unregistered for user ${userId}`);
+      if (endpoint) {
+        await PushSubscription.findOneAndDelete({ endpoint, user: userId });
+      } else {
+        await PushSubscription.deleteMany({ user: userId });
+      }
+      logger.info(`Push subscription(s) unregistered for user ${userId}`);
       return true;
     } catch (error) {
       logger.error(
@@ -188,13 +170,37 @@ class PushNotificationService {
     }
   }
 
-  /**
-   * Send order status update notification
-   * @param {string} userId - User ID
-   * @param {Object} order - Order object
-   * @param {string} newStatus - New order status
-   * @returns {Promise<boolean>} Success status
-   */
+  async getDevices(userId) {
+    try {
+      return await PushSubscription.find({ user: userId }).sort({
+        lastSeenAt: -1,
+      });
+    } catch (error) {
+      logger.error(`Failed to get devices for user ${userId}:`, error);
+      return [];
+    }
+  }
+
+  async removeDevice(userId, deviceId) {
+    try {
+      const deleted = await PushSubscription.findOneAndDelete({
+        _id: deviceId,
+        user: userId,
+      });
+      if (deleted) {
+        logger.info(`Device ${deviceId} removed for user ${userId}`);
+        return true;
+      }
+      logger.warn(
+        `Device ${deviceId} not found for user ${userId}`,
+      );
+      return false;
+    } catch (error) {
+      logger.error(`Failed to remove device ${deviceId} for user ${userId}:`, error);
+      return false;
+    }
+  }
+
   async sendOrderStatusUpdate(userId, order, newStatus) {
     const statusMessages = {
       pending: "Your order is being processed",
@@ -219,14 +225,6 @@ class PushNotificationService {
     return await this.sendToUser(userId, notification);
   }
 
-  /**
-   * Send wallet balance update notification
-   * @param {string} userId - User ID
-   * @param {number} amount - Amount added/deducted
-   * @param {string} type - Transaction type (credit/debit)
-   * @param {string} description - Transaction description
-   * @returns {Promise<boolean>} Success status
-   */
   async sendWalletUpdate(userId, amount, type, description) {
     const notification = {
       title: "Wallet Update",
@@ -244,7 +242,6 @@ class PushNotificationService {
 
     return await this.sendToUser(userId, notification);
   }
-
 }
 
 const pushNotificationService = new PushNotificationService();
