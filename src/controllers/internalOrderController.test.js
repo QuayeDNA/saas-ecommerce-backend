@@ -10,17 +10,34 @@ vi.mock('../services/orderService.js', () => ({
     reportOrder: vi.fn(),
     updateReceptionStatus: vi.fn(),
     getMatchingOrderIds: vi.fn(),
+    _creditStorefrontProfit: vi.fn(),
   },
+}));
+
+vi.mock('../services/commissionService.js', () => ({
+  default: { creditOrderCommission: vi.fn() },
+}));
+
+vi.mock('../utils/auditLogger.js', () => ({
+  logAuditAction: vi.fn().mockResolvedValue(),
+}));
+
+vi.mock('../utils/logger.js', () => ({
+  default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }));
 
 vi.mock('../models/Order.js', () => ({
   default: {
+    findById: vi.fn(),
     findByIdAndUpdate: vi.fn(),
+    find: vi.fn(),
     updateMany: vi.fn(),
   },
 }));
 
 import orderService from '../services/orderService.js';
+import commissionService from '../services/commissionService.js';
+import { logAuditAction } from '../utils/auditLogger.js';
 import Order from '../models/Order.js';
 import * as internalOrderController from './internalOrderController.js';
 
@@ -110,6 +127,7 @@ describe('internalOrderController', () => {
   describe('updateOrderStatus', () => {
     it('should update status successfully', async () => {
       const order = { _id: '123', status: 'processing' };
+      Order.findById.mockResolvedValue({ _id: '123', status: 'pending' });
       Order.findByIdAndUpdate.mockResolvedValue(order);
 
       const { req, res } = mockReqRes({ params: { id: '123' }, body: { status: 'processing' } });
@@ -139,7 +157,7 @@ describe('internalOrderController', () => {
     });
 
     it('should return 404 when order not found', async () => {
-      Order.findByIdAndUpdate.mockResolvedValue(null);
+      Order.findById.mockResolvedValue(null);
 
       const { req, res } = mockReqRes({ params: { id: '999' }, body: { status: 'processing' } });
       await internalOrderController.updateOrderStatus(req, res);
@@ -149,6 +167,7 @@ describe('internalOrderController', () => {
     });
 
     it('should include notes in update when provided', async () => {
+      Order.findById.mockResolvedValue({ _id: '123', status: 'processing', processingCompletedAt: new Date() });
       Order.findByIdAndUpdate.mockResolvedValue({ _id: '123' });
 
       const { req, res } = mockReqRes({ params: { id: '123' }, body: { status: 'completed', notes: 'Done' } });
@@ -159,6 +178,20 @@ describe('internalOrderController', () => {
         { status: 'completed', statusNotes: 'Done' },
         { new: true },
       );
+    });
+
+    it('should credit storefront profit and referral commission when completing a storefront order', async () => {
+      const order = { _id: 'order-1', orderNumber: 'DDST-1', status: 'completed', orderType: 'storefront' };
+      Order.findById.mockResolvedValue({ _id: 'order-1', status: 'processing' });
+      Order.findByIdAndUpdate.mockResolvedValue(order);
+
+      const { req, res } = mockReqRes({ params: { id: 'order-1' }, body: { status: 'completed' } });
+      await internalOrderController.updateOrderStatus(req, res);
+
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+      expect(orderService._creditStorefrontProfit).toHaveBeenCalledWith(order);
+      expect(commissionService.creditOrderCommission).toHaveBeenCalledWith(order._id);
+      expect(logAuditAction).toHaveBeenCalled();
     });
 
     it('should handle service errors from cancelOrder', async () => {
@@ -219,17 +252,27 @@ describe('internalOrderController', () => {
   });
 
   describe('bulkProcessOrders', () => {
-    it('should bulk process orders successfully', async () => {
-      Order.updateMany.mockResolvedValue({ modifiedCount: 3 });
+    it('should bulk process orders successfully and credit profit and commission without clearing processedBy', async () => {
+      const orders = [
+        { _id: '1', orderNumber: 'DDST-1', status: 'processing', orderType: 'storefront', processedBy: 'admin-1', save: vi.fn().mockResolvedValue(true) },
+        { _id: '2', orderNumber: 'DDST-2', status: 'processing', orderType: 'standard', processedBy: 'admin-1', save: vi.fn().mockResolvedValue(true) },
+        { _id: '3', orderNumber: 'DDST-3', status: 'processing', orderType: 'storefront', processedBy: 'admin-1', save: vi.fn().mockResolvedValue(true) },
+      ];
+      Order.find.mockResolvedValue(orders);
 
       const { req, res } = mockReqRes({ body: { orderIds: ['1', '2', '3'], action: 'completed' } });
       await internalOrderController.bulkProcessOrders(req, res);
 
-      expect(Order.updateMany).toHaveBeenCalledWith(
-        { _id: { $in: ['1', '2', '3'] } },
-        { $set: { status: 'completed', processedBy: null } },
-      );
+      expect(Order.updateMany).not.toHaveBeenCalled();
       expect(res.json).toHaveBeenCalledWith({ success: true, successful: 3, failed: 0, total: 3 });
+      for (const order of orders) {
+        expect(order.status).toBe('completed');
+        expect(order.processedBy).not.toBeNull();
+        expect(order.save).toHaveBeenCalled();
+      }
+      expect(orderService._creditStorefrontProfit).toHaveBeenCalledTimes(2);
+      expect(commissionService.creditOrderCommission).toHaveBeenCalledTimes(3);
+      expect(logAuditAction).toHaveBeenCalledTimes(3);
     });
 
     it('should return 400 when orderIds missing', async () => {
@@ -256,7 +299,7 @@ describe('internalOrderController', () => {
     });
 
     it('should handle update errors', async () => {
-      Order.updateMany.mockRejectedValue(new Error('DB error'));
+      Order.find.mockRejectedValue(new Error('DB error'));
 
       const { req, res } = mockReqRes({ body: { orderIds: ['1'], action: 'processing' } });
       await internalOrderController.bulkProcessOrders(req, res);
