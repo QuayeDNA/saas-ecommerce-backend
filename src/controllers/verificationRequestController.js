@@ -304,12 +304,13 @@ const verificationRequestController = {
     try {
       const phones = await verificationRequestService.exportKnownNumbers();
       const date = new Date().toISOString().slice(0, 10);
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      const csv = ["phone", ...phones.map((phone) => `"${phone}"`)].join("\n");
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader(
         "Content-Disposition",
-        `attachment; filename="known-numbers-${date}.txt"`,
+        `attachment; filename="known-numbers-${date}.csv"`,
       );
-      res.send(phones.join("\n"));
+      res.send(csv);
     } catch (error) {
       logger.error("Error exporting known numbers:", error);
       res
