@@ -498,6 +498,20 @@ const verificationRequestService = {
     }
   },
 
+  async exportKnownNumbers() {
+    try {
+      const KnownMtnNumber = (await import("../models/KnownMtnNumber.js")).default;
+      const numbers = await KnownMtnNumber.find({})
+        .select("phone")
+        .sort({ phone: 1 })
+        .lean();
+      return numbers.map((n) => n.phone);
+    } catch (error) {
+      logger.error(`Error exporting known numbers: ${error.message}`);
+      throw error;
+    }
+  },
+
   async addKnownNumber(phone) {
     try {
       const KnownMtnNumber = (await import("../models/KnownMtnNumber.js")).default;

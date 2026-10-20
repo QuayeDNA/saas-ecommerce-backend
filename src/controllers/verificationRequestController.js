@@ -300,6 +300,24 @@ const verificationRequestController = {
     }
   },
 
+  async exportKnownNumbers(req, res) {
+    try {
+      const phones = await verificationRequestService.exportKnownNumbers();
+      const date = new Date().toISOString().slice(0, 10);
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="known-numbers-${date}.txt"`,
+      );
+      res.send(phones.join("\n"));
+    } catch (error) {
+      logger.error("Error exporting known numbers:", error);
+      res
+        .status(500)
+        .json({ success: false, message: "Failed to export known numbers" });
+    }
+  },
+
   async addKnownNumber(req, res) {
     try {
       const { phone } = req.body;

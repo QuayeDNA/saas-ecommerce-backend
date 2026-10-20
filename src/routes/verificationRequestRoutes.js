@@ -165,6 +165,12 @@ router.get(
   verificationRequestController.getKnownNumberStats,
 );
 
+router.get(
+  "/known-numbers/export",
+  authorize("super_admin"),
+  verificationRequestController.exportKnownNumbers,
+);
+
 router.post(
   "/known-numbers",
   authorize("super_admin"),
